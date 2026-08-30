@@ -33,6 +33,15 @@ async def lifespan(app: FastAPI):
         migrated = settings_mod.import_from_env_once(conn)
         if migrated:
             log.info("Settings imported from environment variables (one-time migration)")
+        # Must run before jobs.runner is ever touched below (run_on_start) or by any request --
+        # a 'running' row surviving into a fresh process is always orphaned (see
+        # db.reconcile_orphaned_run's docstring for why), and left alone it permanently blocks
+        # new runs and makes Cancel fail with "this run is not the one currently active".
+        orphaned_run_id = db.reconcile_orphaned_run(conn)
+        if orphaned_run_id is not None:
+            log.warning("Run #%d was still marked running at startup (a previous process must "
+                        "have been interrupted mid-job) — marked as failed so new runs aren't blocked.",
+                        orphaned_run_id)
         cfg = settings_mod.Config.from_db(conn)
     finally:
         conn.close()

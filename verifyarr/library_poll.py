@@ -50,7 +50,7 @@ def request_cancel() -> None:
     _cancel_event.set()
 
 
-def refresh_library_cache(conn: sqlite3.Connection, cfg: Config) -> dict:
+def refresh_library_cache(conn: sqlite3.Connection, cfg: Config, use_persisted_cache: bool = False) -> dict:
     """The actual discovery work (a directory walk, no sync/correctness processing) — shared by
     the scheduled poll below and the manual "Detect now" button (see web/routers/library.py) so
     the two can never drift apart. Returns {"pairs", "missing", "cancelled"?} for logging/
@@ -59,7 +59,13 @@ def refresh_library_cache(conn: sqlite3.Connection, cfg: Config) -> dict:
     Embedded-subtitle language info comes from discovery.resolve_embedded_cache — Bazarr's own
     already-known embedded tracks first (one bulk read, no filesystem access at all), then a
     thread-pooled ffprobe fallback for whatever Bazarr doesn't already cover. Same helper
-    jobs._run_sweep uses, so both stay equally fast and equally cancellable."""
+    jobs._run_sweep uses, so both stay equally fast and equally cancellable.
+
+    use_persisted_cache: only the scheduled poll passes True — it also seeds the ffprobe
+    fallback from db.get_persisted_embedded_cache, so a video that hasn't changed since it was
+    last checked is skipped entirely instead of re-probed every cycle forever. "Detect now"
+    (the default, False) always re-checks everything fresh, since a human clicking it wants an
+    up-to-date answer right now, not whatever was cached from before."""
     _cancel_event.clear()
     # Marked running before the directory walk (discover_pairs/discover_all_videos) even starts —
     # on a large library over a slow/network-mounted media folder, the walk itself can take a
@@ -71,13 +77,14 @@ def refresh_library_cache(conn: sqlite3.Connection, cfg: Config) -> dict:
 
     pairs = discover_pairs(cfg)
     all_videos = discover_all_videos(cfg)
+    persisted = db.get_persisted_embedded_cache(conn, all_videos) if use_persisted_cache else None
 
     def _report(done: int, total: int) -> None:
         with _progress_lock:
             _progress.update(done=done, total=total)
 
-    embedded_cache = resolve_embedded_cache(cfg, pairs, all_videos, cancel_event=_cancel_event,
-                                             progress_cb=_report)
+    embedded_cache, bazarr_titles = resolve_embedded_cache(cfg, pairs, all_videos, cancel_event=_cancel_event,
+                                                            progress_cb=_report, extra_cache=persisted)
 
     if _cancel_event.is_set():
         log.info("Library rescan cancelled by user")
@@ -87,7 +94,8 @@ def refresh_library_cache(conn: sqlite3.Connection, cfg: Config) -> dict:
 
     try:
         missing = discover_missing(cfg, pairs, all_videos, embedded_cache=embedded_cache)
-        rows = build_library_video_rows(cfg, pairs, all_videos, embedded_cache=embedded_cache)
+        rows = build_library_video_rows(cfg, pairs, all_videos, embedded_cache=embedded_cache,
+                                         bazarr_titles=bazarr_titles)
         db.replace_library_videos(conn, rows)
         for video, lang in missing:
             db.mark_missing(conn, video, lang, cfg.media_root_for(video))
@@ -105,7 +113,7 @@ def poll_library_for_new_media() -> None:
         cfg = Config.from_db(conn)
         if not cfg.poll_library_enabled:
             return
-        result = refresh_library_cache(conn, cfg)
+        result = refresh_library_cache(conn, cfg, use_persisted_cache=True)
         if result.get("cancelled"):
             return
         log.info("Library poll: refreshed cache — %d video/subtitle pair(s), %d missing language(s)",

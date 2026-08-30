@@ -152,7 +152,10 @@ CREATE TABLE IF NOT EXISTS library_videos (
     kind            TEXT NOT NULL DEFAULT 'series',  -- 'movie' | 'series', see Config.kind_for
     title           TEXT NOT NULL,
     season_episode  TEXT,
-    has_subtitle    INTEGER NOT NULL DEFAULT 0
+    has_subtitle    INTEGER NOT NULL DEFAULT 0,
+    video_mtime          REAL,     -- see get_persisted_embedded_cache
+    video_size            INTEGER,
+    embedded_langs_json  TEXT      -- NULL = never embedded-checked (had full external coverage)
 );
 CREATE INDEX IF NOT EXISTS ix_library_videos_title ON library_videos(title);
 """
@@ -188,6 +191,17 @@ def connect(path: Optional[Path] = None) -> sqlite3.Connection:
     except sqlite3.OperationalError:
         pass  # column already exists
     conn.execute("CREATE INDEX IF NOT EXISTS ix_library_videos_kind ON library_videos(kind)")
+    for col, coltype in (("video_mtime", "REAL"), ("video_size", "INTEGER")):
+        try:
+            conn.execute(f"ALTER TABLE library_videos ADD COLUMN {col} {coltype}")
+            conn.commit()
+        except sqlite3.OperationalError:
+            pass  # column already exists
+    try:
+        conn.execute("ALTER TABLE library_videos ADD COLUMN embedded_langs_json TEXT")
+        conn.commit()
+    except sqlite3.OperationalError:
+        pass  # column already exists
     for col in ("line_order_fixed", "line_order_flagged"):
         try:
             conn.execute(f"ALTER TABLE files ADD COLUMN {col} INTEGER")
@@ -440,6 +454,22 @@ def get_running_run(conn: sqlite3.Connection) -> Optional[sqlite3.Row]:
     return conn.execute("SELECT * FROM runs WHERE status = 'running' LIMIT 1").fetchone()
 
 
+def reconcile_orphaned_run(conn: sqlite3.Connection) -> Optional[int]:
+    """Called once at process startup (see web/app.py's lifespan), BEFORE anything else touches
+    jobs.runner. A 'running' row found here can only be left over from a previous process that
+    was killed or restarted mid-job — a freshly started process's JobRunner always begins with
+    no job in flight, so it can never actually still be running. Left alone, an orphaned row
+    like this would permanently jam the app: ux_runs_single_running (see create_run) blocks any
+    new run from starting at all, and Cancel always fails too (it checks
+    jobs.runner.current_run_id(), which this new process never set for a run it never started).
+    Returns the reconciled run's id, or None if there wasn't one."""
+    row = get_running_run(conn)
+    if row is None:
+        return None
+    finish_run(conn, row["id"], "failed", error_message="Interrupted by a server restart")
+    return row["id"]
+
+
 def list_runs(conn: sqlite3.Connection, page: int = 1, page_size: int = 30):
     total = conn.execute("SELECT COUNT(*) FROM runs").fetchone()[0]
     offset = max(0, (page - 1) * page_size)
@@ -577,16 +607,55 @@ def add_blacklist_action(conn: sqlite3.Connection, *, subtitle_path=None, video_
 def replace_library_videos(conn: sqlite3.Connection, rows: list[dict]) -> None:
     """Replaces the WHOLE library_videos table in one transaction — simpler and just as
     correct as a diff (handles deleted files for free), and cheap enough even for a private
-    library with thousands of rows. Only called on an actual (re)scan, NEVER per page load."""
+    library with thousands of rows. Only called on an actual (re)scan, NEVER per page load.
+
+    video_mtime/video_size/embedded_langs_json (all optional — a row may have None for any of
+    them) feed get_persisted_embedded_cache, which lets the SCHEDULED library poll skip
+    re-ffprobing a video that hasn't changed since it was last checked. "Detect now" always
+    passes fresh values here (it never reuses the persisted cache itself), so a manual click
+    still re-checks everything, exactly as before."""
     conn.execute("DELETE FROM library_videos")
     conn.executemany(
-        "INSERT INTO library_videos (video_path, media_root, kind, title, season_episode, has_subtitle) "
-        "VALUES (?, ?, ?, ?, ?, ?)",
-        [(r["video_path"], r["media_root"], r["kind"], r["title"], r["season_episode"], int(r["has_subtitle"]))
+        "INSERT INTO library_videos (video_path, media_root, kind, title, season_episode, has_subtitle, "
+        "video_mtime, video_size, embedded_langs_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        [(r["video_path"], r["media_root"], r["kind"], r["title"], r["season_episode"], int(r["has_subtitle"]),
+          r.get("video_mtime"), r.get("video_size"), r.get("embedded_langs_json"))
          for r in rows],
     )
     set_setting_raw(conn, "library.last_scanned_at", datetime.now(timezone.utc).isoformat())
     conn.commit()
+
+
+def get_persisted_embedded_cache(conn: sqlite3.Connection, all_videos: list) -> dict:
+    """{video_path: {embedded lang, ...}} recovered from the LAST scan's library_videos row,
+    but ONLY for a video whose size+mtime on disk still match what was recorded then — an
+    unchanged file's embedded tracks can't have changed either, so there's no need to ffprobe
+    it again. Used by the scheduled library poll (poll_library_for_new_media) to make a routine
+    automatic check cheap over time, once a video has been seen at least once. "Detect now"
+    deliberately does NOT use this — a manual click is expected to always re-check everything
+    fresh (see discovery.resolve_embedded_cache's callers)."""
+    result: dict = {}
+    prior = {
+        row["video_path"]: row
+        for row in conn.execute(
+            "SELECT video_path, video_mtime, video_size, embedded_langs_json FROM library_videos "
+            "WHERE embedded_langs_json IS NOT NULL"
+        ).fetchall()
+    }
+    for video in all_videos:
+        row = prior.get(str(video))
+        if row is None:
+            continue
+        try:
+            st = video.stat()
+        except OSError:
+            continue
+        if row["video_mtime"] == st.st_mtime and row["video_size"] == st.st_size:
+            try:
+                result[video] = set(json.loads(row["embedded_langs_json"]))
+            except (ValueError, TypeError):
+                pass
+    return result
 
 
 def list_library_videos(conn: sqlite3.Connection, kind: Optional[str] = None):

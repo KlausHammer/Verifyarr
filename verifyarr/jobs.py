@@ -135,7 +135,7 @@ def _run_sweep(conn: sqlite3.Connection, run_id: int, cfg: Config, force: bool,
     # only taking effect once the per-file loop below is reached.
     log.info("Found %d video/subtitle pairs under %s — checking for embedded subtitles...",
               len(pairs), cfg.media_roots)
-    embedded_cache = resolve_embedded_cache(cfg, pairs, all_videos, cancel_event=cancel_event)
+    embedded_cache, bazarr_titles = resolve_embedded_cache(cfg, pairs, all_videos, cancel_event=cancel_event)
     if cancel_event.is_set():
         log.warning("Job cancelled — stopping during embedded-subtitle check")
         raise JobCancelled("cancelled during embedded-subtitle check")
@@ -153,7 +153,10 @@ def _run_sweep(conn: sqlite3.Connection, run_id: int, cfg: Config, force: bool,
     if title:
         def _pair_title(p: tuple) -> str:
             _se, t = infer_title_and_episode(p[0])
-            return t or str(p[0].parent)
+            # Must match what the Library page actually displays and scoped this Scan to (see
+            # build_library_video_rows below) -- otherwise a title Bazarr renamed would match
+            # zero pairs here even though the button that triggered this used that exact name.
+            return bazarr_titles.get(p[0]) or t or str(p[0].parent)
         scoped_pairs = [p for p in scoped_pairs if _pair_title(p) == title]
     if season:
         def _pair_season(p: tuple) -> str:
@@ -170,7 +173,8 @@ def _run_sweep(conn: sqlite3.Connection, run_id: int, cfg: Config, force: bool,
     # does NOT scan itself per page load, see web/routers/library.py), instead of requiring
     # a separate rescan click to discover files added since the last sweep. embedded_cache is
     # reused rather than recomputed -- it already has an answer for every video that needs one.
-    db.replace_library_videos(conn, build_library_video_rows(cfg, pairs, all_videos, embedded_cache=embedded_cache))
+    db.replace_library_videos(conn, build_library_video_rows(cfg, pairs, all_videos, embedded_cache=embedded_cache,
+                                                              bazarr_titles=bazarr_titles))
 
     for video, lang in missing:
         db.mark_missing(conn, video, lang, cfg.media_root_for(video))

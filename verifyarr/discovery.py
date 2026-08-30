@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import concurrent.futures
+import json
 import os
 import re
 import threading
@@ -175,13 +176,27 @@ def videos_needing_embedded_check(cfg: Config, pairs: list[tuple[Path, Path, Opt
 
 def resolve_embedded_cache(cfg: Config, pairs: list[tuple[Path, Path, Optional[str]]],
                             all_videos: list[Path], cancel_event: Optional[threading.Event] = None,
-                            progress_cb: Optional[Callable[[int, int], None]] = None) -> dict[Path, set[str]]:
-    """{video_path: {embedded lang, ...}} for every video that needs one — Bazarr's own
-    already-known embedded tracks first (one bulk read, no filesystem access at all), then an
-    8-worker ffprobe thread pool for whatever Bazarr doesn't already cover. Shared by both
-    library_poll.refresh_library_cache (the "Detect now" button) and jobs._run_sweep, so a
-    sweep gets the same speedup instead of quietly paying for a slow sequential ffprobe pass
-    before its very first log line, or its own file loop, even starts — that's what made a
+                            progress_cb: Optional[Callable[[int, int], None]] = None,
+                            extra_cache: Optional[dict] = None,
+                            ) -> tuple[dict[Path, set[str]], dict[Path, str]]:
+    """(embedded_cache, bazarr_titles) — embedded_cache is {video_path: {embedded lang, ...}}
+    for every video that needs one: Bazarr's own already-known embedded tracks first (one bulk
+    read, no filesystem access at all), then an 8-worker ffprobe thread pool for whatever
+    neither Bazarr nor extra_cache already covers. bazarr_titles is {video_path: title},
+    Bazarr's own matched title for whatever it manages — a free byproduct of the same bulk read
+    (see bazarr.bazarr_library_info), passed straight through untouched since resolving a title
+    needs no filesystem work at all.
+
+    extra_cache: an optional second seed, checked ONLY for a video Bazarr doesn't already cover
+    (Bazarr's answer always wins when both have one) — used by the scheduled library poll (see
+    library_poll.poll_library_for_new_media -> db.get_persisted_embedded_cache) to skip
+    re-ffprobing a video whose size+mtime haven't changed since it was last checked. "Detect
+    now" deliberately passes nothing here, so a manual click always re-checks everything fresh.
+
+    Shared by both library_poll.refresh_library_cache (the "Detect now" button and the
+    scheduled poll both call this, extra_cache is what tells them apart) and jobs._run_sweep,
+    so a sweep gets the same speedup instead of quietly paying for a slow sequential ffprobe
+    pass before its very first log line, or its own file loop, even starts — that's what made a
     sweep look hung with zero log output and an unresponsive Cancel for however long the old
     per-video ffprobe fallback took on a large/network-mounted library.
 
@@ -189,17 +204,20 @@ def resolve_embedded_cache(cfg: Config, pairs: list[tuple[Path, Path, Optional[s
     return whatever's resolved so far", never a hard kill of a probe already in flight.
     progress_cb(done, total), if given, is called after each probe completes — used by the
     "Detect now" button's live counter (see library_poll.get_progress)."""
-    from verifyarr.bazarr import bazarr_embedded_subtitle_langs  # local: keeps bazarr.py's own
-    # heavier dependency chain (sync_engine/correctness/subtitles/requests) out of every plain
+    from verifyarr.bazarr import bazarr_library_info  # local: keeps bazarr.py's own heavier
+    # dependency chain (sync_engine/correctness/subtitles/requests) out of every plain
     # discovery.py import, most of which never touch Bazarr at all.
 
-    embedded_cache = bazarr_embedded_subtitle_langs(cfg)
+    embedded_cache, bazarr_titles = bazarr_library_info(cfg)
+    if extra_cache:
+        for video, langs in extra_cache.items():
+            embedded_cache.setdefault(video, langs)
     needs = videos_needing_embedded_check(cfg, pairs, all_videos, embedded_cache=embedded_cache)
     total = len(needs)
     if progress_cb:
         progress_cb(0, total)
     if not needs:
-        return embedded_cache
+        return embedded_cache, bazarr_titles
 
     done = 0
     cancelled = False
@@ -222,12 +240,13 @@ def resolve_embedded_cache(cfg: Config, pairs: list[tuple[Path, Path, Optional[s
         # Cancelled: don't block waiting for whatever's still mid-ffprobe -- drop it, those
         # threads finish quietly in the background and their results are simply never used.
         pool.shutdown(wait=not cancelled, cancel_futures=cancelled)
-    return embedded_cache
+    return embedded_cache, bazarr_titles
 
 
 def build_library_video_rows(cfg: Config, pairs: list[tuple[Path, Path, Optional[str]]],
                               all_videos: list[Path],
-                              embedded_cache: Optional[dict] = None) -> list[dict]:
+                              embedded_cache: Optional[dict] = None,
+                              bazarr_titles: Optional[dict] = None) -> list[dict]:
     """Rows for db.replace_library_videos, derived from a discover_pairs/discover_all_videos
     pair that already exists anyway (from a sweep, or a rescan call) — so persisting the
     Library page never needs another os.walk beyond what already happens. A video with no
@@ -239,18 +258,35 @@ def build_library_video_rows(cfg: Config, pairs: list[tuple[Path, Path, Optional
     (see library_poll.refresh_library_cache, which seeds it from Bazarr's own already-known
     embedded tracks, then a thread pool for whatever's left) — a video still missing from it
     here falls back to a plain synchronous detect_embedded_subtitle_langs() call, a real
-    filesystem read, so on slow/network-mounted media an unseeded cache costs real time."""
+    filesystem read, so on slow/network-mounted media an unseeded cache costs real time.
+
+    bazarr_titles: optional {video: title} — when a video is a key here, its Bazarr-matched
+    title wins over the folder/file-name guess (infer_title_and_episode), which is often
+    straight-off-a-release-name garbage (see resolve_embedded_cache/bazarr.bazarr_library_info).
+    A video Bazarr doesn't manage keeps the guessed title, same as before this existed."""
     if embedded_cache is None:
         embedded_cache = {}
+    if bazarr_titles is None:
+        bazarr_titles = {}
     videos_with_subtitle = {video for video, _sub, _lang in pairs}
     rows = []
     for video in all_videos:
         se, title = infer_title_and_episode(video)
+        title = bazarr_titles.get(video) or title
         has_subtitle = video in videos_with_subtitle
         if not has_subtitle:
             if video not in embedded_cache:
                 embedded_cache[video] = detect_embedded_subtitle_langs(video)
             has_subtitle = bool(embedded_cache[video])
+        try:
+            st = video.stat()
+            video_mtime, video_size = st.st_mtime, st.st_size
+        except OSError:
+            video_mtime = video_size = None
+        # None (not "[]") when this video was never embedded-checked at all this round (full
+        # external coverage) -- see db.get_persisted_embedded_cache, which only reuses a row
+        # that recorded an actual check, never one that skipped it for this reason.
+        embedded_langs = embedded_cache.get(video)
         rows.append({
             "video_path": str(video),
             "media_root": str(cfg.media_root_for(video)),
@@ -258,6 +294,9 @@ def build_library_video_rows(cfg: Config, pairs: list[tuple[Path, Path, Optional
             "title": title or str(video.parent),
             "season_episode": se,
             "has_subtitle": has_subtitle,
+            "video_mtime": video_mtime,
+            "video_size": video_size,
+            "embedded_langs_json": json.dumps(sorted(embedded_langs)) if embedded_langs is not None else None,
         })
     return rows
 

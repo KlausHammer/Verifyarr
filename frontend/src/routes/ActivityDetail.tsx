@@ -20,6 +20,7 @@ export default function ActivityDetail() {
     setRun(null)
     api
       .get<RunRow>(`/runs/${runId}`)
+      .then(setRun)
       .catch((err) => setError(err instanceof ApiError ? err.message : String(err)))
 
     const es = new EventSource(`/api/runs/${runId}/stream`)
