@@ -6,6 +6,8 @@ import hashlib
 import re
 import shutil
 import subprocess
+import threading
+from contextlib import nullcontext
 from pathlib import Path
 from typing import Optional
 
@@ -78,15 +80,22 @@ def run_alass(alass_bin: str, reference_path: Path, subtitle_path: Path, out_pat
 
 
 def resolve_alass_reference(video_path: Path, audio_cache: Optional[dict],
-                             audio_cache_dir: Optional[Path]) -> Path:
+                             audio_cache_dir: Optional[Path],
+                             lock: Optional[threading.Lock] = None) -> Path:
     """Finds what alass should use as its reference — a cached WAV if possible (see
     extract_audio_wav), otherwise video_path directly. audio_cache is a dict that lives for
     the whole sweep (video_path -> WAV path, or None if extraction failed/was skipped), so
-    multiple subtitle files for the same video only pay for audio decoding once."""
+    multiple subtitle files for the same video only pay for audio decoding once.
+
+    lock: pass one when audio_cache may be touched from more than one thread at once (see
+    jobs._run_sweep's parallel sync phase) — without it, two subtitle languages for the same
+    video could both see "not cached yet" at once and race to extract/overwrite the same WAV
+    path. A plain sequential caller (CLI, single-file jobs) passes None, same as before."""
     if audio_cache is None or audio_cache_dir is None:
         return video_path
-    if video_path not in audio_cache:
-        digest = hashlib.md5(str(video_path).encode()).hexdigest()[:12]
-        wav_path = audio_cache_dir / f"{video_path.stem}.{digest}.wav"
-        audio_cache[video_path] = wav_path if extract_audio_wav(video_path, wav_path) else None
-    return audio_cache[video_path] or video_path
+    with lock if lock is not None else nullcontext():
+        if video_path not in audio_cache:
+            digest = hashlib.md5(str(video_path).encode()).hexdigest()[:12]
+            wav_path = audio_cache_dir / f"{video_path.stem}.{digest}.wav"
+            audio_cache[video_path] = wav_path if extract_audio_wav(video_path, wav_path) else None
+        return audio_cache[video_path] or video_path

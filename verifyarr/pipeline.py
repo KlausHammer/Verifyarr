@@ -1,6 +1,9 @@
-"""Core per-file flow — process_pair runs sync (alass) + correctness check (Whisper) for
-one video/subtitle pair, and handle_suspect deals with the result if it gets flagged
-SUSPECT. Called from both sweep/single (verifyarr.cli) and the webapp's job runner."""
+"""Core per-file flow — process_pair runs sync (alass) + correctness check (Whisper) for one
+video/subtitle pair, and handle_suspect deals with the result if it gets flagged SUSPECT.
+Split into sync_pair (alass only, no DB access) + correctness_and_finish (Whisper + DB) so
+jobs._run_sweep can run the sync half across a thread pool while keeping the correctness half
+sequential — process_pair itself just calls the two back to back, for callers that don't need
+them split (CLI, the Bazarr-hook single-file path, remediate's own candidate verification)."""
 
 from __future__ import annotations
 
@@ -108,6 +111,33 @@ def process_pair(video_path: Path, subtitle_path: Path, lang: Optional[str],
                   audio_cache_dir: Optional[Path] = None,
                   run_id: Optional[int] = None,
                   cancel_event=None) -> dict:
+    """Sync (alass) + correctness check (Whisper), sequentially, for one video/subtitle pair —
+    a thin wrapper over sync_pair + correctness_and_finish for callers that don't need the two
+    stages split apart: the CLI, the Bazarr-hook single-file path (jobs._run_single), and
+    remediate's own candidate verification. See jobs._run_sweep for the split, parallel-sync
+    version used by a sweep."""
+    row, current_subs = sync_pair(video_path, subtitle_path, lang, cfg, audio_cache, audio_cache_dir)
+    return correctness_and_finish(video_path, subtitle_path, lang, cfg, conn, row, current_subs,
+                                   bazarr_meta=bazarr_meta, history_index=history_index,
+                                   run_id=run_id, cancel_event=cancel_event)
+
+
+def sync_pair(video_path: Path, subtitle_path: Path, lang: Optional[str], cfg: Config,
+              audio_cache: Optional[dict] = None, audio_cache_dir: Optional[Path] = None,
+              audio_cache_lock=None) -> tuple[dict, object]:
+    """Sync stage only (alass) — the first half of what process_pair used to do in one piece.
+    No `conn`/DB access at all, which is exactly what makes it safe to run from a worker thread
+    (see jobs._run_sweep's parallel sync phase — alass itself is single-threaded per invocation,
+    verified against its own Cargo.toml, so running several at once is what actually uses more
+    than one of the NAS's cores). correctness_and_finish below picks up from here, sequentially.
+
+    Returns (row, current_subs). current_subs is None only when the ORIGINAL subtitle file
+    itself couldn't even be parsed — there's nothing for correctness_and_finish to check either
+    in that case; it just persists `row` as-is and moves on.
+
+    audio_cache_lock: see sync_engine.resolve_alass_reference — pass one only when this may run
+    concurrently with other sync_pair calls sharing the same audio_cache dict, so two languages
+    of the same video don't race to extract/overwrite its cached audio at once."""
     row = {
         "video": str(video_path), "subtitle": str(subtitle_path), "lang": lang or "",
         "sync_status": "-", "sync_max_shift_s": None, "structural_change": False,
@@ -122,8 +152,7 @@ def process_pair(video_path: Path, subtitle_path: Path, lang: Optional[str],
     except Exception as e:
         row["sync_status"] = "parse-error"
         row["note"] = str(e)
-        update_state(conn, video_path, subtitle_path, row)
-        return row
+        return row, None
 
     alass_bin = resolve_alass_bin()
     current_subs = old_subs
@@ -139,7 +168,7 @@ def process_pair(video_path: Path, subtitle_path: Path, lang: Optional[str],
     else:
         with tempfile.TemporaryDirectory() as td:
             tmp_out = Path(td) / f"synced{subtitle_path.suffix}"
-            reference_path = resolve_alass_reference(video_path, audio_cache, audio_cache_dir)
+            reference_path = resolve_alass_reference(video_path, audio_cache, audio_cache_dir, audio_cache_lock)
             ok, msg, stderr_tail = run_alass(alass_bin, reference_path, subtitle_path, tmp_out, cfg.split_penalty)
             if not ok:
                 row["sync_status"] = f"error: {msg}"
@@ -183,6 +212,25 @@ def process_pair(video_path: Path, subtitle_path: Path, lang: Optional[str],
                             row["note"] += " line count changed significantly — check the file manually."
                     else:
                         row["sync_status"] = "already in sync"
+
+    return row, current_subs
+
+
+def correctness_and_finish(video_path: Path, subtitle_path: Path, lang: Optional[str],
+                            cfg: Config, conn: sqlite3.Connection, row: dict, current_subs,
+                            bazarr_meta: Optional[dict] = None,
+                            history_index: Optional[dict] = None,
+                            run_id: Optional[int] = None, cancel_event=None) -> dict:
+    """Correctness/line-order check (Whisper) + handle_suspect + persisting state — everything
+    sync_pair above doesn't do. Needs `conn`, so unlike sync_pair this must run on whichever
+    thread owns that sqlite3 connection (see jobs._run_sweep, which keeps this stage sequential
+    even though the sync stage runs in a thread pool — Groq's rate-limit pacing and this app's
+    single-job cancellation both also expect one file at a time here)."""
+    media_root = cfg.media_root_for(subtitle_path)
+    if current_subs is None:
+        # sync_pair couldn't parse the original subtitle at all -- nothing to correctness-check.
+        update_state(conn, video_path, subtitle_path, row)
+        return row
 
     # Whether a Whisper-based correctness check can run at all this file, independent of whether
     # line-order is turned on.
