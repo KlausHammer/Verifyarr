@@ -1,7 +1,6 @@
 # verifyarr
 
-Self-hosted subtitle sync + verification for a Plex/Bazarr library, with a web UI styled after
-Sonarr/Bazarr.
+Self-hosted subtitle sync + verification for a Plex/Bazarr library.
 
 1. **Syncs** every subtitle against its own video with [alass](https://github.com/kaegi/alass),
    which finds multiple sync points per file (handles mid-episode jumps, not just a global
@@ -11,30 +10,15 @@ Sonarr/Bazarr.
 3. **Cleans up suspect files on its own**, if you turn it on: quarantine (never permanent
    deletion), tell Bazarr to blacklist the source, or have it fetch a replacement itself.
 
-Sync always runs automatically (backs up the original first). Automatic action on a suspect file
-defaults to **off** — it only gets flagged until you enable it under Settings → Automation.
-
 
 ## Setup
 
-```bash
-git clone https://github.com/KlausHammer/Verifyarr.git
-cd Verifyarr
-```
-
-Edit `docker-compose.yml` — only the `volumes:` paths need to point at your real media folders,
-everything else (API keys, thresholds, schedule, admin password) is configured from the web UI
-afterward, stored in `/data/verifyarr.db`:
-
-```yaml
-volumes:
-  - /path/to/media/movies:/media/movies
-  - /path/to/media/tv:/media/tv
-  - ./data:/data
-```
+Grab the compose file and edit its `volumes:` to point at your real media folders (it builds
+straight from this repo, no separate clone needed):
 
 ```bash
-docker compose up -d --build
+curl -O https://raw.githubusercontent.com/KlausHammer/Verifyarr/main/docker-compose.yml
+docker compose up -d
 ```
 
 Open `http://your-server:8787`, create an admin password, then go through Settings: General
