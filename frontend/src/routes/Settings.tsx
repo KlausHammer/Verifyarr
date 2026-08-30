@@ -14,6 +14,7 @@ import type {
 } from '../api/types'
 import { buildCron, parseCron, DAY_NAMES, type FriendlySchedule, type ScheduleMode } from '../lib/cron'
 import { formatRelative } from '../lib/format'
+import ConfirmDialog from '../components/ConfirmDialog'
 import FolderBrowser from '../components/FolderBrowser'
 import LanguageMultiSelect from '../components/LanguageMultiSelect'
 import styles from './Settings.module.css'
@@ -320,12 +321,14 @@ function WhatRunsTable({ general, sync, correctness }: ReturnType<typeof useWhat
 
 function GeneralTab() {
   const { data, setData, error: loadError } = useGroup<GeneralSettings>('general')
+  const { data: bazarrData } = useGroup<BazarrSettings>('bazarr')
   const { busy, saved, error, save } = useSave('general')
   const [detecting, setDetecting] = useState(false)
   const [detectProgress, setDetectProgress] = useState<{ done: number; total: number } | null>(null)
   const [detectResult, setDetectResult] = useState<string | null>(null)
   const [detectError, setDetectError] = useState<string | null>(null)
   const [stopping, setStopping] = useState(false)
+  const [showBazarrWarning, setShowBazarrWarning] = useState(false)
 
   // Polls the actual server-side state rather than trusting only this component's own
   // `detecting` -- switching Settings tabs unmounts this component entirely, so on its own
@@ -375,6 +378,19 @@ function GeneralTab() {
     // unmounted (tab switch) before this request resolved.
   }
 
+  // Without Bazarr configured, embedded-subtitle detection has no bulk source to read from
+  // (see bazarr_embedded_subtitle_langs) and falls all the way back to per-file ffprobe for
+  // everything -- fine for a small library, slow for a large one. Warn instead of silently
+  // running into that on a library the size of a real one.
+  function handleDetectClick() {
+    const bazarrConfigured = !!bazarrData?.url && !!bazarrData?.api_key.is_set
+    if (bazarrConfigured) {
+      detectNow()
+    } else {
+      setShowBazarrWarning(true)
+    }
+  }
+
   async function stopDetect() {
     setStopping(true)
     try {
@@ -388,6 +404,18 @@ function GeneralTab() {
 
   return (
     <>
+      {showBazarrWarning && (
+        <ConfirmDialog
+          title="Bazarr isn't configured"
+          message="Without Bazarr set up (Settings -> Bazarr), embedded-subtitle detection has to check every video file individually instead of reading it from Bazarr in bulk -- much slower on a large library. You can still run it, or set up Bazarr first."
+          confirmLabel="Detect anyway"
+          onConfirm={() => {
+            setShowBazarrWarning(false)
+            detectNow()
+          }}
+          onCancel={() => setShowBazarrWarning(false)}
+        />
+      )}
       {!data ? (
         <span className="spinner" />
       ) : (
@@ -426,7 +454,7 @@ function GeneralTab() {
                 {stopping ? <span className="spinner" /> : 'Stop'}
               </button>
             ) : (
-              <button type="button" className="btn btn-sm" onClick={detectNow}>
+              <button type="button" className="btn btn-sm" onClick={handleDetectClick}>
                 Detect now
               </button>
             )}
