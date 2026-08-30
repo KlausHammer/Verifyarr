@@ -8,9 +8,11 @@ and `/episodes/wanted` + `/movies/wanted` are a strictly better "is this ready y
 either the old "added" timestamp or the webhook's one-shot "does a file already exist" check.
 
 One real gap, accepted deliberately: a bundled/embedded subtitle that already satisfies Bazarr
-from the very first look never appears in "wanted" at all, so it's never noticed here — that
-still gets picked up eventually by the regular scheduled sweep. Embedded subtitle tracks
-themselves are never checked at all (assumed to already fit the media, by design)."""
+from the very first look never appears in "wanted" at all, so this poll never notices that
+episode. That's fine — the scheduled sweep discovers every video regardless (see
+discovery.discover_missing), and treats an embedded track the same way Bazarr does: as already
+satisfying that language, not something to flag or fetch. Embedded tracks themselves are never
+synced/verified — only external subtitle files are."""
 
 from __future__ import annotations
 

@@ -45,6 +45,30 @@ def detect_audio_language_ffprobe(video_path: Path) -> Optional[str]:
         return None
 
 
+def detect_embedded_subtitle_langs(video_path: Path) -> set[str]:
+    """Languages of every subtitle track baked into the video container itself, via ffprobe.
+    Used so a video isn't flagged 'missing' a language just because there's no separate
+    subtitle FILE for it -- Bazarr already considers an embedded track as satisfying that
+    language and won't download a separate one either, and this tool has no way to
+    sync/verify an embedded track (only external files), so there's nothing to do for it."""
+    cmd = ["ffprobe", "-v", "error", "-select_streams", "s",
+           "-show_entries", "stream_tags=language", "-of", "json", str(video_path)]
+    try:
+        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+        data = json.loads(proc.stdout or "{}")
+    except Exception:
+        return set()
+    langs = set()
+    for stream in data.get("streams", []):
+        tag = (stream.get("tags", {}) or {}).get("language", "").lower()
+        if not tag or tag in ("und", "unk", "undefined"):
+            continue
+        mapped = LANG3_TO_LANG2.get(tag, tag if LANG_CODE_RE.match(tag) else None)
+        if mapped:
+            langs.add(mapped)
+    return langs
+
+
 def get_duration_seconds(video_path: Path) -> Optional[float]:
     cmd = ["ffprobe", "-v", "error", "-show_entries", "format=duration",
            "-of", "json", str(video_path)]

@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Optional
 
 from verifyarr import log
+from verifyarr.correctness import detect_embedded_subtitle_langs
 from verifyarr.settings import Config
 
 SUBTITLE_EXTS = {".srt", ".ass", ".ssa", ".vtt"}
@@ -145,18 +146,23 @@ def build_library_video_rows(cfg: Config, pairs: list[tuple[Path, Path, Optional
                               all_videos: list[Path]) -> list[dict]:
     """Rows for db.replace_library_videos, derived from a discover_pairs/discover_all_videos
     pair that already exists anyway (from a sweep, or a rescan call) — so persisting the
-    Library page never needs another os.walk beyond what already happens."""
+    Library page never needs another os.walk beyond what already happens. A video with no
+    external subtitle file still counts as having one if it has an embedded subtitle track
+    (see discover_missing) — checked lazily, only for videos that need it, to keep this cheap."""
     videos_with_subtitle = {video for video, _sub, _lang in pairs}
     rows = []
     for video in all_videos:
         se, title = infer_title_and_episode(video)
+        has_subtitle = video in videos_with_subtitle
+        if not has_subtitle:
+            has_subtitle = bool(detect_embedded_subtitle_langs(video))
         rows.append({
             "video_path": str(video),
             "media_root": str(cfg.media_root_for(video)),
             "kind": cfg.kind_for(video),
             "title": title or str(video.parent),
             "season_episode": se,
-            "has_subtitle": video in videos_with_subtitle,
+            "has_subtitle": has_subtitle,
         })
     return rows
 
@@ -166,7 +172,14 @@ def discover_missing(cfg: Config, pairs: list[tuple[Path, Path, Optional[str]]],
     """Videos where a wanted language (subtitle_langs) has no subtitle found for it at all —
     used by the sweep to populate 'missing' rows in the files table (see db.mark_missing).
     Only meaningful when subtitle_langs is set — if empty (all languages allowed), 'missing'
-    isn't well-defined, so nothing is reported."""
+    isn't well-defined, so nothing is reported.
+
+    An embedded subtitle track (baked into the video container, e.g. a bundled MKV track)
+    counts as satisfying a language too, same as Bazarr's own behavior — Bazarr won't fetch a
+    separate file for a language it already sees embedded, and this tool has no way to
+    sync/verify an embedded track either, so there's nothing to flag or do for it. Checked via
+    ffprobe, but only for a video that's already missing an external file for that language —
+    videos fully covered by external files never pay for the extra probe."""
     if not cfg.subtitle_langs:
         return []
     found: dict = {}
@@ -176,7 +189,13 @@ def discover_missing(cfg: Config, pairs: list[tuple[Path, Path, Optional[str]]],
     missing = []
     for video in all_videos:
         have = found.get(video, set())
-        for lang in cfg.subtitle_langs:
-            if lang not in have:
+        gaps = [lang for lang in cfg.subtitle_langs if lang not in have]
+        if not gaps:
+            continue
+        embedded = None
+        for lang in gaps:
+            if embedded is None:
+                embedded = detect_embedded_subtitle_langs(video)
+            if lang not in embedded:
                 missing.append((video, lang))
     return missing

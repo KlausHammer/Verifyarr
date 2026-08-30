@@ -271,7 +271,7 @@ class Config:
 SETTING_DEFS: dict = {
     "general.movies_folder":   ("general", "str", ""),
     "general.series_folder":   ("general", "str", ""),
-    "general.subtitle_langs":  ("general", "list", []),
+    "general.subtitle_langs":  ("general", "list", ["en"]),
     # Off by default — see fileops.backup_subtitle / pipeline.py. Gates every backup, not just one
     # feature's.
     "general.backup_originals": ("general", "bool", False),

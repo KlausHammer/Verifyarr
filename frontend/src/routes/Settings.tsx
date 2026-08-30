@@ -192,7 +192,7 @@ function SingleFolderField({ label, tip, path, onChange }: { label: string; tip?
         )}
       </div>
       {browsing && (
-        <FolderBrowser initialPath={path || '/'} onSelect={(p) => { onChange(p); setBrowsing(false) }} onClose={() => setBrowsing(false)} />
+        <FolderBrowser initialPath={path || '/media'} onSelect={(p) => { onChange(p); setBrowsing(false) }} onClose={() => setBrowsing(false)} />
       )}
     </div>
   )

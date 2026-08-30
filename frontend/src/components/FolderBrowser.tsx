@@ -14,7 +14,7 @@ interface BrowseResponse {
 }
 
 export default function FolderBrowser({
-  initialPath = '/',
+  initialPath = '/media',
   onSelect,
   onClose,
 }: {
