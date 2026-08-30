@@ -179,17 +179,6 @@ def bazarr_history_score(cfg: Config, kind: str, subtitles_path: str) -> Optiona
         return None
 
 
-def bazarr_trigger_auto_download(cfg: Config, series_id, episode_id, lang: str) -> bool:
-    """Asks Bazarr to search and fetch the best-scoring subtitle itself — same action as the
-    search icon in its UI. Respects Bazarr's own `general.minimum_score` setting, so it only
-    finds something if a candidate actually clears that threshold."""
-    resp = bazarr_request(cfg, "PATCH", "/episodes/subtitles", data={
-        "seriesid": series_id, "episodeid": episode_id, "language": lang,
-        "forced": "false", "hi": "false",
-    })
-    return resp is not None and resp.status_code in (200, 204)
-
-
 def bazarr_search_candidates(cfg: Config, episode_id, lang: str) -> list[dict]:
     """Raw candidate list from all providers, sorted by Bazarr's own score (highest first).
     Used only for MANUAL attempts — i.e. when nothing cleared minimum_score automatically,
@@ -267,20 +256,22 @@ def remediate_suspect(subtitle_path: Path, video_path: Path, cfg: Config, media_
                        conn=None, run_id: Optional[int] = None) -> str:
     """auto-action=remediate: like 'blacklist', but instead of just leaving the language
     missing, it tries to fetch a working replacement itself:
-      1. Ask Bazarr to search+fetch on its own (its own best match — respects minimum_score).
-      2. If a new file appears, test it (alass + Whisper, see verify_subtitle_candidate).
-         Passes -> done.
-      3. If it fails, blacklist that one too, and try up to REMEDIATE_MAX_ATTEMPTS more times
+      1. Wait for whatever Bazarr's own blacklist call already started downloading (deleting
+         the old file successfully is what makes Bazarr auto-search for a replacement — see
+         handle_suspect in verifyarr.pipeline, which calls this only after that succeeded).
+         If a file appears, test it (alass + Whisper, see verify_subtitle_candidate). Passes
+         -> done.
+      2. If it fails, blacklist that one too, and try up to REMEDIATE_MAX_ATTEMPTS more times
          with manually picked candidates from Bazarr's full provider search (Bazarr's own
          score, regardless of Bazarr's OWN minimum_score setting — the point is to test
          candidates Bazarr itself would reject, with our check as the judge).
          automation.remediate_min_score is our OWN, separate threshold on that same Bazarr
          score — candidates below it are never even downloaded.
-      4. If nothing works, the language is left missing (Bazarr's normal "subtitle missing"
+      3. If nothing works, the language is left missing (Bazarr's normal "subtitle missing"
          state — its periodic search will try again later), and the attempt is logged in the
          returned message.
-    Called after the original file has already been quarantined+blacklisted (see
-    handle_suspect in verifyarr.pipeline)."""
+    Called after the original file has already been blacklisted in Bazarr (see handle_suspect
+    in verifyarr.pipeline)."""
     series_id, episode_id = meta.get("series_id"), meta.get("episode_id")
     if not series_id or not episode_id:
         return "cannot remediate — missing series_id/episode_id from Bazarr"
@@ -333,13 +324,9 @@ def remediate_suspect(subtitle_path: Path, video_path: Path, cfg: Config, media_
                 )
         return None
 
-    auto_triggered = bazarr_trigger_auto_download(cfg, series_id, episode_id, lang)
-    if auto_triggered:
-        result = try_current_file_and_maybe_blacklist("auto-search")
-        if result:
-            return result
-    else:
-        log_lines.append("auto-search: PATCH call failed, skipped")
+    result = try_current_file_and_maybe_blacklist("auto-download (from blacklist)")
+    if result:
+        return result
 
     candidates = bazarr_search_candidates(cfg, episode_id, lang)
     # automation.remediate_min_score (default 80%) — Bazarr's OWN judgment of the candidate, not
@@ -370,7 +357,7 @@ def remediate_suspect(subtitle_path: Path, video_path: Path, cfg: Config, media_
         if result:
             return result
 
-    total = (1 if auto_triggered else 0) + attempts
+    total = 1 + attempts
     return (f"no usable subtitle found after {total} attempt(s) "
-            f"({'1 auto + ' if auto_triggered else ''}{attempts} manual) — language left as "
+            f"(1 auto + {attempts} manual) — language left as "
             f"missing. " + " | ".join(log_lines))

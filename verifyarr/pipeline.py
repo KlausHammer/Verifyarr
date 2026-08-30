@@ -30,32 +30,63 @@ def handle_suspect(subtitle_path: Path, video_path: Path, cfg: Config, media_roo
     """auto_action: off | quarantine | blacklist | remediate — the CALLER decides which (see
     process_pair below): correctness_auto_action for a plain correctness SUSPECT,
     line_order_auto_action for a widespread line-order swap. Two independent settings, since the
-    two checks can warrant different amounts of trust in their own SUSPECT verdict."""
+    two checks can warrant different amounts of trust in their own SUSPECT verdict.
+
+    blacklist/remediate hand the file to Bazarr's own blacklist endpoint rather than moving it
+    out first: Bazarr deletes the file itself as part of blacklisting it, and -- ONLY if that
+    delete succeeds -- automatically searches for and starts fetching a replacement. Moving the
+    file away beforehand (the old behavior) made that delete fail every time (file already
+    gone), silently breaking Bazarr's own auto-redownload. So for these two actions we instead
+    leave the file in place for Bazarr to remove, and back up a copy first (general.
+    backup_originals) as the local safety net for that deletion instead of a quarantine move."""
     if auto_action == "off":
         return "none (action=off)"
     if cfg.dry_run:
-        return "would quarantine [dry-run]"
+        return f"would {auto_action} [dry-run]"
 
-    try:
-        dest = quarantine_subtitle(subtitle_path, cfg.quarantine_dir, media_root)
-    except Exception as e:
-        log.warning("Could not quarantine %s: %s", subtitle_path, e)
-        return f"quarantine failed: {e}"
-
-    if auto_action not in ("blacklist", "remediate"):
+    if auto_action == "quarantine":
+        try:
+            dest = quarantine_subtitle(subtitle_path, cfg.quarantine_dir, media_root)
+        except Exception as e:
+            log.warning("Could not quarantine %s: %s", subtitle_path, e)
+            return f"quarantine failed: {e}"
         return f"quarantined -> {dest}"
 
     meta = dict(bazarr_meta) if bazarr_meta else None
     if meta is None and history_index is not None:
         meta = history_index.get(bazarr_map_path(cfg, subtitle_path))
     if meta is None:
+        # No Bazarr match -- Bazarr can't remove/replace it for us, so fall back to a plain
+        # local quarantine move instead, same as quarantine mode.
+        try:
+            dest = quarantine_subtitle(subtitle_path, cfg.quarantine_dir, media_root)
+        except Exception as e:
+            log.warning("Could not quarantine %s: %s", subtitle_path, e)
+            return f"quarantine failed: {e}"
         return f"quarantined -> {dest}; blacklist skipped (no Bazarr match)"
+
     meta.setdefault("subtitles_path", bazarr_map_path(cfg, subtitle_path))
     if not meta.get("language") and lang:
         meta["language"] = lang
+
+    if cfg.backup_originals:
+        try:
+            backup_subtitle(subtitle_path, cfg.backup_dir, media_root)
+        except Exception as e:
+            log.warning("Could not back up %s before blacklisting: %s", subtitle_path, e)
+
     ok = bazarr_blacklist(cfg, meta)
-    msg = f"quarantined -> {dest}; {'blacklisted in Bazarr' if ok else 'blacklist failed'}"
-    if ok and conn is not None:
+    if not ok:
+        # Bazarr didn't remove it (couldn't reach it, etc.) -- fall back to moving it out of
+        # the library ourselves rather than leaving a known-bad file in place doing nothing.
+        try:
+            dest = quarantine_subtitle(subtitle_path, cfg.quarantine_dir, media_root)
+            return f"blacklist failed; quarantined -> {dest} instead"
+        except Exception as e:
+            return f"blacklist failed, and could not quarantine either: {e}"
+
+    msg = "blacklisted in Bazarr (file removed there; Bazarr is searching for a replacement)"
+    if conn is not None:
         db.add_blacklist_action(
             conn, subtitle_path=str(subtitle_path), video_path=str(video_path), kind=meta.get("kind", "episode"),
             provider=meta.get("provider"), subs_id=meta.get("subs_id"), language=meta.get("language"),
@@ -65,8 +96,6 @@ def handle_suspect(subtitle_path: Path, video_path: Path, cfg: Config, media_roo
 
     if auto_action != "remediate":
         return msg
-    if not ok:
-        return msg + "; remediation skipped (blacklist failed first)"
     return msg + "; " + remediate_suspect(subtitle_path, video_path, cfg, media_root, lang, meta,
                                            cancel_event=cancel_event, conn=conn, run_id=run_id)
 

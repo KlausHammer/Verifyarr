@@ -53,11 +53,14 @@ Set per-check (correctness / line-order) under Settings → Automation:
 |---|---|
 | `off` *(default)* | Flags it in the report, nothing else |
 | `quarantine` | Moves it to `/data/quarantine` |
-| `blacklist` | + tells Bazarr to blacklist that source |
-| `remediate` | + tries to fetch a working replacement via Bazarr, testing each candidate itself |
+| `blacklist` | Tells Bazarr to blacklist that source, which removes the file and makes Bazarr search for a replacement on its own |
+| `remediate` | Same as `blacklist`, then waits for and tests whatever Bazarr finds itself; if that fails, tries more candidates from Bazarr's provider search until one passes or attempts run out |
 
-Nothing is ever permanently deleted — quarantined/backed-up files sit under `/data`, restorable
-from the webapp's Quarantine page.
+`blacklist`/`remediate` hand the file to Bazarr rather than quarantining it locally, since Bazarr
+only auto-searches for a replacement once it's actually deleted the file. Nothing is lost even
+so: if "Back up subtitles" is on (Settings → General), a copy is saved to `/data/backups` first.
+If Bazarr can't be reached or has no record of the file, it falls back to a local quarantine
+move instead.
 
 
 ## Notes
