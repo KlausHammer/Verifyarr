@@ -18,7 +18,7 @@ from typing import Optional
 from fastapi import APIRouter, Depends, Query
 
 from verifyarr import db
-from verifyarr.library_poll import refresh_library_cache
+from verifyarr.library_poll import get_progress, refresh_library_cache
 from verifyarr.settings import Config
 from verifyarr.web.deps import get_conn, require_auth
 
@@ -87,6 +87,14 @@ def _grouped_response(conn, kind: Optional[str]) -> dict:
 def list_library(kind: Optional[str] = Query(None, pattern="^(movie|series)$"),
                   user=Depends(require_auth), conn=Depends(get_conn)):
     return _grouped_response(conn, kind)
+
+
+@router.get("/rescan/status")
+def rescan_status(user=Depends(require_auth)):
+    """Polled by the "Detect now" button to show a live X/Y counter, and to recover the right
+    "still running" state after switching Settings tabs and back (see get_progress's docstring
+    for why this lives server-side rather than in the button's own component state)."""
+    return get_progress()
 
 
 @router.post("/rescan")

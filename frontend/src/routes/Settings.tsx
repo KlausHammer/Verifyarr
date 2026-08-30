@@ -322,13 +322,39 @@ function GeneralTab() {
   const { data, setData, error: loadError } = useGroup<GeneralSettings>('general')
   const { busy, saved, error, save } = useSave('general')
   const [detecting, setDetecting] = useState(false)
+  const [detectProgress, setDetectProgress] = useState<{ done: number; total: number } | null>(null)
   const [detectResult, setDetectResult] = useState<string | null>(null)
   const [detectError, setDetectError] = useState<string | null>(null)
 
+  // Polls the actual server-side state rather than trusting only this component's own
+  // `detecting` -- switching Settings tabs unmounts this component entirely, so on its own
+  // that state can't survive a tab switch and back while a rescan is still running. This
+  // poll (started fresh on every mount) picks the real state back up either way.
+  useEffect(() => {
+    let cancelled = false
+    let timer: ReturnType<typeof setTimeout> | undefined
+    async function poll() {
+      try {
+        const s = await api.get<{ running: boolean; done: number; total: number }>('/library/rescan/status')
+        if (cancelled) return
+        setDetecting(s.running)
+        setDetectProgress(s.running && s.total > 0 ? { done: s.done, total: s.total } : null)
+      } catch {
+        // transient poll failure -- try again next tick rather than showing an error for this
+      }
+      if (!cancelled) timer = setTimeout(poll, 1000)
+    }
+    poll()
+    return () => {
+      cancelled = true
+      if (timer) clearTimeout(timer)
+    }
+  }, [])
+
   async function detectNow() {
-    setDetecting(true)
     setDetectResult(null)
     setDetectError(null)
+    setDetecting(true)
     try {
       const r = await api.post<LibraryResponse>('/library/rescan')
       setDetectResult(
@@ -338,9 +364,10 @@ function GeneralTab() {
       )
     } catch (err) {
       setDetectError(err instanceof ApiError ? err.message : String(err))
-    } finally {
-      setDetecting(false)
     }
+    // No `finally { setDetecting(false) }` here on purpose -- the poll loop above picks up
+    // the real "running: false" from the server, so it stays correct even if this component
+    // unmounted (tab switch) before this request resolved.
   }
 
   return (
@@ -381,6 +408,11 @@ function GeneralTab() {
             <button type="button" className="btn btn-sm" disabled={detecting} onClick={detectNow}>
               {detecting ? <span className="spinner" /> : 'Detect now'}
             </button>
+            {detectProgress && (
+              <span className="text-faint mono" style={{ fontSize: 12.5 }}>
+                {detectProgress.done} / {detectProgress.total}
+              </span>
+            )}
             <span className="text-dim" style={{ fontSize: 12.5 }}>
               {detectError ?? detectResult ?? 'Rechecks the folders above and refreshes Movies/Series/Files right away, instead of waiting for the next automatic check or a full sweep.'}
             </span>
