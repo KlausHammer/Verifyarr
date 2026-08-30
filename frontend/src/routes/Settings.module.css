@@ -1,0 +1,207 @@
+.tabs {
+  display: flex;
+  gap: 4px;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 22px;
+  flex-wrap: wrap;
+}
+
+.tab {
+  padding: 9px 14px;
+  color: var(--text-dim);
+  font-size: 13px;
+  font-weight: 500;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+}
+.tab:hover {
+  color: var(--text);
+  text-decoration: none;
+}
+.tabActive {
+  color: var(--text);
+  border-bottom-color: var(--accent);
+}
+
+.formCard {
+  max-width: 620px;
+}
+
+.whatRunsTable {
+  width: 100%;
+  max-width: 100%;
+  border-collapse: collapse;
+  margin-bottom: 18px;
+  overflow-x: auto;
+  display: block;
+}
+.whatRunsTable thead,
+.whatRunsTable tbody {
+  display: table;
+  width: 100%;
+  table-layout: fixed;
+}
+.whatRunsTable th,
+.whatRunsTable td {
+  text-align: left;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--border);
+  font-size: 13px;
+}
+.whatRunsTable th {
+  color: var(--text-dim);
+  font-weight: 500;
+  font-size: 12px;
+}
+.whatRunsTable th:first-child,
+.whatRunsTable td:first-child {
+  width: 32%;
+  color: var(--text);
+}
+.whatRunsTable th:not(:first-child),
+.whatRunsTable td:not(:first-child) {
+  width: 22.67%;
+}
+.whatRunsTable td:not(:first-child) input {
+  width: auto;
+}
+.whatRunsTable td:not(:first-child) select {
+  width: auto;
+  font-size: 12.5px;
+}
+.whatRunsTable tr:last-child td {
+  border-bottom: none;
+}
+
+/* Select + the "?" tip icon next to it, forced side by side -- select's global width:100% would
+   otherwise make it act like a block and push the tip onto its own line below. */
+.actionCell {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.row {
+  display: flex;
+  gap: 16px;
+}
+.row > .field {
+  flex: 1;
+}
+
+.checkRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 14px;
+}
+.checkRow input {
+  width: auto;
+}
+.checkRow label {
+  margin: 0;
+  color: var(--text);
+  font-weight: 400;
+}
+
+.timeRow {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.timeRow select {
+  width: 72px;
+}
+.timeColon {
+  color: var(--text-dim);
+  font-weight: 600;
+}
+
+.actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 18px;
+}
+
+.savedMsg {
+  color: var(--green);
+  font-size: 13px;
+}
+
+.tip {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  margin-left: 6px;
+  border-radius: 50%;
+  border: 1px solid var(--text-faint);
+  color: var(--text-faint);
+  font-size: 10px;
+  font-weight: 600;
+  cursor: help;
+  vertical-align: middle;
+}
+.tip:hover,
+.tip:focus {
+  border-color: var(--accent);
+  color: var(--accent);
+  outline: none;
+}
+
+.tipBubble {
+  position: absolute;
+  z-index: 30;
+  left: 50%;
+  bottom: calc(100% + 8px);
+  transform: translateX(-50%);
+  width: max-content;
+  max-width: 260px;
+  background: var(--bg-elevated);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 8px 10px;
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 1.45;
+  text-align: left;
+  white-space: normal;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.4);
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transition: opacity 0.1s ease;
+}
+.tip:hover .tipBubble,
+.tip:focus .tipBubble {
+  opacity: 1;
+  visibility: visible;
+}
+
+.logBox {
+  background: #0a0c12;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 12px 14px;
+  height: 420px;
+  overflow-y: auto;
+  font-family: var(--mono);
+  font-size: 12.5px;
+  line-height: 1.6;
+}
+.logLine {
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.levelDEBUG { color: var(--text-faint); }
+.levelWARNING { color: var(--yellow); }
+.levelERROR { color: var(--red); }
+.levelINFO { color: var(--text); }
+.ts {
+  color: var(--text-faint);
+  margin-right: 8px;
+}

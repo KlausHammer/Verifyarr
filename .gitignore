@@ -1,0 +1,26 @@
+# Runtime data — database, backups, quarantine, reports, logs. Never commit real user data.
+data/
+
+# Python
+__pycache__/
+**/__pycache__/
+*.pyc
+*.pyo
+
+# Built frontend copied into the backend for the Docker image
+verifyarr/web/static/
+
+# Frontend
+frontend/node_modules/
+frontend/dist/
+frontend/.vite/
+
+# SQLite artifacts (stray/local test DBs)
+*.db
+*.db-shm
+*.db-wal
+
+# Editor/OS cruft
+.DS_Store
+.vscode/
+.idea/

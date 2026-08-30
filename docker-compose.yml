@@ -1,0 +1,21 @@
+services:
+  verifyarr:
+    build: .
+    # Alternatively, if hosting the image somewhere else (e.g. a private registry):
+    # image: your-registry/verifyarr:latest
+    container_name: verifyarr
+    restart: unless-stopped
+    environment:
+      # Only exception to "everything is configured in the webapp" — affects log timestamps
+      # and how the schedule's cron expression (set under Settings -> Scheduling) is interpreted.
+      TZ: Europe/Copenhagen
+    ports:
+      - "8787:8787"
+    volumes:
+      # Set the left side to the real host paths, then pick the same two paths as the
+      # Movies/Series folders under Settings -> General.
+      - /path/to/media/movies:/media/movies
+      - /path/to/media/tv:/media/tv
+      # Data folder: database (settings, login, file history), reports, backup/quarantine of
+      # subtitles — all preserved across restarts/upgrades.
+      - ./data:/data
