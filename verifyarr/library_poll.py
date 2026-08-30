@@ -12,26 +12,18 @@ other."""
 
 from __future__ import annotations
 
-import concurrent.futures
 import sqlite3
 import threading
 
 from verifyarr import db, log
-from verifyarr.bazarr import bazarr_embedded_subtitle_langs
-from verifyarr.correctness import detect_embedded_subtitle_langs
 from verifyarr.discovery import (
     build_library_video_rows,
     discover_all_videos,
     discover_missing,
     discover_pairs,
-    videos_needing_embedded_check,
+    resolve_embedded_cache,
 )
 from verifyarr.settings import Config
-
-# ffprobe subprocess calls are I/O-bound (waiting on disk/network, not CPU), so a handful of
-# threads in parallel gives a near-linear speedup on a slow/network-mounted library without
-# opening so many concurrent handles that a small NAS's disk queue chokes on it.
-EMBEDDED_CHECK_WORKERS = 8
 
 # Progress/cancellation for whichever refresh_library_cache() call is currently running -- read
 # by GET /api/library/rescan/status so the "Detect now" button (Settings -> General) can show a
@@ -64,11 +56,10 @@ def refresh_library_cache(conn: sqlite3.Connection, cfg: Config) -> dict:
     the two can never drift apart. Returns {"pairs", "missing", "cancelled"?} for logging/
     reporting.
 
-    Embedded-subtitle language info is looked up in two layers, cheapest first: (1) Bazarr's own
-    already-known embedded tracks (bazarr_embedded_subtitle_langs — one bulk read of Bazarr's
-    DB, no filesystem access on our side at all), then (2) our own ffprobe, run across a thread
-    pool, only for whatever video Bazarr doesn't already cover (not configured in Bazarr, or not
-    scanned by it yet). On a library Bazarr fully manages, layer 2 often has nothing left to do."""
+    Embedded-subtitle language info comes from discovery.resolve_embedded_cache — Bazarr's own
+    already-known embedded tracks first (one bulk read, no filesystem access at all), then a
+    thread-pooled ffprobe fallback for whatever Bazarr doesn't already cover. Same helper
+    jobs._run_sweep uses, so both stay equally fast and equally cancellable."""
     _cancel_event.clear()
     # Marked running before the directory walk (discover_pairs/discover_all_videos) even starts —
     # on a large library over a slow/network-mounted media folder, the walk itself can take a
@@ -81,45 +72,14 @@ def refresh_library_cache(conn: sqlite3.Connection, cfg: Config) -> dict:
     pairs = discover_pairs(cfg)
     all_videos = discover_all_videos(cfg)
 
-    # Layer 1: seed from Bazarr, one bulk call, before touching the filesystem at all.
-    embedded_cache: dict = bazarr_embedded_subtitle_langs(cfg)
-
-    # Layer 2: thread-pooled ffprobe, only for videos layer 1 didn't already answer.
-    needs = videos_needing_embedded_check(cfg, pairs, all_videos, embedded_cache=embedded_cache)
-    total = max(len(needs), 1)
-    done = 0
-    with _progress_lock:
-        _progress.update(done=0, total=total)
-
-    def _bump() -> None:
-        nonlocal done
-        done += 1
+    def _report(done: int, total: int) -> None:
         with _progress_lock:
-            _progress["done"] = min(done, total)
+            _progress.update(done=done, total=total)
 
-    cancelled = False
-    if needs:
-        pool = concurrent.futures.ThreadPoolExecutor(max_workers=EMBEDDED_CHECK_WORKERS)
-        try:
-            future_to_video = {pool.submit(detect_embedded_subtitle_langs, v): v for v in needs}
-            for future in concurrent.futures.as_completed(future_to_video):
-                if _cancel_event.is_set():
-                    cancelled = True
-                    break
-                video = future_to_video[future]
-                try:
-                    embedded_cache[video] = future.result()
-                except Exception:
-                    embedded_cache[video] = set()
-                _bump()
-        finally:
-            # Cancelled: don't block waiting for whatever's still mid-ffprobe -- drop it, those
-            # threads finish quietly in the background and their results are simply never used.
-            pool.shutdown(wait=not cancelled, cancel_futures=cancelled)
-    else:
-        _bump()
+    embedded_cache = resolve_embedded_cache(cfg, pairs, all_videos, cancel_event=_cancel_event,
+                                             progress_cb=_report)
 
-    if cancelled:
+    if _cancel_event.is_set():
         log.info("Library rescan cancelled by user")
         with _progress_lock:
             _progress.update(running=False, cancelled=True)

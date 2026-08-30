@@ -643,7 +643,8 @@ function CorrectnessTab() {
             tip={data.groq_api_key.is_set ? 'A key is already saved — type here only to replace it.' : 'Not set yet.'}
           >
             <input
-              type="password"
+              type="text"
+              autoComplete="off"
               placeholder={data.groq_api_key.is_set ? '••••••••••••••••  (saved — leave blank to keep)' : 'gsk_…'}
               value={newGroqKey}
               onChange={(e) => setNewGroqKey(e.target.value)}
@@ -686,7 +687,8 @@ function CorrectnessTab() {
             tip={data.openrouter_api_key.is_set ? 'A key is already saved — type here only to replace it.' : 'Not set yet.'}
           >
             <input
-              type="password"
+              type="text"
+              autoComplete="off"
               placeholder={data.openrouter_api_key.is_set ? '••••••••••••••••  (saved — leave blank to keep)' : 'sk-or-…'}
               value={newOpenRouterKey}
               onChange={(e) => setNewOpenRouterKey(e.target.value)}
@@ -898,7 +900,8 @@ function BazarrTab() {
         tip={data.api_key.is_set ? "A key is already saved. It's left blank here on purpose -- type only if you want to replace it." : 'Not set yet.'}
       >
         <input
-          type="password"
+          type="text"
+          autoComplete="off"
           placeholder={data.api_key.is_set ? '••••••••••••••••  (saved — leave blank to keep)' : 'Not set'}
           value={newApiKey}
           onChange={(e) => setNewApiKey(e.target.value)}

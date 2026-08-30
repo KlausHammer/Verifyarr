@@ -21,7 +21,7 @@ from verifyarr import db
 from verifyarr.settings import Config
 from verifyarr.discovery import (discover_pairs, discover_all_videos, discover_missing,
                                 parse_lang_from_filename, build_library_video_rows,
-                                infer_title_and_episode)
+                                infer_title_and_episode, resolve_embedded_cache)
 from verifyarr.pipeline import process_pair
 from verifyarr.reports import write_report
 from verifyarr.bazarr import bazarr_build_history_index
@@ -116,9 +116,19 @@ def _run_sweep(conn: sqlite3.Connection, run_id: int, cfg: Config, force: bool,
                 title: Optional[str] = None, season: Optional[str] = None) -> None:
     pairs = discover_pairs(cfg)
     all_videos = discover_all_videos(cfg)
-    missing = discover_missing(cfg, pairs, all_videos)
-    log.info("Found %d video/subtitle pairs and %d missing languages under %s",
-              len(pairs), len(missing), cfg.media_roots)
+    # Logged immediately, before the (possibly slower) embedded-subtitle check below, so
+    # Activity shows something within seconds of the directory walk instead of sitting on
+    # "waiting for log lines" for however long that check takes -- and cancel_event is now
+    # threaded through it too, so Cancel actually does something during this phase instead of
+    # only taking effect once the per-file loop below is reached.
+    log.info("Found %d video/subtitle pairs under %s — checking for embedded subtitles...",
+              len(pairs), cfg.media_roots)
+    embedded_cache = resolve_embedded_cache(cfg, pairs, all_videos, cancel_event=cancel_event)
+    if cancel_event.is_set():
+        log.warning("Job cancelled — stopping during embedded-subtitle check")
+        raise JobCancelled("cancelled during embedded-subtitle check")
+    missing = discover_missing(cfg, pairs, all_videos, embedded_cache=embedded_cache)
+    log.info("Found %d missing language(s)", len(missing))
 
     # Library "Scan"/"Rescan" (see web/routers/library.py) can restrict a sweep to one kind
     # (Movies/Series), one title, and/or (series only) one season — everything above (discovery,
@@ -146,8 +156,9 @@ def _run_sweep(conn: sqlite3.Connection, run_id: int, cfg: Config, force: bool,
 
     # We already walked the tree above — reuse it to refresh the Library page's cache (it
     # does NOT scan itself per page load, see web/routers/library.py), instead of requiring
-    # a separate rescan click to discover files added since the last sweep.
-    db.replace_library_videos(conn, build_library_video_rows(cfg, pairs, all_videos))
+    # a separate rescan click to discover files added since the last sweep. embedded_cache is
+    # reused rather than recomputed -- it already has an answer for every video that needs one.
+    db.replace_library_videos(conn, build_library_video_rows(cfg, pairs, all_videos, embedded_cache=embedded_cache))
 
     for video, lang in missing:
         db.mark_missing(conn, video, lang, cfg.media_root_for(video))

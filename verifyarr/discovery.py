@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import concurrent.futures
 import os
 import re
+import threading
 from pathlib import Path
-from typing import Optional
+from typing import Callable, Optional
 
 from verifyarr import log
 from verifyarr.correctness import detect_embedded_subtitle_langs
@@ -14,6 +16,11 @@ from verifyarr.settings import Config
 SUBTITLE_EXTS = {".srt", ".ass", ".ssa", ".vtt"}
 LANG_CODE_RE = re.compile(r"^[a-z]{2,3}$")
 SXXEYY_RE = re.compile(r"[Ss](\d{1,2})[Ee](\d{1,3})")
+
+# ffprobe subprocess calls are I/O-bound (waiting on disk/network, not CPU), so a handful of
+# threads in parallel gives a near-linear speedup on a slow/network-mounted library without
+# opening so many concurrent handles that a small NAS's disk queue chokes on it.
+EMBEDDED_CHECK_WORKERS = 8
 
 
 def _lang_from_name_parts(name: str, stem_len: int) -> Optional[str]:
@@ -164,6 +171,58 @@ def videos_needing_embedded_check(cfg: Config, pairs: list[tuple[Path, Path, Opt
             if any(lang not in have for lang in cfg.subtitle_langs):
                 needs.add(video)
     return needs - embedded_cache.keys()
+
+
+def resolve_embedded_cache(cfg: Config, pairs: list[tuple[Path, Path, Optional[str]]],
+                            all_videos: list[Path], cancel_event: Optional[threading.Event] = None,
+                            progress_cb: Optional[Callable[[int, int], None]] = None) -> dict[Path, set[str]]:
+    """{video_path: {embedded lang, ...}} for every video that needs one — Bazarr's own
+    already-known embedded tracks first (one bulk read, no filesystem access at all), then an
+    8-worker ffprobe thread pool for whatever Bazarr doesn't already cover. Shared by both
+    library_poll.refresh_library_cache (the "Detect now" button) and jobs._run_sweep, so a
+    sweep gets the same speedup instead of quietly paying for a slow sequential ffprobe pass
+    before its very first log line, or its own file loop, even starts — that's what made a
+    sweep look hung with zero log output and an unresponsive Cancel for however long the old
+    per-video ffprobe fallback took on a large/network-mounted library.
+
+    cancel_event: checked between completed probes (not mid-subprocess) — set means "stop and
+    return whatever's resolved so far", never a hard kill of a probe already in flight.
+    progress_cb(done, total), if given, is called after each probe completes — used by the
+    "Detect now" button's live counter (see library_poll.get_progress)."""
+    from verifyarr.bazarr import bazarr_embedded_subtitle_langs  # local: keeps bazarr.py's own
+    # heavier dependency chain (sync_engine/correctness/subtitles/requests) out of every plain
+    # discovery.py import, most of which never touch Bazarr at all.
+
+    embedded_cache = bazarr_embedded_subtitle_langs(cfg)
+    needs = videos_needing_embedded_check(cfg, pairs, all_videos, embedded_cache=embedded_cache)
+    total = len(needs)
+    if progress_cb:
+        progress_cb(0, total)
+    if not needs:
+        return embedded_cache
+
+    done = 0
+    cancelled = False
+    pool = concurrent.futures.ThreadPoolExecutor(max_workers=EMBEDDED_CHECK_WORKERS)
+    try:
+        future_to_video = {pool.submit(detect_embedded_subtitle_langs, v): v for v in needs}
+        for future in concurrent.futures.as_completed(future_to_video):
+            if cancel_event is not None and cancel_event.is_set():
+                cancelled = True
+                break
+            video = future_to_video[future]
+            try:
+                embedded_cache[video] = future.result()
+            except Exception:
+                embedded_cache[video] = set()
+            done += 1
+            if progress_cb:
+                progress_cb(done, total)
+    finally:
+        # Cancelled: don't block waiting for whatever's still mid-ffprobe -- drop it, those
+        # threads finish quietly in the background and their results are simply never used.
+        pool.shutdown(wait=not cancelled, cancel_futures=cancelled)
+    return embedded_cache
 
 
 def build_library_video_rows(cfg: Config, pairs: list[tuple[Path, Path, Optional[str]]],
