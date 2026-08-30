@@ -325,6 +325,7 @@ function GeneralTab() {
   const [detectProgress, setDetectProgress] = useState<{ done: number; total: number } | null>(null)
   const [detectResult, setDetectResult] = useState<string | null>(null)
   const [detectError, setDetectError] = useState<string | null>(null)
+  const [stopping, setStopping] = useState(false)
 
   // Polls the actual server-side state rather than trusting only this component's own
   // `detecting` -- switching Settings tabs unmounts this component entirely, so on its own
@@ -335,7 +336,9 @@ function GeneralTab() {
     let timer: ReturnType<typeof setTimeout> | undefined
     async function poll() {
       try {
-        const s = await api.get<{ running: boolean; done: number; total: number }>('/library/rescan/status')
+        const s = await api.get<{ running: boolean; done: number; total: number; cancelled: boolean }>(
+          '/library/rescan/status',
+        )
         if (cancelled) return
         setDetecting(s.running)
         setDetectProgress(s.running && s.total > 0 ? { done: s.done, total: s.total } : null)
@@ -358,9 +361,11 @@ function GeneralTab() {
     try {
       const r = await api.post<LibraryResponse>('/library/rescan')
       setDetectResult(
-        `Found ${r.pairs_found ?? 0} video/subtitle pair(s)` +
-          (r.missing_found ? `, ${r.missing_found} missing language(s)` : '') +
-          ` — ${formatRelative(r.last_scanned_at)}.`,
+        r.cancelled
+          ? 'Stopped — nothing changed.'
+          : `Found ${r.pairs_found ?? 0} video/subtitle pair(s)` +
+              (r.missing_found ? `, ${r.missing_found} missing language(s)` : '') +
+              ` — ${formatRelative(r.last_scanned_at)}.`,
       )
     } catch (err) {
       setDetectError(err instanceof ApiError ? err.message : String(err))
@@ -368,6 +373,17 @@ function GeneralTab() {
     // No `finally { setDetecting(false) }` here on purpose -- the poll loop above picks up
     // the real "running: false" from the server, so it stays correct even if this component
     // unmounted (tab switch) before this request resolved.
+  }
+
+  async function stopDetect() {
+    setStopping(true)
+    try {
+      await api.post('/library/rescan/cancel')
+    } catch (err) {
+      setDetectError(err instanceof ApiError ? err.message : String(err))
+    } finally {
+      setStopping(false)
+    }
   }
 
   return (
@@ -405,9 +421,15 @@ function GeneralTab() {
             onChange={(series_folder) => setData({ ...data, series_folder })}
           />
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 16 }}>
-            <button type="button" className="btn btn-sm" disabled={detecting} onClick={detectNow}>
-              {detecting ? <span className="spinner" /> : 'Detect now'}
-            </button>
+            {detecting ? (
+              <button type="button" className="btn btn-sm" disabled={stopping} onClick={stopDetect}>
+                {stopping ? <span className="spinner" /> : 'Stop'}
+              </button>
+            ) : (
+              <button type="button" className="btn btn-sm" onClick={detectNow}>
+                Detect now
+              </button>
+            )}
             {detectProgress && (
               <span className="text-faint mono" style={{ fontSize: 12.5 }}>
                 {detectProgress.done} / {detectProgress.total}

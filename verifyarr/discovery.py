@@ -5,7 +5,7 @@ from __future__ import annotations
 import os
 import re
 from pathlib import Path
-from typing import Callable, Optional
+from typing import Optional
 
 from verifyarr import log
 from verifyarr.correctness import detect_embedded_subtitle_langs
@@ -142,9 +142,32 @@ def discover_all_videos(cfg: Config) -> list[Path]:
     return videos
 
 
+def videos_needing_embedded_check(cfg: Config, pairs: list[tuple[Path, Path, Optional[str]]],
+                                   all_videos: list[Path], embedded_cache: Optional[dict] = None) -> set[Path]:
+    """Every video that build_library_video_rows() and/or discover_missing() would end up
+    calling detect_embedded_subtitle_langs() on, computed up front (without any ffprobe calls
+    of its own) so a caller can run those checks concurrently or skip them for videos already
+    answered another way (see library_poll.refresh_library_cache, which seeds embedded_cache
+    from Bazarr's own already-known embedded tracks first, then only threads ffprobe over
+    whatever's left)."""
+    if embedded_cache is None:
+        embedded_cache = {}
+    videos_with_subtitle = {video for video, _sub, _lang in pairs}
+    found: dict = {}
+    for video, _sub, lang in pairs:
+        if lang:
+            found.setdefault(video, set()).add(lang)
+    needs = {video for video in all_videos if video not in videos_with_subtitle}
+    if cfg.subtitle_langs:
+        for video in all_videos:
+            have = found.get(video, set())
+            if any(lang not in have for lang in cfg.subtitle_langs):
+                needs.add(video)
+    return needs - embedded_cache.keys()
+
+
 def build_library_video_rows(cfg: Config, pairs: list[tuple[Path, Path, Optional[str]]],
                               all_videos: list[Path],
-                              progress_cb: Optional[Callable[[], None]] = None,
                               embedded_cache: Optional[dict] = None) -> list[dict]:
     """Rows for db.replace_library_videos, derived from a discover_pairs/discover_all_videos
     pair that already exists anyway (from a sweep, or a rescan call) — so persisting the
@@ -152,15 +175,12 @@ def build_library_video_rows(cfg: Config, pairs: list[tuple[Path, Path, Optional
     external subtitle file still counts as having one if it has an embedded subtitle track
     (see discover_missing) — checked lazily, only for videos that need it, to keep this cheap.
 
-    embedded_cache: optional {video: set(langs)} shared with a discover_missing() call on the
-    same all_videos list (see library_poll.refresh_library_cache) — a video with zero external
-    subtitles gets probed by both functions otherwise, doubling the ffprobe cost for that video.
-    Each ffprobe call is a real filesystem read, so on slow/network-mounted media this matters.
-
-    progress_cb, if given, is called once per video (whether or not it needed the embedded
-    check) — lets a caller like library_poll.refresh_library_cache report "how far along" for
-    the "Detect now" button, since the embedded-track ffprobe calls are the only part of this
-    that can take a noticeable amount of time on a big library."""
+    embedded_cache: optional {video: set(langs)}, shared with a discover_missing() call on the
+    same all_videos list so a video isn't checked twice. Ideally pre-populated by the caller
+    (see library_poll.refresh_library_cache, which seeds it from Bazarr's own already-known
+    embedded tracks, then a thread pool for whatever's left) — a video still missing from it
+    here falls back to a plain synchronous detect_embedded_subtitle_langs() call, a real
+    filesystem read, so on slow/network-mounted media an unseeded cache costs real time."""
     if embedded_cache is None:
         embedded_cache = {}
     videos_with_subtitle = {video for video, _sub, _lang in pairs}
@@ -180,14 +200,11 @@ def build_library_video_rows(cfg: Config, pairs: list[tuple[Path, Path, Optional
             "season_episode": se,
             "has_subtitle": has_subtitle,
         })
-        if progress_cb:
-            progress_cb()
     return rows
 
 
 def discover_missing(cfg: Config, pairs: list[tuple[Path, Path, Optional[str]]],
                       all_videos: list[Path],
-                      progress_cb: Optional[Callable[[], None]] = None,
                       embedded_cache: Optional[dict] = None) -> list[tuple[Path, str]]:
     """Videos where a wanted language (subtitle_langs) has no subtitle found for it at all —
     used by the sweep to populate 'missing' rows in the files table (see db.mark_missing).
@@ -204,15 +221,11 @@ def discover_missing(cfg: Config, pairs: list[tuple[Path, Path, Optional[str]]],
     ffprobe, but only for a video that's already missing an external file for that language —
     videos fully covered by external files never pay for the extra probe.
 
-    embedded_cache: see build_library_video_rows — shared so a video isn't ffprobed twice
-    across the two functions.
-    progress_cb: see build_library_video_rows."""
+    embedded_cache: see build_library_video_rows — shared so a video isn't checked twice
+    across the two functions."""
     if embedded_cache is None:
         embedded_cache = {}
     if not cfg.subtitle_langs:
-        if progress_cb:
-            for _ in all_videos:
-                progress_cb()
         return []
     found: dict = {}
     for video, _sub, lang in pairs:
@@ -223,8 +236,6 @@ def discover_missing(cfg: Config, pairs: list[tuple[Path, Path, Optional[str]]],
         have = found.get(video, set())
         gaps = [lang for lang in cfg.subtitle_langs if lang not in have]
         if not gaps:
-            if progress_cb:
-                progress_cb()
             continue
         if video not in embedded_cache:
             embedded_cache[video] = detect_embedded_subtitle_langs(video)
@@ -232,6 +243,4 @@ def discover_missing(cfg: Config, pairs: list[tuple[Path, Path, Optional[str]]],
         for lang in gaps:
             if lang not in embedded:
                 missing.append((video, lang))
-        if progress_cb:
-            progress_cb()
     return missing

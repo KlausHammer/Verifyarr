@@ -87,6 +87,63 @@ def bazarr_build_history_index(cfg: Config) -> dict:
     return index
 
 
+def bazarr_embedded_subtitle_langs(cfg: Config) -> dict[Path, set[str]]:
+    """{video_path: {lang, ...}} for every embedded subtitle track Bazarr itself already knows
+    about (Bazarr's own "Embedded Subtitles" provider, if enabled under its Settings ->
+    Providers, does this exact detection already -- it's why Bazarr sometimes skips downloading
+    a language you'd expect it to fetch). Reading it here means discover_missing/
+    build_library_video_rows (see discovery.py) don't need to ffprobe a video Bazarr already
+    covers: one bulk read of Bazarr's DB beats one subprocess call per file, especially on a
+    large library over a slow/network-mounted media folder. A video Bazarr doesn't manage (or
+    hasn't scanned yet) simply won't be a key in the result -- callers fall back to their own
+    ffprobe check for those.
+
+    A subtitle entry counts as embedded when it has an "embedded_track_id" (Bazarr's own
+    marker for a track baked into the container, as opposed to a "path" for an external file).
+    Requires bazarr.url + bazarr.api_key; returns {} without them, same as the rest of this
+    module's Bazarr-backed lookups."""
+    result: dict[Path, set[str]] = {}
+    if not cfg.bazarr_url or not cfg.bazarr_api_key:
+        return result
+
+    def _absorb(items: list[dict]) -> None:
+        for item in items:
+            path = item.get("path")
+            if not path:
+                continue
+            langs = set()
+            for sub in (item.get("subtitles") or []):
+                if sub.get("embedded_track_id") is not None and sub.get("code2"):
+                    langs.add(sub["code2"])
+            if langs:
+                result.setdefault(bazarr_to_local_path(cfg, path), set()).update(langs)
+
+    movies_resp = bazarr_request(cfg, "GET", "/movies", params={"start": 0, "length": -1})
+    if movies_resp is not None and movies_resp.status_code == 200:
+        try:
+            _absorb(movies_resp.json().get("data", []))
+        except ValueError:
+            pass
+
+    series_resp = bazarr_request(cfg, "GET", "/series", params={"start": 0, "length": -1})
+    if series_resp is not None and series_resp.status_code == 200:
+        try:
+            series_ids = [s["sonarrSeriesId"] for s in series_resp.json().get("data", []) if s.get("sonarrSeriesId") is not None]
+        except ValueError:
+            series_ids = []
+        # One request with every seriesid[] repeated, rather than one call per show -- /episodes
+        # requires at least one seriesid[]/episodeid[] (unlike /movies, it 404s with neither).
+        if series_ids:
+            episodes_resp = bazarr_request(cfg, "GET", "/episodes", params={"seriesid[]": series_ids})
+            if episodes_resp is not None and episodes_resp.status_code == 200:
+                try:
+                    _absorb(episodes_resp.json().get("data", []))
+                except ValueError:
+                    pass
+
+    return result
+
+
 def bazarr_blacklist(cfg: Config, meta: dict) -> bool:
     if not cfg.bazarr_url or not cfg.bazarr_api_key:
         return False

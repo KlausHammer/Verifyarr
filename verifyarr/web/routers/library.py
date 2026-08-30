@@ -18,7 +18,7 @@ from typing import Optional
 from fastapi import APIRouter, Depends, Query
 
 from verifyarr import db
-from verifyarr.library_poll import get_progress, refresh_library_cache
+from verifyarr.library_poll import get_progress, refresh_library_cache, request_cancel
 from verifyarr.settings import Config
 from verifyarr.web.deps import get_conn, require_auth
 
@@ -97,6 +97,16 @@ def rescan_status(user=Depends(require_auth)):
     return get_progress()
 
 
+@router.post("/rescan/cancel")
+def cancel_rescan(user=Depends(require_auth)):
+    """The Stop button that replaces "Detect now" while a rescan is running. Cooperative --
+    stops the concurrent embedded-subtitle check between videos, doesn't kill an in-progress
+    ffprobe call, and the rescan's result is discarded entirely rather than partially saved
+    (see library_poll.refresh_library_cache)."""
+    request_cancel()
+    return get_progress()
+
+
 @router.post("/rescan")
 def rescan_library(kind: Optional[str] = Query(None, pattern="^(movie|series)$"),
                     user=Depends(require_auth), conn=Depends(get_conn)):
@@ -109,6 +119,8 @@ def rescan_library(kind: Optional[str] = Query(None, pattern="^(movie|series)$")
     cfg = Config.from_db(conn)
     result = refresh_library_cache(conn, cfg)
     response = _grouped_response(conn, kind)
-    response["pairs_found"] = result["pairs"]
-    response["missing_found"] = result["missing"]
+    response["cancelled"] = result.get("cancelled", False)
+    if not response["cancelled"]:
+        response["pairs_found"] = result["pairs"]
+        response["missing_found"] = result["missing"]
     return response

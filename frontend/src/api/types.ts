@@ -139,6 +139,7 @@ export interface LibraryResponse {
   // Only present on the POST /library/rescan response ("Detect now" button) -- not on a plain GET.
   pairs_found?: number
   missing_found?: number
+  cancelled?: boolean
 }
 
 export interface ArchivedItem {
