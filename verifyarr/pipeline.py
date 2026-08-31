@@ -260,7 +260,7 @@ def correctness_and_finish(video_path: Path, subtitle_path: Path, lang: Optional
             else:
                 with tempfile.TemporaryDirectory() as td2:
                     collected = collect_samples(video_path, current_subs, lang, cfg, Path(td2),
-                                                 cancel_event=cancel_event)
+                                                 conn=conn, cancel_event=cancel_event)
         except Exception as e:
             log.warning("Correctness/line-order check failed for %s: %s", subtitle_path, e)
             collected = {"skipped": True, "reason": str(e)}

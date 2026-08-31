@@ -149,25 +149,43 @@ def execute_run(run_id: int, cfg: Config, conn: sqlite3.Connection, cancel_event
 def _run_sweep(conn: sqlite3.Connection, run_id: int, cfg: Config, force: bool,
                 cancel_event: threading.Event, kind: Optional[str] = None,
                 title: Optional[str] = None, season: Optional[str] = None) -> None:
-    pairs = discover_pairs(cfg)
-    all_videos = discover_all_videos(cfg)
+    # A Scan scoped to one title/season (see web/routers/library.py) only needs to walk that
+    # title's own folder(s) -- resolved from the Library cache rather than the filesystem, so
+    # it requires a prior whole-library scan/Detect now to have seen this title at least once
+    # (true by construction: the Scan button only exists on the Library page for a title
+    # that's already in that cache). scope_roots is None for an unscoped run (Scan/Rescan on
+    # the whole Movies/Series page), meaning "walk cfg.media_roots" as before. If a scope is
+    # given but the cache has genuinely never seen it (shouldn't happen via the UI, but cheap
+    # to guard), falls back to a whole-library walk rather than silently finding nothing.
+    scope_roots: Optional[list[Path]] = None
+    if kind or title:
+        scope_video_paths = db.get_scope_video_paths(conn, kind, title, season)
+        if scope_video_paths:
+            scope_roots = sorted({p.parent for p in scope_video_paths})
+        else:
+            log.warning("Scoped Scan (kind=%s, title=%s, season=%s) has no cached videos yet -- "
+                        "falling back to a whole-library walk this once. Run Detect now (or an "
+                        "unscoped Scan) first and this will narrow to just that folder next time.",
+                        kind, title, season)
+
+    pairs = discover_pairs(cfg, roots=scope_roots)
+    all_videos = discover_all_videos(cfg, roots=scope_roots)
     # Logged immediately, before the (possibly slower) embedded-subtitle check below, so
     # Activity shows something within seconds of the directory walk instead of sitting on
     # "waiting for log lines" for however long that check takes -- and cancel_event is now
     # threaded through it too, so Cancel actually does something during this phase instead of
     # only taking effect once the per-file loop below is reached.
-    #
-    # This count is ALWAYS whole-library, even for a Scan scoped to one title/season (see the
-    # scoping block below) -- discovery and the Library cache refresh deliberately stay
-    # whole-tree so a scoped run never leaves the rest of the library's cache stale. Said
-    # explicitly here so a scoped Scan's log doesn't look like it's about to process everything
-    # (it isn't -- only the actual sync/correctness loop below is narrowed).
     scope_desc = " ".join(p for p in (title or (f"{kind}s" if kind else None), season) if p)
-    scope_note = f" — only the sync/correctness work below is scoped to {scope_desc}" if scope_desc else ""
-    log.info("Found %d video/subtitle pairs under %s — checking for embedded subtitles "
-             "(whole library, as always for this step%s)...",
-             len(pairs), cfg.media_roots, scope_note)
-    embedded_cache, bazarr_titles = resolve_embedded_cache(cfg, pairs, all_videos, cancel_event=cancel_event)
+    if scope_roots is not None:
+        walk_note = f"just {scope_desc}'s own folder(s)"
+    else:
+        walk_note = "whole library"
+    cache_note = "full recheck (Rescan)" if force else "reusing cached results for unchanged files"
+    log.info("Found %d video/subtitle pair(s) under %s — checking for embedded subtitles "
+             "(%s, %s)...", len(pairs), cfg.media_roots, walk_note, cache_note)
+    persisted = db.get_persisted_embedded_cache(conn, all_videos) if not force else None
+    embedded_cache, bazarr_titles = resolve_embedded_cache(cfg, pairs, all_videos, cancel_event=cancel_event,
+                                                            extra_cache=persisted)
     if cancel_event.is_set():
         log.warning("Job cancelled — stopping during embedded-subtitle check")
         raise JobCancelled("cancelled during embedded-subtitle check")
@@ -175,10 +193,10 @@ def _run_sweep(conn: sqlite3.Connection, run_id: int, cfg: Config, force: bool,
     log.info("Found %d missing language(s)", len(missing))
 
     # Library "Scan"/"Rescan" (see web/routers/library.py) can restrict a sweep to one kind
-    # (Movies/Series), one title, and/or (series only) one season — everything above (discovery,
-    # missing-marking, the library cache refresh below) stays whole-tree regardless, only the
-    # actual processing loop is narrowed, so scoping a run never leaves the rest of the library's
-    # cached state stale.
+    # (Movies/Series), one title, and/or (series only) one season. When scope_roots narrowed
+    # the walk above, `pairs` is already just that title/season -- this filter is now mostly a
+    # safety net (title inference could in principle disagree with what's cached) rather than
+    # the primary mechanism, but stays cheap and correct either way.
     scoped_pairs = pairs
     if kind:
         scoped_pairs = [p for p in scoped_pairs if cfg.kind_for(p[0]) == kind]
@@ -205,8 +223,14 @@ def _run_sweep(conn: sqlite3.Connection, run_id: int, cfg: Config, force: bool,
     # does NOT scan itself per page load, see web/routers/library.py), instead of requiring
     # a separate rescan click to discover files added since the last sweep. embedded_cache is
     # reused rather than recomputed -- it already has an answer for every video that needs one.
-    db.replace_library_videos(conn, build_library_video_rows(cfg, pairs, all_videos, embedded_cache=embedded_cache,
-                                                              bazarr_titles=bazarr_titles))
+    # A scoped run only touches its own scope_roots' rows (replace_library_videos_scoped);
+    # an unscoped run replaces the whole table as before.
+    new_rows = build_library_video_rows(cfg, pairs, all_videos, embedded_cache=embedded_cache,
+                                         bazarr_titles=bazarr_titles)
+    if scope_roots is not None:
+        db.replace_library_videos_scoped(conn, scope_roots, new_rows)
+    else:
+        db.replace_library_videos(conn, new_rows)
 
     for video, lang in missing:
         db.mark_missing(conn, video, lang, cfg.media_root_for(video))

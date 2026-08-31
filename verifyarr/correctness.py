@@ -13,6 +13,7 @@ from typing import Optional
 import requests
 
 from verifyarr import log
+from verifyarr import db
 from verifyarr.settings import Config
 from verifyarr.subtitles import pick_dialogue_dense_time, subs_text_in_window, tokenize
 
@@ -330,13 +331,21 @@ def _aggregate_correctness(samples: list[dict], cfg: Config) -> tuple[Optional[f
 
 
 def correctness_check(video_path: Path, subs: "pysubs2.SSAFile", sub_lang: Optional[str],
-                       cfg: Config, tmp_dir: Path, cancel_event=None) -> dict:
+                       cfg: Config, tmp_dir: Path, conn=None, cancel_event=None) -> dict:
     """Standalone correctness check, isolated to one file — used by bazarr.py's
     verify_subtitle_candidate to vet a replacement subtitle before adopting it. The main
     sweep/scan flow (pipeline.process_pair) does NOT call this: it always goes through
     line_order.collect_samples()/finalize_line_order() instead, so a correctness check also
     collects (and caches, across runs) line-order candidate data at no extra cost — see
-    line_order.py's module docstring."""
+    line_order.py's module docstring.
+
+    conn: optional sqlite3 connection — when given, each of the n sample slots is looked up in
+    video_transcript_cache (keyed on video + slot index, not subtitle) before calling Whisper,
+    and saved there after a fresh call. The audio doesn't change with the subtitle, so this
+    benefits ANY later check of the same video: a remediation candidate tried right after
+    another (see bazarr.verify_subtitle_candidate), a different language, or a normal Scan of
+    a since-replaced subtitle. Omit (None) to always transcribe fresh, e.g. a one-off caller
+    with no DB handle."""
     duration = get_duration_seconds(video_path)
     if not duration:
         return {"skipped": True, "reason": "could not read duration (ffprobe)"}
@@ -358,25 +367,39 @@ def correctness_check(video_path: Path, subs: "pysubs2.SSAFile", sub_lang: Optio
 
     built = []
     for idx, (region_start, region_end) in enumerate(regions):
-        start = pick_dialogue_dense_time(subs, region_start, region_end, cfg.clip_seconds)
-        clip_path = tmp_dir / f"clip_{int(start)}.wav"
-        if not extract_clip(video_path, start, cfg.clip_seconds, clip_path):
-            built.append({"start": round(start, 1), "error": "audio extraction failed"})
-            continue
-        try:
-            if audio_lang is None and idx == 0:
-                # We don't know the audio language yet (neither ffprobe tags nor filename) —
-                # let Whisper guess on the first sample, and reuse that for the rest of the file.
-                detected, transcript = detect_language_and_transcribe(cfg, clip_path, cancel_event=cancel_event)
-                audio_lang = detected
-                transcript_lang = detected
-            else:
-                transcript = transcribe(cfg, clip_path, transcript_lang or "en", cancel_event=cancel_event)
-        except Exception as e:
-            built.append({"start": round(start, 1), "error": str(e)})
-            continue
-        finally:
-            clip_path.unlink(missing_ok=True)
+        # The audio at a given point in this video doesn't depend on which subtitle is being
+        # checked against it -- ANY earlier check of THIS video (a remediation candidate, a
+        # different language, an earlier normal Scan, ...) may already have transcribed this
+        # region's slot; reuse it and skip both pick_dialogue_dense_time and Whisper entirely.
+        cached = db.get_cached_transcript(conn, video_path, idx) if conn is not None else None
+        if cached is not None:
+            start = cached["start"]
+            transcript = cached["transcript"]
+            if audio_lang is None:
+                audio_lang = cached["audio_lang"]
+                transcript_lang = audio_lang or cfg.require_audio_lang
+        else:
+            start = pick_dialogue_dense_time(subs, region_start, region_end, cfg.clip_seconds)
+            clip_path = tmp_dir / f"clip_{int(start)}.wav"
+            if not extract_clip(video_path, start, cfg.clip_seconds, clip_path):
+                built.append({"start": round(start, 1), "error": "audio extraction failed"})
+                continue
+            try:
+                if audio_lang is None and idx == 0:
+                    # We don't know the audio language yet (neither ffprobe tags nor filename) —
+                    # let Whisper guess on the first sample, and reuse that for the rest of the file.
+                    detected, transcript = detect_language_and_transcribe(cfg, clip_path, cancel_event=cancel_event)
+                    audio_lang = detected
+                    transcript_lang = detected
+                else:
+                    transcript = transcribe(cfg, clip_path, transcript_lang or "en", cancel_event=cancel_event)
+            except Exception as e:
+                built.append({"start": round(start, 1), "error": str(e)})
+                continue
+            finally:
+                clip_path.unlink(missing_ok=True)
+            if conn is not None:
+                db.save_transcript_cache(conn, video_path, idx, start, audio_lang, transcript)
 
         if cfg.require_audio_lang and audio_lang and audio_lang != cfg.require_audio_lang:
             reason = f"speech is '{audio_lang}', not '{cfg.require_audio_lang}' — skipped"

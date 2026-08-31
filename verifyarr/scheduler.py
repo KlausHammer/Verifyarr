@@ -20,6 +20,7 @@ from verifyarr.settings import Config
 _JOB_ID = "scheduled-sweep"
 _POLL_JOB_ID = "poll-new-media"
 _LIBRARY_POLL_JOB_ID = "poll-library"
+_TRANSCRIPT_PRUNE_JOB_ID = "prune-transcript-cache"
 _scheduler: Optional[BackgroundScheduler] = None
 
 
@@ -31,6 +32,18 @@ def _run_scheduled_sweep() -> None:
         jobs.runner.start_sweep(trigger="scheduled", force=False)
     except jobs.RunAlreadyActive:
         log.info("Scheduled sweep skipped — another job started just before")
+
+
+def _prune_transcript_cache_job() -> None:
+    """video_transcript_cache (see correctness.correctness_check) has no settings knob -- fixed
+    at 30 days, same as the reasoning behind reports.MAX_REPORTS not being one either."""
+    conn = db.connect()
+    try:
+        removed = db.prune_transcript_cache(conn, max_age_days=30)
+        if removed:
+            log.info("Pruned %d cached transcript(s) older than 30 days", removed)
+    finally:
+        conn.close()
 
 
 def _cron_to_trigger(cron_expr: str) -> CronTrigger:
@@ -85,6 +98,11 @@ def reschedule() -> None:
                         id=_LIBRARY_POLL_JOB_ID, replace_existing=True, max_instances=1)
     log.info("Library poll (new files on disk): %s, every %d min",
               "on" if cfg.poll_library_enabled else "off", library_interval)
+
+    # Always on, no settings knob (see _prune_transcript_cache_job) -- re-added here too since
+    # reschedule() re-adds every job on each call, harmless with replace_existing=True.
+    _scheduler.add_job(_prune_transcript_cache_job, IntervalTrigger(hours=24),
+                        id=_TRANSCRIPT_PRUNE_JOB_ID, replace_existing=True, max_instances=1)
 
 
 def shutdown() -> None:

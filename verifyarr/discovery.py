@@ -170,9 +170,11 @@ def find_subtitles_for_video(video_path: Path, sibling_videos: list[Path]) -> li
     return results
 
 
-def discover_pairs(cfg: Config) -> list[tuple[Path, Path, Optional[str]]]:
+def discover_pairs(cfg: Config, roots: Optional[list[Path]] = None) -> list[tuple[Path, Path, Optional[str]]]:
+    """roots: walk just these folders instead of cfg.media_roots -- used to scope a Scan to one
+    title/season (see jobs._run_sweep) without touching the rest of the library at all."""
     pairs = []
-    for root in cfg.media_roots:
+    for root in (roots if roots is not None else cfg.media_roots):
         if not root.exists():
             log.warning("Root Folder does not exist: %s", root)
             continue
@@ -190,14 +192,16 @@ def discover_pairs(cfg: Config) -> list[tuple[Path, Path, Optional[str]]]:
     return pairs
 
 
-def discover_all_videos(cfg: Config) -> list[Path]:
+def discover_all_videos(cfg: Config, roots: Optional[list[Path]] = None) -> list[Path]:
     """All video files under the root folders, regardless of whether they have any subtitle
     at all — discover_pairs alone can't be used for this, since a video with NO subtitles
     found doesn't appear in its result. Deliberately walks the tree again (instead of
     collecting this alongside discover_pairs) to keep the two functions independent and
-    simple; the cost of an extra os.walk is negligible for a private media library."""
+    simple; the cost of an extra os.walk is negligible for a private media library.
+
+    roots: see discover_pairs."""
     videos = []
-    for root in cfg.media_roots:
+    for root in (roots if roots is not None else cfg.media_roots):
         if not root.exists():
             continue
         for dirpath, dirnames, filenames in os.walk(root):

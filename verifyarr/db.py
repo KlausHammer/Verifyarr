@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional
 
@@ -159,6 +159,30 @@ CREATE TABLE IF NOT EXISTS library_videos (
     bazarr_matched INTEGER NOT NULL DEFAULT 0  -- title came from Bazarr, not a filename/folder guess
 );
 CREATE INDEX IF NOT EXISTS ix_library_videos_title ON library_videos(title);
+
+-- One Whisper transcript per (video, sample slot) -- the audio at a given point in a video
+-- doesn't depend on which subtitle is being checked against it, so ANY subtitle for the same
+-- video reuses whatever was already transcribed for that slot instead of paying for another
+-- Whisper call: a remediation candidate (bazarr.verify_subtitle_candidate), a different
+-- language, or a rescanned/replaced subtitle later (correctness.correctness_check and
+-- line_order.collect_samples' non-heuristic "filler" slots both read/write this same table --
+-- see correctness.get_or_transcribe_clip). region_index is simply which of cfg.sample_count
+-- evenly-spread samples this is (0, 1, 2, ...) -- deterministic, not a guess at whether two
+-- picks landed close enough together. A subtitle-anchored "heuristic" line-order candidate
+-- clip (see line_order.collect_samples) is NOT cached here -- its position is intrinsically
+-- specific to that one subtitle's own claimed line timing, not a video-level sample point, so
+-- there's nothing generic to reuse across different subtitles for it. Pruned by age, not row
+-- count -- see scheduler._prune_transcript_cache_job (once/day, default 30 days).
+CREATE TABLE IF NOT EXISTS video_transcript_cache (
+    video_path    TEXT NOT NULL,
+    region_index  INTEGER NOT NULL,  -- which of the n evenly-spread samples this is
+    clip_start    REAL NOT NULL,     -- the actual clip start time that was transcribed
+    audio_lang    TEXT,
+    transcript    TEXT NOT NULL,
+    created_at    TEXT NOT NULL,
+    PRIMARY KEY (video_path, region_index)
+);
+CREATE INDEX IF NOT EXISTS ix_video_transcript_cache_created ON video_transcript_cache(created_at);
 """
 
 
@@ -668,6 +692,94 @@ def get_persisted_embedded_cache(conn: sqlite3.Connection, all_videos: list) -> 
             except (ValueError, TypeError):
                 pass
     return result
+
+
+def get_scope_video_paths(conn: sqlite3.Connection, kind: Optional[str], title: Optional[str],
+                           season: Optional[str] = None) -> list[Path]:
+    """video_path values already cached (from a prior whole-library scan/Detect now) for a
+    given kind/title(/season) scope — used to resolve which folder(s) a Scan scoped to one
+    title/season actually needs to walk, instead of the whole library (see jobs._run_sweep).
+    Empty if this scope has never been seen by a prior scan at all (the caller falls back to a
+    whole-library walk in that case — see the docstring on replace_library_videos_scoped)."""
+    query = "SELECT video_path FROM library_videos WHERE 1=1"
+    params: list = []
+    if kind:
+        query += " AND kind = ?"
+        params.append(kind)
+    if title:
+        query += " AND title = ?"
+        params.append(title)
+    if season:
+        query += " AND substr(season_episode, 1, 3) = ?"  # e.g. "S03E02" -> "S03", see library.py
+        params.append(season)
+    return [Path(r["video_path"]) for r in conn.execute(query, params).fetchall()]
+
+
+def replace_library_videos_scoped(conn: sqlite3.Connection, roots: list[Path], rows: list[dict]) -> None:
+    """Same as replace_library_videos, but only touches rows for videos under one of `roots` —
+    used by a Scan scoped to one title/season, which only walks those folders (see
+    jobs._run_sweep + discovery.discover_pairs/discover_all_videos' `roots` param) and must
+    never wipe out the rest of the library's already-cached rows the way a full replace would.
+    Deletes-then-reinserts (rather than a real UPDATE) so a file removed from the scoped
+    folder(s) since the last scan is correctly dropped, same guarantee replace_library_videos
+    gives for the whole table."""
+    existing = [r["video_path"] for r in conn.execute("SELECT video_path FROM library_videos").fetchall()]
+    to_delete = [vp for vp in existing if any(Path(vp).is_relative_to(root) for root in roots)]
+    if to_delete:
+        conn.executemany("DELETE FROM library_videos WHERE video_path = ?", [(vp,) for vp in to_delete])
+    conn.executemany(
+        "INSERT INTO library_videos (video_path, media_root, kind, title, season_episode, has_subtitle, "
+        "video_mtime, video_size, embedded_langs_json, bazarr_matched) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        [(r["video_path"], r["media_root"], r["kind"], r["title"], r["season_episode"], int(r["has_subtitle"]),
+          r.get("video_mtime"), r.get("video_size"), r.get("embedded_langs_json"), int(r.get("bazarr_matched", False)))
+         for r in rows],
+    )
+    set_setting_raw(conn, "library.last_scanned_at", datetime.now(timezone.utc).isoformat())
+    conn.commit()
+
+
+def get_cached_transcript(conn: sqlite3.Connection, video_path: Path, region_index: int) -> Optional[dict]:
+    """{"start", "audio_lang", "transcript"} for the region_index-th sample slot of this video,
+    if one was transcribed recently enough to still be cached (see prune_transcript_cache) —
+    None on a miss. `start` is the ACTUAL clip start that was transcribed; the caller uses it
+    (not its own freshly-computed one) for scoring, so a cache hit skips the dialogue-density
+    pick entirely, not just the Whisper call."""
+    row = conn.execute(
+        "SELECT clip_start, audio_lang, transcript FROM video_transcript_cache "
+        "WHERE video_path = ? AND region_index = ?",
+        (str(video_path), region_index),
+    ).fetchone()
+    if row is None:
+        return None
+    return {"start": row["clip_start"], "audio_lang": row["audio_lang"], "transcript": row["transcript"]}
+
+
+def save_transcript_cache(conn: sqlite3.Connection, video_path: Path, region_index: int, start_sec: float,
+                           audio_lang: Optional[str], transcript: str) -> None:
+    conn.execute(
+        "INSERT INTO video_transcript_cache (video_path, region_index, clip_start, audio_lang, "
+        "transcript, created_at) VALUES (?, ?, ?, ?, ?, ?) "
+        "ON CONFLICT(video_path, region_index) DO UPDATE SET "
+        "clip_start=excluded.clip_start, audio_lang=excluded.audio_lang, "
+        "transcript=excluded.transcript, created_at=excluded.created_at",
+        (str(video_path), region_index, start_sec, audio_lang, transcript, datetime.now(timezone.utc).isoformat()),
+    )
+    conn.commit()
+
+
+def prune_transcript_cache(conn: sqlite3.Connection, max_age_days: int = 30) -> int:
+    """Deletes any cached transcript older than max_age_days -- called once/day (see
+    scheduler._prune_transcript_cache_job), not on every save, since a video library's audio
+    doesn't change and there's no reason to pay the age-based cleanup cost per Whisper call.
+    Age-based rather than a row cap: a private library's total clip count stays small and
+    bounded by how many DIFFERENT videos got remediated/re-checked recently, not by library
+    size, so simple staleness is the more meaningful limit than a fixed row count (see
+    reports.MAX_REPORTS for the row-count approach used elsewhere, which fits a different
+    growth pattern)."""
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=max_age_days)).isoformat()
+    cur = conn.execute("DELETE FROM video_transcript_cache WHERE created_at < ?", (cutoff,))
+    conn.commit()
+    return cur.rowcount
 
 
 def list_library_videos(conn: sqlite3.Connection, kind: Optional[str] = None):

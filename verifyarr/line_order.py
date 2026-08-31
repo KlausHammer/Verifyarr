@@ -45,6 +45,7 @@ from pathlib import Path
 from typing import Optional
 
 from verifyarr import log
+from verifyarr import db
 from verifyarr.correctness import (JobCancelled, _LLM_URLS, _aggregate_correctness, _compare_transcript_to_window,
                                     _post_ratelimited, _stt_model_and_fallback, _transcribe_once,
                                     detect_audio_language_ffprobe, extract_clip, get_duration_seconds)
@@ -336,7 +337,7 @@ def _extract_and_transcribe(video_path: Path, start_sec: float, duration_sec: fl
 
 
 def collect_samples(video_path: Path, subs, sub_lang: Optional[str], cfg: Config, tmp_dir: Path,
-                     cancel_event=None) -> dict:
+                     conn=None, cancel_event=None) -> dict:
     """The Whisper-spending half of the combined "is this subtitle correct, and are any lines
     swapped" check. ONE sampling pass, sized exactly like correctness_check's own sample_count
     (not additive to it, and not longer for a movie than a series).
@@ -360,11 +361,12 @@ def collect_samples(video_path: Path, subs, sub_lang: Optional[str], cfg: Config
     "whisper_verdicts": {index: True/False/None}, "tested_items": [(index, l1, l2), ...],
     "candidates": [(index, l1, l2, start_ms, end_ms), ...]}.
 
-    Known limitation: unlike correctness_check, this does not share transcripts across a video's
-    multiple subtitle languages (heuristic candidates, and therefore clip placement, differ per
-    subtitle file) — each language pays for its own sampling pass. Still fewer total Whisper
-    calls than the old design (a separate, uncached line-order pass ran on top of
-    correctness_check's own cached pass for every language)."""
+    conn: optional sqlite3 connection, passed straight through to video_transcript_cache (see
+    correctness.correctness_check's own conn param — same table, same reasoning: the audio at
+    a given point doesn't depend on which subtitle is checking it). Only applies to "filler"
+    slots (plain dialogue-dense points) — a "heuristic" slot is anchored to THIS subtitle's own
+    claimed line timing (that's the whole point of judging its order), so it's intrinsically
+    subtitle-specific and always transcribed fresh regardless of conn."""
     candidates = heuristic_candidates(subs)
 
     duration = get_duration_seconds(video_path)
@@ -409,32 +411,48 @@ def collect_samples(video_path: Path, subs, sub_lang: Optional[str], cfg: Config
             lang = audio_lang or cfg.require_audio_lang
         return result
 
-    for kind, slot in slots:
+    for idx, (kind, slot) in enumerate(slots):
         if kind == "heuristic":
             cluster = slot
             start, clip_duration = cluster["clip_start"], cluster["clip_end"] - cluster["clip_start"]
         else:
             start, clip_duration = slot, cfg.clip_seconds
 
-        result = _run_clip(start, clip_duration)
-        if result is None:
-            samples.append({"start": round(start, 1), "error": "audio extraction/transcription failed"})
-            continue
-        if cfg.require_audio_lang and audio_lang and audio_lang != cfg.require_audio_lang:
-            return {"skipped": True, "reason": f"speech is '{audio_lang}', not '{cfg.require_audio_lang}' — skipped"}
-
-        if kind == "heuristic":
-            segments = result.get("segments") or []
-            transcript_text = " ".join(s.get("text", "") for s in segments)
-            window_text = _window_subtitle_text(subs, cluster["clip_start"], cluster["clip_end"])
-            for i, l1, l2, raw_start, raw_end in cluster["items"]:
-                rel_start, rel_end = raw_start - cluster["clip_start"], raw_end - cluster["clip_start"]
-                whisper_verdicts[i] = _judge_order(segments, rel_start, rel_end, l1, l2)
-                tested_items.append((i, l1, l2))
-        else:
-            transcript_text = " ".join(s.get("text", "") for s in (result.get("segments") or []))
+        # Filler slots (not heuristic -- see collect_samples' docstring) share the SAME
+        # video-level cache correctness_check uses: the audio doesn't depend on which subtitle
+        # is checking it, so an earlier check of this video (any subtitle, either code path)
+        # may already have transcribed this region's slot.
+        cached = db.get_cached_transcript(conn, video_path, idx) if (conn is not None and kind == "filler") else None
+        if cached is not None:
+            start = cached["start"]
+            transcript_text = cached["transcript"]
+            if audio_lang is None:
+                audio_lang = cached["audio_lang"]
+                lang = audio_lang or cfg.require_audio_lang
             window_text = subs_text_in_window(subs, start, cfg.window_minutes * 60,
                                                 cfg.clip_seconds + cfg.window_minutes * 60)
+        else:
+            result = _run_clip(start, clip_duration)
+            if result is None:
+                samples.append({"start": round(start, 1), "error": "audio extraction/transcription failed"})
+                continue
+            if cfg.require_audio_lang and audio_lang and audio_lang != cfg.require_audio_lang:
+                return {"skipped": True, "reason": f"speech is '{audio_lang}', not '{cfg.require_audio_lang}' — skipped"}
+
+            if kind == "heuristic":
+                segments = result.get("segments") or []
+                transcript_text = " ".join(s.get("text", "") for s in segments)
+                window_text = _window_subtitle_text(subs, cluster["clip_start"], cluster["clip_end"])
+                for i, l1, l2, raw_start, raw_end in cluster["items"]:
+                    rel_start, rel_end = raw_start - cluster["clip_start"], raw_end - cluster["clip_start"]
+                    whisper_verdicts[i] = _judge_order(segments, rel_start, rel_end, l1, l2)
+                    tested_items.append((i, l1, l2))
+            else:
+                transcript_text = " ".join(s.get("text", "") for s in (result.get("segments") or []))
+                window_text = subs_text_in_window(subs, start, cfg.window_minutes * 60,
+                                                    cfg.clip_seconds + cfg.window_minutes * 60)
+                if conn is not None:
+                    db.save_transcript_cache(conn, video_path, idx, start, audio_lang, transcript_text)
 
         compare = _compare_transcript_to_window(cfg, transcript_text, window_text, sub_lang, lang,
                                                   cancel_event=cancel_event)
@@ -504,12 +522,12 @@ def finalize_line_order(collected: dict, cfg: Config, cancel_event=None, run_llm
 
 
 def check_subtitle(video_path: Path, subs, sub_lang: Optional[str], cfg: Config, tmp_dir: Path,
-                    cancel_event=None) -> dict:
+                    conn=None, cancel_event=None) -> dict:
     """collect_samples() + finalize_line_order() in one call, with the LLM confirmation always
     on — a plain end-to-end entry point for a caller that doesn't need cross-run caching.
     pipeline.py calls the two halves separately instead, so it can reuse a cached collect_samples()
     result instead of re-transcribing (see cache_key_for)."""
-    collected = collect_samples(video_path, subs, sub_lang, cfg, tmp_dir, cancel_event=cancel_event)
+    collected = collect_samples(video_path, subs, sub_lang, cfg, tmp_dir, conn=conn, cancel_event=cancel_event)
     if collected.get("skipped"):
         return collected
     return finalize_line_order(collected, cfg, cancel_event=cancel_event, run_llm_confirm=True)

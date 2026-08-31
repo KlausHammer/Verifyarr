@@ -16,8 +16,6 @@ import requests
 from verifyarr import log
 from verifyarr import db
 from verifyarr.settings import Config
-from verifyarr.subtitles import load_subs
-from verifyarr.sync_engine import resolve_alass_bin, run_alass
 from verifyarr.correctness import correctness_check
 
 
@@ -300,36 +298,51 @@ def bazarr_wait_for_subtitle(cfg: Config, series_id, episode_id, lang: str,
 
 
 def verify_subtitle_candidate(video_path: Path, subtitle_path: Path, lang: Optional[str], cfg: Config,
+                               conn=None, run_id: Optional[int] = None,
                                cancel_event=None) -> dict:
-    """Syncs and correctness-checks ONE subtitle file against its video without writing
-    anything to disk or the database — the "light" version of process_pair's sync+correctness
-    steps, used by remediate_suspect to vet candidates Bazarr fetches before accepting them.
-    Deliberately duplicates some of process_pair rather than merging the two — both are small
-    and should be kept in sync manually if the sync/correctness logic changes again."""
-    try:
-        subs = load_subs(subtitle_path)
-    except Exception as e:
-        return {"ok": False, "flag": "parse-error", "avg_score": None, "reason": str(e)}
+    """Syncs (for REAL — writes the corrected timing back to subtitle_path, via sync_pair, same
+    as a normal Scan would) and correctness-checks ONE subtitle file against its video. Used by
+    remediate_suspect to vet every candidate Bazarr fetches before accepting one.
 
-    alass_bin = resolve_alass_bin()
-    if alass_bin:
-        with tempfile.TemporaryDirectory() as td:
-            tmp_out = Path(td) / f"synced{subtitle_path.suffix}"
-            ok, _msg, _tail = run_alass(alass_bin, video_path, subtitle_path, tmp_out, cfg.split_penalty)
-            if ok:
-                try:
-                    subs = load_subs(tmp_out)
-                except Exception:
-                    pass  # keep the unsynced version rather than fail the whole verification
+    Before this, a candidate was only synced to a throwaway temp copy purely to decide
+    accept/reject — an ACCEPTED replacement was left on disk exactly as Bazarr downloaded it
+    (unsynced, if it needed a timing fix at all) with no `files`/correctness_history row of its
+    own, invisible to the rest of the app until an unrelated later Scan happened to walk over
+    it. Now the real sync always happens (a rejected candidate gets blacklisted and deleted by
+    Bazarr moments later anyway, so syncing it first costs a little CPU but nothing else), and
+    -- when `conn` is given -- the result is persisted (db.update_state) ONLY once a candidate
+    is actually accepted, so a passing replacement is correctly synced-on-disk and shows up
+    immediately, same as if a normal Scan had processed it.
+
+    Deliberately does NOT go through correctness_and_finish/handle_suspect even on a SUSPECT
+    verdict — remediate_suspect's own attempt loop is already the thing deciding whether to
+    blacklist this candidate and try the next one; letting a SUSPECT verdict here independently
+    trigger ANOTHER blacklist/remediate cycle would double up on that. This does mean a passing
+    replacement's line-order check hasn't run yet (that's the heavier collect_samples/
+    finalize_line_order path, which DOES call handle_suspect) -- it'll be picked up the next
+    time a normal Scan reaches this file, same as any other file's line-order check reuses its
+    cached correctness data (see pipeline.correctness_and_finish)."""
+    from verifyarr.pipeline import sync_pair  # local import: pipeline.py imports FROM this module
+
+    row, current_subs = sync_pair(video_path, subtitle_path, lang, cfg)
+    if current_subs is None:
+        return {"ok": False, "flag": "parse-error", "avg_score": None, "reason": row.get("note")}
 
     if not (cfg.enable_correctness_check and cfg.active_stt_api_key):
         return {"ok": None, "flag": "cannot verify", "avg_score": None,
                 "reason": f"correctness check disabled or no {cfg.stt_provider} API key"}
 
     with tempfile.TemporaryDirectory() as td2:
-        result = correctness_check(video_path, subs, lang, cfg, Path(td2), cancel_event=cancel_event)
+        result = correctness_check(video_path, current_subs, lang, cfg, Path(td2), conn=conn, cancel_event=cancel_event)
     if result.get("skipped"):
         return {"ok": None, "flag": "skipped", "avg_score": None, "reason": result.get("reason")}
+
+    row["correctness_flag"] = result["flag"]
+    row["correctness_avg_score"] = round(result["avg_score"], 3) if result["avg_score"] is not None else None
+    row["correctness_audio_lang"] = result.get("audio_lang")
+    row["correctness_samples"] = result.get("samples")
+    if result["flag"] == "ok" and conn is not None:
+        db.update_state(conn, video_path, subtitle_path, row, run_id=run_id, media_root=cfg.media_root_for(subtitle_path))
     return {"ok": result["flag"] == "ok", "flag": result["flag"], "avg_score": result["avg_score"]}
 
 
@@ -375,7 +388,8 @@ def remediate_suspect(subtitle_path: Path, video_path: Path, cfg: Config, media_
         if not local_path.exists():
             log_lines.append(f"{source}: Bazarr says {bpath}, but the file does not exist locally (path mapping?)")
             return None
-        result = verify_subtitle_candidate(video_path, local_path, lang, cfg, cancel_event=cancel_event)
+        result = verify_subtitle_candidate(video_path, local_path, lang, cfg, conn=conn, run_id=run_id,
+                                            cancel_event=cancel_event)
         if result["ok"]:
             log_lines.append(f"{source}: passed (score={result['avg_score']})")
             return "remediated: " + " | ".join(log_lines)
