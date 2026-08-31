@@ -184,8 +184,17 @@ def _run_sweep(conn: sqlite3.Connection, run_id: int, cfg: Config, force: bool,
     log.info("Found %d video/subtitle pair(s) under %s — checking for embedded subtitles "
              "(%s, %s)...", len(pairs), cfg.media_roots, walk_note, cache_note)
     persisted = db.get_persisted_embedded_cache(conn, all_videos) if not force else None
+    # A scoped run already knows this title's Bazarr-matched titles from the Library cache (the
+    # same one scope_roots itself came from) -- no need to re-fetch Bazarr's ENTIRE catalog
+    # (/movies, /series, /episodes) just to re-derive a handful of already-known answers. Skipped
+    # for a forced Rescan, same "recheck everything for real" contract as the embedded-cache
+    # reuse above.
+    skip_bazarr_catalog = scope_roots is not None and not force
+    cached_titles = db.get_scoped_bazarr_titles(conn, kind, title, season) if skip_bazarr_catalog else None
     embedded_cache, bazarr_titles = resolve_embedded_cache(cfg, pairs, all_videos, cancel_event=cancel_event,
-                                                            extra_cache=persisted)
+                                                            extra_cache=persisted,
+                                                            skip_bazarr_catalog=skip_bazarr_catalog,
+                                                            cached_titles=cached_titles)
     if cancel_event.is_set():
         log.warning("Job cancelled — stopping during embedded-subtitle check")
         raise JobCancelled("cancelled during embedded-subtitle check")
@@ -268,7 +277,7 @@ def _run_sweep(conn: sqlite3.Connection, run_id: int, cfg: Config, force: bool,
         # should_skip is checked once, up front, for both phases -- an unchanged file should
         # never occupy a sync-pool worker OR a correctness slot.
         to_process = [(i, video, subtitle, lang) for i, (video, subtitle, lang) in enumerate(scoped_pairs, 1)
-                      if force or not db.should_skip(conn, video, subtitle)]
+                      if force or not db.should_skip(conn, video, subtitle, cfg)]
 
         # Phase 1: sync (alass) for every file that needs it, in parallel (see SYNC_WORKERS).
         # Deliberately runs the whole batch to completion once started rather than checking

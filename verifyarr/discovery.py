@@ -241,6 +241,8 @@ def resolve_embedded_cache(cfg: Config, pairs: list[tuple[Path, Path, Optional[s
                             all_videos: list[Path], cancel_event: Optional[threading.Event] = None,
                             progress_cb: Optional[Callable[[int, int], None]] = None,
                             extra_cache: Optional[dict] = None,
+                            skip_bazarr_catalog: bool = False,
+                            cached_titles: Optional[dict[Path, str]] = None,
                             ) -> tuple[dict[Path, set[str]], dict[Path, str]]:
     """(embedded_cache, bazarr_titles) — embedded_cache is {video_path: {embedded lang, ...}}
     for every video that needs one: Bazarr's own already-known embedded tracks first (one bulk
@@ -263,15 +265,26 @@ def resolve_embedded_cache(cfg: Config, pairs: list[tuple[Path, Path, Optional[s
     sweep look hung with zero log output and an unresponsive Cancel for however long the old
     per-video ffprobe fallback took on a large/network-mounted library.
 
+    skip_bazarr_catalog: skip the bazarr_library_info() bulk read (/movies, /series, /episodes
+    -- Bazarr's ENTIRE catalog) entirely. Used by a Scan scoped to one title/season: it already
+    knows this title's embedded-langs and Bazarr-matched title from the Library cache (a prior
+    whole-library scan/Detect now had to have populated it — same precondition scope_roots
+    itself relies on, see jobs._run_sweep), so re-fetching Bazarr's whole catalog just to
+    re-derive a handful of already-known answers is pure overhead. cached_titles supplies the
+    bazarr_titles return value directly in this case (extra_cache still covers embedded-langs
+    as normal). Ignored (bazarr_library_info always runs) when False.
+
     cancel_event: checked between completed probes (not mid-subprocess) — set means "stop and
     return whatever's resolved so far", never a hard kill of a probe already in flight.
     progress_cb(done, total), if given, is called after each probe completes — used by the
     "Detect now" button's live counter (see library_poll.get_progress)."""
-    from verifyarr.bazarr import bazarr_library_info  # local: keeps bazarr.py's own heavier
-    # dependency chain (sync_engine/correctness/subtitles/requests) out of every plain
-    # discovery.py import, most of which never touch Bazarr at all.
-
-    embedded_cache, bazarr_titles = bazarr_library_info(cfg)
+    if skip_bazarr_catalog:
+        embedded_cache, bazarr_titles = {}, dict(cached_titles) if cached_titles else {}
+    else:
+        from verifyarr.bazarr import bazarr_library_info  # local: keeps bazarr.py's own heavier
+        # dependency chain (sync_engine/correctness/subtitles/requests) out of every plain
+        # discovery.py import, most of which never touch Bazarr at all.
+        embedded_cache, bazarr_titles = bazarr_library_info(cfg)
     if extra_cache:
         for video, langs in extra_cache.items():
             embedded_cache.setdefault(video, langs)

@@ -261,9 +261,18 @@ def init_db(path: Path) -> sqlite3.Connection:
 
 # --- files (sync/correctness status per video+subtitle+language) --------------------------------
 
-def should_skip(conn: sqlite3.Connection, video_path: Path, subtitle_path: Path) -> bool:
+def should_skip(conn: sqlite3.Connection, video_path: Path, subtitle_path: Path, cfg=None) -> bool:
+    """True only if the file is unchanged AND everything currently configured to run actually
+    ran on it last time. `cfg` is optional (omitting it falls back to the old file-identity-only
+    check) but should always be passed by a real caller -- without it, a prior pass made with
+    sync and/or correctness turned OFF (e.g. a schedule deliberately configured to do less than
+    a manual Scan, or just testing with things toggled off) permanently satisfies should_skip for
+    that file the moment its stat matches, even though nothing currently enabled ever actually
+    checked it. Turning a check back on later would then never re-reach files already "seen"
+    under the old settings, silently as if they'd been verified when they never were."""
     row = conn.execute(
-        "SELECT video_mtime, video_size, subtitle_mtime, subtitle_size FROM files WHERE subtitle_path = ?",
+        "SELECT video_mtime, video_size, subtitle_mtime, subtitle_size, sync_status, correctness_flag "
+        "FROM files WHERE subtitle_path = ?",
         (str(subtitle_path),),
     ).fetchone()
     if not row:
@@ -272,8 +281,23 @@ def should_skip(conn: sqlite3.Connection, video_path: Path, subtitle_path: Path)
         vstat, sstat = video_path.stat(), subtitle_path.stat()
     except OSError:
         return False
-    return (row["video_mtime"] == vstat.st_mtime and row["video_size"] == vstat.st_size
-            and row["subtitle_mtime"] == sstat.st_mtime and row["subtitle_size"] == sstat.st_size)
+    if not (row["video_mtime"] == vstat.st_mtime and row["video_size"] == vstat.st_size
+            and row["subtitle_mtime"] == sstat.st_mtime and row["subtitle_size"] == sstat.st_size):
+        return False  # the file itself changed -- always reprocess regardless of what ran before
+
+    if cfg is not None:
+        # sync_pair sets exactly this string when cfg.sync_enabled was False at the time.
+        if cfg.sync_enabled and row["sync_status"] == "skipped (disabled in settings)":
+            return False
+        # correctness_and_finish sets correctness_flag to exactly "disabled", or "no {provider}
+        # API key", when correctness couldn't run because of settings (not file content) — see
+        # correctness_unavailable_flag in pipeline.py.
+        if cfg.enable_correctness_check and cfg.active_stt_api_key:
+            flag = row["correctness_flag"] or ""
+            if flag == "disabled" or flag.endswith("API key"):
+                return False
+
+    return True
 
 
 def _infer_title_and_episode(video_path: Path, media_root: Optional[Path] = None):
@@ -694,6 +718,20 @@ def get_persisted_embedded_cache(conn: sqlite3.Connection, all_videos: list) -> 
     return result
 
 
+def _scope_where(kind: Optional[str], title: Optional[str], season: Optional[str]) -> tuple[str, list]:
+    clauses, params = [], []
+    if kind:
+        clauses.append("kind = ?")
+        params.append(kind)
+    if title:
+        clauses.append("title = ?")
+        params.append(title)
+    if season:
+        clauses.append("substr(season_episode, 1, 3) = ?")  # e.g. "S03E02" -> "S03", see library.py
+        params.append(season)
+    return (" AND " + " AND ".join(clauses)) if clauses else "", params
+
+
 def get_scope_video_paths(conn: sqlite3.Connection, kind: Optional[str], title: Optional[str],
                            season: Optional[str] = None) -> list[Path]:
     """video_path values already cached (from a prior whole-library scan/Detect now) for a
@@ -701,18 +739,23 @@ def get_scope_video_paths(conn: sqlite3.Connection, kind: Optional[str], title: 
     title/season actually needs to walk, instead of the whole library (see jobs._run_sweep).
     Empty if this scope has never been seen by a prior scan at all (the caller falls back to a
     whole-library walk in that case — see the docstring on replace_library_videos_scoped)."""
-    query = "SELECT video_path FROM library_videos WHERE 1=1"
-    params: list = []
-    if kind:
-        query += " AND kind = ?"
-        params.append(kind)
-    if title:
-        query += " AND title = ?"
-        params.append(title)
-    if season:
-        query += " AND substr(season_episode, 1, 3) = ?"  # e.g. "S03E02" -> "S03", see library.py
-        params.append(season)
-    return [Path(r["video_path"]) for r in conn.execute(query, params).fetchall()]
+    where, params = _scope_where(kind, title, season)
+    rows = conn.execute(f"SELECT video_path FROM library_videos WHERE 1=1{where}", params).fetchall()
+    return [Path(r["video_path"]) for r in rows]
+
+
+def get_scoped_bazarr_titles(conn: sqlite3.Connection, kind: Optional[str], title: Optional[str],
+                              season: Optional[str] = None) -> dict[Path, str]:
+    """{video_path: title} for videos in this scope whose title came from Bazarr last time
+    (bazarr_matched), straight from the Library cache — lets a scoped Scan skip re-fetching
+    Bazarr's entire catalog (see discovery.resolve_embedded_cache's skip_bazarr_catalog) just to
+    re-derive titles it already recorded. Same "must have been scanned at least once before"
+    precondition as get_scope_video_paths."""
+    where, params = _scope_where(kind, title, season)
+    rows = conn.execute(
+        f"SELECT video_path, title FROM library_videos WHERE bazarr_matched = 1{where}", params
+    ).fetchall()
+    return {Path(r["video_path"]): r["title"] for r in rows}
 
 
 def replace_library_videos_scoped(conn: sqlite3.Connection, roots: list[Path], rows: list[dict]) -> None:
