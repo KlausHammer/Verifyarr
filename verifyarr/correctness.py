@@ -178,10 +178,13 @@ def _transcribe_once(provider: str, audio_path: Path, api_key: str, model: str, 
     last_err = None
     for attempt in range(retries + 1):
         try:
+            log.debug("%s STT request: model=%s lang=%s clip=%s attempt=%d/%d",
+                      provider, model, language or "auto", audio_path.name, attempt + 1, retries + 1)
             with open(audio_path, "rb") as f:
                 files = {"file": (audio_path.name, f, "audio/wav")}
                 resp = _post_ratelimited(url, headers, timeout, data=data, files=files, cancel_event=cancel_event,
                                           fail_fast_on_429=fail_fast_on_429)
+            log.debug("%s STT response: status=%d clip=%s", provider, resp.status_code, audio_path.name)
             if resp.status_code == 200:
                 # "text" is Groq-only — OpenRouter's endpoint 400s on it ("Only json/verbose_json
                 # are supported"), so we never send it; "json" works on both and everything else

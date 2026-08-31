@@ -45,7 +45,9 @@ def bazarr_request(cfg: Config, method: str, path: str, **kwargs):
     headers = kwargs.pop("headers", {})
     headers["X-API-KEY"] = cfg.bazarr_api_key
     try:
-        return requests.request(method, f"{cfg.bazarr_url}/api{path}", headers=headers, timeout=30, **kwargs)
+        resp = requests.request(method, f"{cfg.bazarr_url}/api{path}", headers=headers, timeout=30, **kwargs)
+        log.debug("Bazarr %s %s -> %d", method, path, resp.status_code)
+        return resp
     except requests.RequestException as e:
         log.warning("Bazarr API call failed (%s %s): %s", method, path, e)
         return None
@@ -336,11 +338,11 @@ def remediate_suspect(subtitle_path: Path, video_path: Path, cfg: Config, media_
                        conn=None, run_id: Optional[int] = None) -> str:
     """auto-action=remediate: like 'blacklist', but instead of just leaving the language
     missing, it tries to fetch a working replacement itself:
-      1. Wait for whatever Bazarr's own blacklist call already started downloading (deleting
-         the old file successfully is what makes Bazarr auto-search for a replacement — see
-         handle_suspect in verifyarr.pipeline, which calls this only after that succeeded).
-         If a file appears, test it (alass + Whisper, see verify_subtitle_candidate). Passes
-         -> done.
+      1. Wait up to 2 minutes for whatever Bazarr's own blacklist call already started
+         downloading (deleting the old file successfully is what makes Bazarr auto-search for
+         a replacement — see handle_suspect in verifyarr.pipeline, which calls this only after
+         that succeeded). If a file appears, test it (alass + Whisper, see
+         verify_subtitle_candidate). Passes -> done.
       2. If it fails, blacklist that one too, and try up to REMEDIATE_MAX_ATTEMPTS more times
          with manually picked candidates from Bazarr's full provider search (Bazarr's own
          score, regardless of Bazarr's OWN minimum_score setting — the point is to test
@@ -361,10 +363,11 @@ def remediate_suspect(subtitle_path: Path, video_path: Path, cfg: Config, media_
     tried_subs_ids = {meta.get("subs_id")}
     log_lines = []
 
-    def try_current_file_and_maybe_blacklist(source: str) -> Optional[str]:
+    def try_current_file_and_maybe_blacklist(source: str, max_wait_s: float = 12.0) -> Optional[str]:
         """Finds the episode's current subtitle for the language, tests it, and blacklists it
         if it fails. Returns a success message if it passed, otherwise None."""
-        bpath = bazarr_wait_for_subtitle(cfg, series_id, episode_id, lang)
+        bpath = bazarr_wait_for_subtitle(cfg, series_id, episode_id, lang,
+                                          attempts=max(1, int(max_wait_s // 2)), delay_s=2.0)
         if not bpath:
             log_lines.append(f"{source}: no file appeared")
             return None
@@ -404,7 +407,11 @@ def remediate_suspect(subtitle_path: Path, video_path: Path, cfg: Config, media_
                 )
         return None
 
-    result = try_current_file_and_maybe_blacklist("auto-download (from blacklist)")
+    # Give Bazarr's own automatic search a real chance before we take over manually -- its
+    # search-then-pick-then-download cycle can genuinely take a while (multiple providers,
+    # rate limits of its own), and jumping to manual candidates too early would blacklist and
+    # skip past a perfectly good auto-fetch that was just running slow.
+    result = try_current_file_and_maybe_blacklist("auto-download (from blacklist)", max_wait_s=120.0)
     if result:
         return result
 

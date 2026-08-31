@@ -46,7 +46,8 @@ def cmd_single(cfg: Config, conn, video: str, subtitle: str, lang: Optional[str]
 
     from verifyarr.discovery import target_label
     run_id = jobs.create_run(conn, trigger, "single", cfg.dry_run, False,
-                              target_kind=cfg.kind_for(video_p), target_title=target_label(video_p))
+                              target_kind=cfg.kind_for(video_p),
+                              target_title=target_label(video_p, cfg.media_root_for(video_p)))
     jobs.execute_run(run_id, cfg, conn, threading.Event(), "single", trigger=trigger,
                       video=video_p, subtitle=subtitle_p, lang=lang, bazarr_meta=bazarr_meta)
 

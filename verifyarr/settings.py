@@ -127,7 +127,7 @@ class Config:
     # of _run_sweep) so newly added media shows up under Movies/Series without waiting for a
     # sweep or a manual Scan/Rescan click. See library_poll.py.
     poll_library_enabled: bool = True
-    poll_library_interval_minutes: int = 15
+    poll_library_interval_minutes: int = 720  # 12 hours
 
     # Off by default — see fileops.backup_subtitle. Gates EVERY backup_subtitle call (both the
     # ordinary sync-fix and the line-order auto-fix), not a separate switch per feature — see
@@ -346,7 +346,7 @@ SETTING_DEFS: dict = {
     "scheduling.poll_new_media_enabled":           ("scheduling", "bool", True),
     "scheduling.poll_new_media_interval_minutes":  ("scheduling", "int", 10),
     "scheduling.poll_library_enabled":             ("scheduling", "bool", True),
-    "scheduling.poll_library_interval_minutes":    ("scheduling", "int", 15),
+    "scheduling.poll_library_interval_minutes":    ("scheduling", "int", 720),  # 12 hours
 }
 # Keys whose value is never returned in plaintext to the frontend (only "is_set: true/false").
 SECRET_KEYS = {"correctness.groq_api_key", "correctness.openrouter_api_key", "bazarr.api_key"}

@@ -62,6 +62,29 @@ def _apply_dry_run(cfg: Config, dry_run: bool) -> Config:
     return cfg if cfg.dry_run == dry_run else dataclasses.replace(cfg, dry_run=dry_run)
 
 
+def _summarize_row(row: dict) -> str:
+    """One-line "what actually happened" for Activity's log, after a file's sync+correctness
+    both run (see the phase 2 loop below) — the "[i/N] path" line before it only says what's
+    ABOUT to be checked, not the outcome, which is what actually matters when reading the log
+    back afterward. `note` is included (truncated) because it's the ONLY thing that says WHY a
+    SUSPECT flag was raised -- a low correctness_avg_score alone doesn't say whether the
+    subtitle just doesn't match this episode's audio at all (note starts "Whisper heard: ...")
+    or whether it's a widespread line-order swap instead (note starts "Line order: ..."), two
+    very different problems with the same score-and-flag shape."""
+    parts = [f"sync: {row.get('sync_status', '-')}"]
+    flag = row.get("correctness_flag")
+    if flag not in (None, "-"):
+        score = row.get("correctness_avg_score")
+        parts.append(f"correctness: {flag}" + (f" (score={score})" if score is not None else ""))
+    action = row.get("auto_action")
+    if action not in (None, "-"):
+        parts.append(f"action: {action}")
+    note = (row.get("note") or "").strip()
+    if note:
+        parts.append(f"why: {note[:300]}{'…' if len(note) > 300 else ''}")
+    return " | ".join(parts)
+
+
 # Triggers that run WITHOUT a human choosing, right then, what to scan — the scheduled sweep
 # (trigger="scheduled") AND the Bazarr wanted-subtitles poll (trigger="bazarr_poll") share ONE set
 # of switches (general.auto_scan_*) for exactly this reason: from the user's point of view they're
@@ -133,8 +156,17 @@ def _run_sweep(conn: sqlite3.Connection, run_id: int, cfg: Config, force: bool,
     # "waiting for log lines" for however long that check takes -- and cancel_event is now
     # threaded through it too, so Cancel actually does something during this phase instead of
     # only taking effect once the per-file loop below is reached.
-    log.info("Found %d video/subtitle pairs under %s — checking for embedded subtitles...",
-              len(pairs), cfg.media_roots)
+    #
+    # This count is ALWAYS whole-library, even for a Scan scoped to one title/season (see the
+    # scoping block below) -- discovery and the Library cache refresh deliberately stay
+    # whole-tree so a scoped run never leaves the rest of the library's cache stale. Said
+    # explicitly here so a scoped Scan's log doesn't look like it's about to process everything
+    # (it isn't -- only the actual sync/correctness loop below is narrowed).
+    scope_desc = " ".join(p for p in (title or (f"{kind}s" if kind else None), season) if p)
+    scope_note = f" — only the sync/correctness work below is scoped to {scope_desc}" if scope_desc else ""
+    log.info("Found %d video/subtitle pairs under %s — checking for embedded subtitles "
+             "(whole library, as always for this step%s)...",
+             len(pairs), cfg.media_roots, scope_note)
     embedded_cache, bazarr_titles = resolve_embedded_cache(cfg, pairs, all_videos, cancel_event=cancel_event)
     if cancel_event.is_set():
         log.warning("Job cancelled — stopping during embedded-subtitle check")
@@ -152,7 +184,7 @@ def _run_sweep(conn: sqlite3.Connection, run_id: int, cfg: Config, force: bool,
         scoped_pairs = [p for p in scoped_pairs if cfg.kind_for(p[0]) == kind]
     if title:
         def _pair_title(p: tuple) -> str:
-            _se, t = infer_title_and_episode(p[0])
+            _se, t = infer_title_and_episode(p[0], cfg.media_root_for(p[0]))
             # Must match what the Library page actually displays and scoped this Scan to (see
             # build_library_video_rows below) -- otherwise a title Bazarr renamed would match
             # zero pairs here even though the button that triggered this used that exact name.
@@ -160,7 +192,7 @@ def _run_sweep(conn: sqlite3.Connection, run_id: int, cfg: Config, force: bool,
         scoped_pairs = [p for p in scoped_pairs if _pair_title(p) == title]
     if season:
         def _pair_season(p: tuple) -> str:
-            se, _t = infer_title_and_episode(p[0])
+            se, _t = infer_title_and_episode(p[0], cfg.media_root_for(p[0]))
             return (se or "")[:3]
         scoped_pairs = [p for p in scoped_pairs if _pair_season(p) == season]
     if kind or title or season:
@@ -196,10 +228,8 @@ def _run_sweep(conn: sqlite3.Connection, run_id: int, cfg: Config, force: bool,
 
     rows = []
     # audio_cache: see verifyarr.cli — shares one audio decode per video across languages (for
-    # alass). audio_cache_lock guards it now that phase 1 below can touch it from several
-    # threads at once (see sync_engine.resolve_alass_reference).
+    # alass).
     audio_cache: dict = {}
-    audio_cache_lock = threading.Lock()
     # Whisper transcription for the correctness check is NO LONGER shared across a video's
     # subtitle languages (it used to be, via a now-removed transcript_cache argument) — since
     # the correctness check always collects line-order candidates at the same time (see
@@ -226,19 +256,31 @@ def _run_sweep(conn: sqlite3.Connection, run_id: int, cfg: Config, force: bool,
         sync_results: dict[int, tuple] = {}
         sync_errors: dict[int, Exception] = {}
         if to_process and not cancel_event.is_set():
+            # One lock PER DISTINCT VIDEO, not one lock shared by the whole batch -- the lock
+            # only needs to keep two subtitle languages of the SAME video from racing to
+            # extract/overwrite its shared audio file (see sync_engine.resolve_alass_reference).
+            # A single global lock instead would serialize every video's (slow, I/O-bound ffmpeg)
+            # extraction behind ONE thread at a time regardless of SYNC_WORKERS -- exactly the
+            # "1% CPU, not actually parallel" bug this replaces.
+            video_locks: dict[Path, threading.Lock] = {}
+            for _i, video, _subtitle, _lang in to_process:
+                video_locks.setdefault(video, threading.Lock())
+
             log.info("Syncing %d file(s) with alass (up to %d at a time)...", len(to_process), SYNC_WORKERS)
             with concurrent.futures.ThreadPoolExecutor(max_workers=SYNC_WORKERS) as pool:
                 future_to_i = {
                     pool.submit(sync_pair, video, subtitle, lang, cfg, audio_cache, audio_cache_dir,
-                                audio_cache_lock): i
+                                video_locks[video]): i
                     for i, video, subtitle, lang in to_process
                 }
                 for future in concurrent.futures.as_completed(future_to_i):
                     i = future_to_i[future]
                     try:
                         sync_results[i] = future.result()
+                        log.info("[%d/%d] synced — %s", i, len(to_process), sync_results[i][0].get("sync_status", "-"))
                     except Exception as e:
                         sync_errors[i] = e
+                        log.warning("[%d/%d] sync failed: %s", i, len(to_process), e)
 
         # Phase 2: correctness/line-order check + persistence, sequential -- Groq's rate-limit
         # pacing and cancellation both expect one file at a time here, and a sqlite3 connection
@@ -267,6 +309,7 @@ def _run_sweep(conn: sqlite3.Connection, run_id: int, cfg: Config, force: bool,
                     "note": str(e), "auto_action": "-",
                 }
                 db.update_state(conn, video, subtitle, row, run_id=run_id, media_root=cfg.media_root_for(subtitle))
+            log.info("[%d/%d] done — %s", i, len(scoped_pairs), _summarize_row(row))
             rows.append(row)
             db.bump_run_progress(conn, run_id, row)
     if rows:
@@ -338,7 +381,7 @@ class JobRunner:
                 elif mode == "single" and kwargs.get("video") is not None:
                     from verifyarr.discovery import target_label
                     target_kind = cfg.kind_for(kwargs["video"])
-                    target_title = target_label(kwargs["video"])
+                    target_title = target_label(kwargs["video"], cfg.media_root_for(kwargs["video"]))
                 else:
                     target_kind = target_title = None
                 run_id = create_run(conn0, trigger, mode, dry_run, kwargs.get("force", False),

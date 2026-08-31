@@ -29,6 +29,7 @@ def _new_bucket(**extra) -> dict:
     return {
         "video_count": 0, "subtitle_detected_count": 0, "processed_count": 0,
         "ok_count": 0, "suspect_count": 0, "missing_count": 0, "last_processed": None,
+        "bazarr_matched": False,  # see _bump -- True as soon as ANY video in the bucket matched
         **extra,
     }
 
@@ -37,6 +38,8 @@ def _bump(bucket: dict, v, video_rows: list) -> None:
     bucket["video_count"] += 1
     if v["has_subtitle"]:
         bucket["subtitle_detected_count"] += 1
+    if v["bazarr_matched"]:
+        bucket["bazarr_matched"] = True
     if any(r["last_processed"] for r in video_rows):
         bucket["processed_count"] += 1
     for r in video_rows:

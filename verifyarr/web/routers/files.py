@@ -86,7 +86,8 @@ def _apply_action(conn, file_id: int, action: str) -> dict:
 
     from verifyarr.discovery import target_label
     run_id = db.create_run(conn, "manual_ui", "single", cfg.dry_run, False,
-                            target_kind=cfg.kind_for(video_path), target_title=target_label(video_path))
+                            target_kind=cfg.kind_for(video_path),
+                            target_title=target_label(video_path, cfg.media_root_for(video_path)))
     try:
         result = handle_suspect(subtitle_path, video_path, cfg, media_root, row["lang"], None,
                                  history_index, action, conn=conn, run_id=run_id)

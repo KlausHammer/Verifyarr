@@ -1042,12 +1042,13 @@ function SchedulingTab() {
         </label>
       </div>
       {data.poll_library_enabled && (
-        <Field label="Check every (minutes)" tip="How often to re-walk the media folders for new/removed files.">
+        <Field label="Check every (hours)" tip="How often to re-walk the media folders for new/removed files. Stored as minutes under the hood -- fractional hours (e.g. 0.5) are fine.">
           <input
             type="number"
-            min="1"
-            value={data.poll_library_interval_minutes}
-            onChange={(e) => setData({ ...data, poll_library_interval_minutes: Number(e.target.value) })}
+            min="0.1"
+            step="0.5"
+            value={data.poll_library_interval_minutes / 60}
+            onChange={(e) => setData({ ...data, poll_library_interval_minutes: Math.round(Number(e.target.value) * 60) })}
           />
         </Field>
       )}

@@ -129,6 +129,10 @@ export interface LibraryEntry {
   suspect_count: number
   missing_count: number
   last_processed: string | null
+  // True as soon as ANY video under this title matched something in Bazarr -- False means the
+  // title shown is a folder/filename guess, not a Bazarr-confirmed name (see the "not in
+  // Bazarr" badge in MediaLibrary.tsx).
+  bazarr_matched: boolean
   seasons: SeasonEntry[] | null
 }
 

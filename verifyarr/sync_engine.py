@@ -11,6 +11,8 @@ from contextlib import nullcontext
 from pathlib import Path
 from typing import Optional
 
+from verifyarr import log
+
 SHIFT_BLOCK_RE = re.compile(r"shifted block of \d+ subtitles with length [\d:.]+ by (-?)([\d:.]+)")
 
 
@@ -62,6 +64,7 @@ def run_alass(alass_bin: str, reference_path: Path, subtitle_path: Path, out_pat
     extract_audio_wav) — alass-cli treats both the same."""
     cmd = [alass_bin, str(reference_path), str(subtitle_path), str(out_path),
            "--split-penalty", str(split_penalty)]
+    log.debug("alass: %s", " ".join(cmd))
     try:
         proc = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
     except subprocess.TimeoutExpired:
@@ -76,6 +79,7 @@ def run_alass(alass_bin: str, reference_path: Path, subtitle_path: Path, out_pat
         return False, f"alass failed (code {proc.returncode})", output_tail
     if not out_path.exists() or out_path.stat().st_size == 0:
         return False, "alass produced empty output", output_tail
+    log.debug("alass: ok, exit 0 for %s", subtitle_path.name)
     return True, "ok", output_tail
 
 
@@ -97,5 +101,10 @@ def resolve_alass_reference(video_path: Path, audio_cache: Optional[dict],
         if video_path not in audio_cache:
             digest = hashlib.md5(str(video_path).encode()).hexdigest()[:12]
             wav_path = audio_cache_dir / f"{video_path.stem}.{digest}.wav"
+            log.debug("Extracting audio for %s -> %s", video_path.name, wav_path.name)
             audio_cache[video_path] = wav_path if extract_audio_wav(video_path, wav_path) else None
+            if audio_cache[video_path] is None:
+                log.debug("Audio extraction failed for %s, alass will use the video file directly", video_path.name)
+        else:
+            log.debug("Reusing already-extracted audio for %s", video_path.name)
         return audio_cache[video_path] or video_path

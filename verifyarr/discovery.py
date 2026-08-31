@@ -17,6 +17,45 @@ from verifyarr.settings import Config
 SUBTITLE_EXTS = {".srt", ".ass", ".ssa", ".vtt"}
 LANG_CODE_RE = re.compile(r"^[a-z]{2,3}$")
 SXXEYY_RE = re.compile(r"[Ss](\d{1,2})[Ee](\d{1,3})")
+# A folder that's just "Season 3"/"Season 03"/"S03" etc. isn't the show's own name -- the real
+# show folder is one level further up (see infer_title_and_episode).
+SEASON_FOLDER_RE = re.compile(r"^(season\s*\d+|s\d{1,2})$", re.IGNORECASE)
+
+# Strong, independent signal that a folder/filename-derived title guess still carries
+# release-group junk (resolution/source/codec/audio tags) rather than being a clean show/movie
+# name already -- gates when _normalize_title_if_junky below bothers calling guessit at all.
+_JUNK_TOKEN_RE = re.compile(
+    r"\b(?:\d{3,4}p|web-?dl|webrip|bluray|blu-ray|hdtv|dvdrip|brrip|bdrip|x264|x265|"
+    r"h\.?264|h\.?265|hevc|aac|ddp?5\.1|dts(?:-hd)?|atmos|proper|repack|nordic|multi|"
+    r"internal|remux|hdr10?|10bit)\b",
+    re.IGNORECASE,
+)
+
+try:
+    import guessit as _guessit
+except ImportError:  # pragma: no cover — guessit is a normal dependency, this is just a safety net
+    _guessit = None
+
+
+def _normalize_title_if_junky(raw: Optional[str]) -> Optional[str]:
+    """Cleans up scene/release-group junk from a folder- or filename-derived title guess (e.g.
+    "Alle.For.Fire.2022.NORDiC.1080p.WEB-DL.H.264.DDP5.1.Atmos-BANDOLEROS" -> "Alle For Fire")
+    via guessit -- the same release-name parser Radarr/Sonarr-adjacent tools use. Bazarr's own
+    matched title (bazarr_titles, see build_library_video_rows) always wins over this when
+    available; this only ever applies to titles Bazarr doesn't have an entry for at all.
+
+    Only invoked when _JUNK_TOKEN_RE matches something in the raw string first -- running
+    guessit unconditionally on every already-clean folder name is unsafe, since it can mangle
+    a legitimately number-containing title by mistaking the number for a season/year/episode
+    (e.g. "The 100" -> "The", "1899" -> None, "24" -> None). Gating on an explicit junk token
+    means it only ever touches strings that are demonstrably not clean already."""
+    if not raw or _guessit is None or not _JUNK_TOKEN_RE.search(raw):
+        return raw
+    try:
+        title = _guessit.guessit(raw).get("title")
+    except Exception:
+        return raw
+    return title or raw
 
 # ffprobe subprocess calls are I/O-bound (waiting on disk/network, not CPU), so a handful of
 # threads in parallel gives a near-linear speedup on a slow/network-mounted library without
@@ -37,22 +76,42 @@ def _sxxeyy(name: str) -> Optional[str]:
     return f"S{int(m.group(1)):02d}E{int(m.group(2)):02d}" if m else None
 
 
-def infer_title_and_episode(video_path: Path) -> tuple[Optional[str], Optional[str]]:
-    """(season_episode, title) best-effort from the filename — e.g. 'S02E01' + 'Community'
-    for a series (everything before the SxxEyy pattern, stripped of separators), or
-    (None, folder name) when there's no SxxEyy pattern (typically a movie)."""
+def infer_title_and_episode(video_path: Path, media_root: Optional[Path] = None) -> tuple[Optional[str], Optional[str]]:
+    """(season_episode, title) best-effort — (None, folder name) when there's no SxxEyy
+    pattern in the filename (typically a movie). Otherwise 'S02E01' plus a title PREFERRING the
+    folder structure over the filename: a release's own filename often carries site/group junk
+    (e.g. "[TorrentCouch.com].The.IT.Crowd.S03E01...") even in an otherwise cleanly organized
+    library (".../The IT Crowd/Season 3/[TorrentCouch.com]...") — the folder name is the better
+    signal whenever it's usable, so it's tried FIRST, skipping over a bare "Season 3"/"S03"
+    subfolder to the actual show folder above it. Only falls back to parsing the filename
+    itself (everything before the SxxEyy pattern, stripped of separators) when the folder name
+    isn't usable either (e.g. no per-show folder at all, video sitting directly in the media
+    root — media_root, if given, e.g. cfg.media_root_for(video_path), guards against treating
+    the root folder's own name as if it were a show title). Whatever title comes out of either
+    path still gets passed through _normalize_title_if_junky -- a folder or filename can be
+    the ONLY source of a title (no per-item folder, or Bazarr has no entry for this file at
+    all — see build_library_video_rows) and still carry raw release-group junk itself."""
     m = SXXEYY_RE.search(video_path.name)
-    if m:
-        se = f"S{int(m.group(1)):02d}E{int(m.group(2)):02d}"
-        title = video_path.name[:m.start()].strip(" -._")
-        return se, (title or None)
-    return None, video_path.parent.name
+    if not m:
+        return None, _normalize_title_if_junky(video_path.parent.name)
+    se = f"S{int(m.group(1)):02d}E{int(m.group(2)):02d}"
+
+    parent = video_path.parent
+    candidate = parent.parent if SEASON_FOLDER_RE.match(parent.name.strip()) else parent
+    # Usable as long as it isn't the media root itself (no per-show folder at all) and isn't
+    # itself another episode-shaped name (SxxEyy showing up there means this isn't a real
+    # show-name folder either).
+    if candidate.name and candidate != media_root and not SXXEYY_RE.search(candidate.name):
+        return se, _normalize_title_if_junky(candidate.name)
+
+    title = video_path.name[:m.start()].strip(" -._")
+    return se, _normalize_title_if_junky(title or None)
 
 
-def target_label(video_path: Path) -> str:
+def target_label(video_path: Path, media_root: Optional[Path] = None) -> str:
     """Human-readable "what got scanned" label for a single-file run's Activity entry, e.g.
     'Community S03E02' for an episode or just the movie's folder name for a movie."""
-    se, title = infer_title_and_episode(video_path)
+    se, title = infer_title_and_episode(video_path, media_root)
     t = title or video_path.parent.name
     return f"{t} {se}" if se else t
 
@@ -271,7 +330,7 @@ def build_library_video_rows(cfg: Config, pairs: list[tuple[Path, Path, Optional
     videos_with_subtitle = {video for video, _sub, _lang in pairs}
     rows = []
     for video in all_videos:
-        se, title = infer_title_and_episode(video)
+        se, title = infer_title_and_episode(video, cfg.media_root_for(video))
         title = bazarr_titles.get(video) or title
         has_subtitle = video in videos_with_subtitle
         if not has_subtitle:
@@ -294,6 +353,7 @@ def build_library_video_rows(cfg: Config, pairs: list[tuple[Path, Path, Optional
             "title": title or str(video.parent),
             "season_episode": se,
             "has_subtitle": has_subtitle,
+            "bazarr_matched": video in bazarr_titles,
             "video_mtime": video_mtime,
             "video_size": video_size,
             "embedded_langs_json": json.dumps(sorted(embedded_langs)) if embedded_langs is not None else None,

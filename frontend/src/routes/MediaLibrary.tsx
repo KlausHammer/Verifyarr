@@ -243,6 +243,15 @@ export default function MediaLibrary({ kind, title, folderHint }: { kind: 'movie
                         </button>
                       )}
                       <Link to={`/files?q=${encodeURIComponent(it.title)}`}>{it.title}</Link>
+                      {!it.bazarr_matched && (
+                        <span
+                          className="pill pill-muted"
+                          style={{ marginLeft: 6 }}
+                          title="Bazarr doesn't have a match for this title -- the name shown is a best-effort guess from the folder/file name, not confirmed by Bazarr."
+                        >
+                          not in Bazarr
+                        </span>
+                      )}
                     </td>
                     <td style={CELL}>{it.video_count}</td>
                     <td style={CELL}>

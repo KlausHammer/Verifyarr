@@ -155,7 +155,8 @@ CREATE TABLE IF NOT EXISTS library_videos (
     has_subtitle    INTEGER NOT NULL DEFAULT 0,
     video_mtime          REAL,     -- see get_persisted_embedded_cache
     video_size            INTEGER,
-    embedded_langs_json  TEXT      -- NULL = never embedded-checked (had full external coverage)
+    embedded_langs_json  TEXT,     -- NULL = never embedded-checked (had full external coverage)
+    bazarr_matched INTEGER NOT NULL DEFAULT 0  -- title came from Bazarr, not a filename/folder guess
 );
 CREATE INDEX IF NOT EXISTS ix_library_videos_title ON library_videos(title);
 """
@@ -199,6 +200,11 @@ def connect(path: Optional[Path] = None) -> sqlite3.Connection:
             pass  # column already exists
     try:
         conn.execute("ALTER TABLE library_videos ADD COLUMN embedded_langs_json TEXT")
+        conn.commit()
+    except sqlite3.OperationalError:
+        pass  # column already exists
+    try:
+        conn.execute("ALTER TABLE library_videos ADD COLUMN bazarr_matched INTEGER NOT NULL DEFAULT 0")
         conn.commit()
     except sqlite3.OperationalError:
         pass  # column already exists
@@ -246,9 +252,9 @@ def should_skip(conn: sqlite3.Connection, video_path: Path, subtitle_path: Path)
             and row["subtitle_mtime"] == sstat.st_mtime and row["subtitle_size"] == sstat.st_size)
 
 
-def _infer_title_and_episode(video_path: Path):
+def _infer_title_and_episode(video_path: Path, media_root: Optional[Path] = None):
     from verifyarr.discovery import infer_title_and_episode
-    return infer_title_and_episode(video_path)
+    return infer_title_and_episode(video_path, media_root)
 
 
 def update_state(conn: sqlite3.Connection, video_path: Path, subtitle_path: Path, row: dict,
@@ -271,7 +277,7 @@ def update_state(conn: sqlite3.Connection, video_path: Path, subtitle_path: Path
     except OSError:
         subtitle_mtime = subtitle_size = None
 
-    season_episode, title = _infer_title_and_episode(video_path)
+    season_episode, title = _infer_title_and_episode(video_path, media_root)
     conn.execute("""
         INSERT INTO files (subtitle_path, video_path, lang, media_root, season_episode,
                             series_or_movie_title, video_mtime, video_size, subtitle_mtime,
@@ -329,7 +335,7 @@ def mark_missing(conn: sqlite3.Connection, video_path: Path, lang: str,
         video_mtime, video_size = vstat.st_mtime, vstat.st_size
     except OSError:
         video_mtime = video_size = None
-    season_episode, title = _infer_title_and_episode(video_path)
+    season_episode, title = _infer_title_and_episode(video_path, media_root)
     conn.execute("""
         INSERT INTO files (subtitle_path, video_path, lang, media_root, season_episode,
                             series_or_movie_title, video_mtime, video_size, last_processed, sync_status)
@@ -613,13 +619,19 @@ def replace_library_videos(conn: sqlite3.Connection, rows: list[dict]) -> None:
     them) feed get_persisted_embedded_cache, which lets the SCHEDULED library poll skip
     re-ffprobing a video that hasn't changed since it was last checked. "Detect now" always
     passes fresh values here (it never reuses the persisted cache itself), so a manual click
-    still re-checks everything, exactly as before."""
+    still re-checks everything, exactly as before.
+
+    bazarr_matched (optional, defaults False) — whether `title` came from Bazarr's own matched
+    data rather than a folder/filename guess (see discovery.build_library_video_rows). Surfaced
+    as a "not found in Bazarr" badge on the Library page (see web/routers/library.py) so a
+    path-mapping problem or genuinely unmanaged content is visible at a glance instead of only
+    showing up as a wrong-looking name."""
     conn.execute("DELETE FROM library_videos")
     conn.executemany(
         "INSERT INTO library_videos (video_path, media_root, kind, title, season_episode, has_subtitle, "
-        "video_mtime, video_size, embedded_langs_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "video_mtime, video_size, embedded_langs_json, bazarr_matched) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         [(r["video_path"], r["media_root"], r["kind"], r["title"], r["season_episode"], int(r["has_subtitle"]),
-          r.get("video_mtime"), r.get("video_size"), r.get("embedded_langs_json"))
+          r.get("video_mtime"), r.get("video_size"), r.get("embedded_langs_json"), int(r.get("bazarr_matched", False)))
          for r in rows],
     )
     set_setting_raw(conn, "library.last_scanned_at", datetime.now(timezone.utc).isoformat())
