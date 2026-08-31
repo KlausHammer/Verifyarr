@@ -20,7 +20,7 @@ from verifyarr.subtitles import load_subs, max_shift_stats
 from verifyarr.sync_engine import resolve_alass_bin, resolve_alass_reference, run_alass, parse_alass_shift_blocks
 from verifyarr.line_order import heuristic_candidates, collect_samples, finalize_line_order, cache_key_for, apply_line_swap
 from verifyarr.fileops import backup_subtitle, quarantine_subtitle
-from verifyarr.bazarr import bazarr_map_path, bazarr_blacklist, remediate_suspect
+from verifyarr.bazarr import bazarr_map_path, bazarr_blacklist, remediate_suspect, remediate_without_history
 from verifyarr import db
 from verifyarr.db import update_state
 
@@ -59,14 +59,28 @@ def handle_suspect(subtitle_path: Path, video_path: Path, cfg: Config, media_roo
     if meta is None and history_index is not None:
         meta = history_index.get(bazarr_map_path(cfg, subtitle_path))
     if meta is None:
-        # No Bazarr match -- Bazarr can't remove/replace it for us, so fall back to a plain
-        # local quarantine move instead, same as quarantine mode.
+        # No Bazarr HISTORY match -- there's nothing to hand Bazarr's blacklist endpoint (no
+        # provider/subs_id to identify a "current source" with), so it can't remove/replace the
+        # file itself the normal way. Quarantine the bad file locally either way -- but for
+        # remediate specifically, still try to get a REPLACEMENT via a manual provider search if
+        # Bazarr's own catalog at least knows this episode's ID (from an earlier whole-library
+        # scan/Detect now -- see db.get_bazarr_ids_for_video). Most common real cause: the
+        # current subtitle came bundled with the original release rather than through Bazarr at
+        # all, or its own history entry is already blacklisted from an earlier run (excluded
+        # from the lookup on purpose -- see bazarr_build_history_index).
         try:
             dest = quarantine_subtitle(subtitle_path, cfg.quarantine_dir, media_root)
         except Exception as e:
             log.warning("Could not quarantine %s: %s", subtitle_path, e)
             return f"quarantine failed: {e}"
-        return f"quarantined -> {dest}; blacklist skipped (no Bazarr match)"
+        msg = f"quarantined -> {dest}; blacklist skipped (no Bazarr match)"
+        if auto_action == "remediate" and conn is not None:
+            ids = db.get_bazarr_ids_for_video(conn, video_path)
+            if ids and ids.get("kind") == "series" and ids.get("series_id") and ids.get("episode_id"):
+                msg += "; " + remediate_without_history(
+                    video_path, cfg, lang, ids["series_id"], ids["episode_id"],
+                    cancel_event=cancel_event, conn=conn, run_id=run_id)
+        return msg
 
     meta.setdefault("subtitles_path", bazarr_map_path(cfg, subtitle_path))
     if not meta.get("language") and lang:

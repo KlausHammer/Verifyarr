@@ -17,6 +17,7 @@ import { formatRelative } from '../lib/format'
 import ConfirmDialog from '../components/ConfirmDialog'
 import FolderBrowser from '../components/FolderBrowser'
 import LanguageMultiSelect from '../components/LanguageMultiSelect'
+import CopyLogButton from '../components/CopyLogButton'
 import styles from './Settings.module.css'
 
 function SaveBar({ busy, saved, error }: { busy: boolean; saved: boolean; error: string | null }) {
@@ -1122,11 +1123,16 @@ function LogTab() {
       )}
 
       <div className={`card ${styles.formCard}`}>
-        <h3 style={{ marginTop: 0, marginBottom: 4 }}>Recent log</h3>
-        <p className="text-dim" style={{ fontSize: 12.5, marginTop: 0, marginBottom: 12 }}>
-          Updates on its own every few seconds. This is the whole app's log, not just one run —
-          check here if something looks off and Activity doesn't explain why.
-        </p>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+          <div>
+            <h3 style={{ marginTop: 0, marginBottom: 4 }}>Recent log</h3>
+            <p className="text-dim" style={{ fontSize: 12.5, marginTop: 0, marginBottom: 12 }}>
+              Updates on its own every few seconds. This is the whole app's log, not just one run —
+              check here if something looks off and Activity doesn't explain why.
+            </p>
+          </div>
+          <CopyLogButton lines={lines} />
+        </div>
         {viewerError && <div className="error-banner">{viewerError}</div>}
         <div className={styles.logBox} ref={logBoxRef}>
           {lines.length === 0 && <div className="text-faint">No log lines yet.</div>}

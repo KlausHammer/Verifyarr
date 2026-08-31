@@ -156,7 +156,15 @@ CREATE TABLE IF NOT EXISTS library_videos (
     video_mtime          REAL,     -- see get_persisted_embedded_cache
     video_size            INTEGER,
     embedded_langs_json  TEXT,     -- NULL = never embedded-checked (had full external coverage)
-    bazarr_matched INTEGER NOT NULL DEFAULT 0  -- title came from Bazarr, not a filename/folder guess
+    bazarr_matched INTEGER NOT NULL DEFAULT 0,  -- title came from Bazarr, not a filename/folder guess
+    -- Bazarr's own internal IDs for this video (from its /episodes or /movies catalog),
+    -- persisted so a SUSPECT file with no Bazarr HISTORY match (see
+    -- bazarr.remediate_without_history) can still search for a replacement -- searching only
+    -- needs to know WHICH episode, not what was previously fetched for it. NULL for a video
+    -- Bazarr doesn't manage.
+    series_id  INTEGER,
+    episode_id INTEGER,
+    radarr_id  INTEGER
 );
 CREATE INDEX IF NOT EXISTS ix_library_videos_title ON library_videos(title);
 
@@ -232,6 +240,12 @@ def connect(path: Optional[Path] = None) -> sqlite3.Connection:
         conn.commit()
     except sqlite3.OperationalError:
         pass  # column already exists
+    for col in ("series_id", "episode_id", "radarr_id"):
+        try:
+            conn.execute(f"ALTER TABLE library_videos ADD COLUMN {col} INTEGER")
+            conn.commit()
+        except sqlite3.OperationalError:
+            pass  # column already exists
     for col in ("line_order_fixed", "line_order_flagged"):
         try:
             conn.execute(f"ALTER TABLE files ADD COLUMN {col} INTEGER")
@@ -673,17 +687,40 @@ def replace_library_videos(conn: sqlite3.Connection, rows: list[dict]) -> None:
     data rather than a folder/filename guess (see discovery.build_library_video_rows). Surfaced
     as a "not found in Bazarr" badge on the Library page (see web/routers/library.py) so a
     path-mapping problem or genuinely unmanaged content is visible at a glance instead of only
-    showing up as a wrong-looking name."""
+    showing up as a wrong-looking name.
+
+    series_id/episode_id/radarr_id (all optional) — Bazarr's own internal IDs for this video,
+    if Bazarr manages it. See get_bazarr_ids_for_video and bazarr.remediate_without_history."""
     conn.execute("DELETE FROM library_videos")
     conn.executemany(
         "INSERT INTO library_videos (video_path, media_root, kind, title, season_episode, has_subtitle, "
-        "video_mtime, video_size, embedded_langs_json, bazarr_matched) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "video_mtime, video_size, embedded_langs_json, bazarr_matched, series_id, episode_id, radarr_id) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         [(r["video_path"], r["media_root"], r["kind"], r["title"], r["season_episode"], int(r["has_subtitle"]),
-          r.get("video_mtime"), r.get("video_size"), r.get("embedded_langs_json"), int(r.get("bazarr_matched", False)))
+          r.get("video_mtime"), r.get("video_size"), r.get("embedded_langs_json"), int(r.get("bazarr_matched", False)),
+          r.get("series_id"), r.get("episode_id"), r.get("radarr_id"))
          for r in rows],
     )
     set_setting_raw(conn, "library.last_scanned_at", datetime.now(timezone.utc).isoformat())
     conn.commit()
+
+
+def get_bazarr_ids_for_video(conn: sqlite3.Connection, video_path: Path) -> Optional[dict]:
+    """{"kind", "series_id", "episode_id", "radarr_id"} for a video, from the Library cache --
+    lets a SUSPECT file with no usable Bazarr HISTORY match (see bazarr.remediate_without_history)
+    still know which episode to search Bazarr's providers for. None if this video was never seen
+    by a whole-library scan/Detect now, or Bazarr doesn't manage it.
+
+    "kind" here is library_videos' own vocabulary ("series"/"movie", i.e. Config.kind_for) --
+    NOT bazarr_library_info's internal per-item "episode"/"movie". Don't compare it against
+    "episode"."""
+    row = conn.execute(
+        "SELECT kind, series_id, episode_id, radarr_id FROM library_videos WHERE video_path = ?",
+        (str(video_path),),
+    ).fetchone()
+    if row is None or (row["series_id"] is None and row["radarr_id"] is None):
+        return None
+    return dict(row)
 
 
 def get_persisted_embedded_cache(conn: sqlite3.Connection, all_videos: list) -> dict:
@@ -765,16 +802,35 @@ def replace_library_videos_scoped(conn: sqlite3.Connection, roots: list[Path], r
     never wipe out the rest of the library's already-cached rows the way a full replace would.
     Deletes-then-reinserts (rather than a real UPDATE) so a file removed from the scoped
     folder(s) since the last scan is correctly dropped, same guarantee replace_library_videos
-    gives for the whole table."""
-    existing = [r["video_path"] for r in conn.execute("SELECT video_path FROM library_videos").fetchall()]
-    to_delete = [vp for vp in existing if any(Path(vp).is_relative_to(root) for root in roots)]
+    gives for the whole table.
+
+    A scoped Scan skips the Bazarr catalog fetch (see jobs._run_sweep's skip_bazarr_catalog),
+    so `rows` here has no fresh series_id/episode_id/radarr_id -- those are carried forward from
+    whatever was already cached for that exact video_path instead of being wiped to NULL, so a
+    scoped run never regresses remediate_without_history's ability to search Bazarr for videos
+    it already knew the IDs for."""
+    existing_rows = conn.execute(
+        "SELECT video_path, series_id, episode_id, radarr_id FROM library_videos"
+    ).fetchall()
+    old_ids = {r["video_path"]: r for r in existing_rows}
+    to_delete = [vp for vp in old_ids if any(Path(vp).is_relative_to(root) for root in roots)]
     if to_delete:
         conn.executemany("DELETE FROM library_videos WHERE video_path = ?", [(vp,) for vp in to_delete])
+
+    def _carry_forward(r: dict, col: str) -> Optional[int]:
+        fresh = r.get(col)
+        if fresh is not None:
+            return fresh
+        old = old_ids.get(r["video_path"])
+        return old[col] if old is not None else None
+
     conn.executemany(
         "INSERT INTO library_videos (video_path, media_root, kind, title, season_episode, has_subtitle, "
-        "video_mtime, video_size, embedded_langs_json, bazarr_matched) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "video_mtime, video_size, embedded_langs_json, bazarr_matched, series_id, episode_id, radarr_id) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         [(r["video_path"], r["media_root"], r["kind"], r["title"], r["season_episode"], int(r["has_subtitle"]),
-          r.get("video_mtime"), r.get("video_size"), r.get("embedded_langs_json"), int(r.get("bazarr_matched", False)))
+          r.get("video_mtime"), r.get("video_size"), r.get("embedded_langs_json"), int(r.get("bazarr_matched", False)),
+          _carry_forward(r, "series_id"), _carry_forward(r, "episode_id"), _carry_forward(r, "radarr_id"))
          for r in rows],
     )
     set_setting_raw(conn, "library.last_scanned_at", datetime.now(timezone.utc).isoformat())

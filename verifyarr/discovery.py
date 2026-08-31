@@ -243,6 +243,7 @@ def resolve_embedded_cache(cfg: Config, pairs: list[tuple[Path, Path, Optional[s
                             extra_cache: Optional[dict] = None,
                             skip_bazarr_catalog: bool = False,
                             cached_titles: Optional[dict[Path, str]] = None,
+                            ids_out: Optional[dict] = None,
                             ) -> tuple[dict[Path, set[str]], dict[Path, str]]:
     """(embedded_cache, bazarr_titles) — embedded_cache is {video_path: {embedded lang, ...}}
     for every video that needs one: Bazarr's own already-known embedded tracks first (one bulk
@@ -272,7 +273,13 @@ def resolve_embedded_cache(cfg: Config, pairs: list[tuple[Path, Path, Optional[s
     itself relies on, see jobs._run_sweep), so re-fetching Bazarr's whole catalog just to
     re-derive a handful of already-known answers is pure overhead. cached_titles supplies the
     bazarr_titles return value directly in this case (extra_cache still covers embedded-langs
-    as normal). Ignored (bazarr_library_info always runs) when False.
+    as normal). Ignored (bazarr_library_info always runs) when False, and ids_out (below) is
+    simply never populated in that case -- a scoped run's already-cached IDs are read straight
+    from the Library cache instead (see db.get_bazarr_ids_for_video), not through this path.
+
+    ids_out: optional dict, passed straight through to bazarr_library_info's own ids_out (see
+    its docstring) -- mutated in place with Bazarr's series/episode/radarr ID per video, for
+    build_library_video_rows to persist. Not populated when skip_bazarr_catalog is True.
 
     cancel_event: checked between completed probes (not mid-subprocess) — set means "stop and
     return whatever's resolved so far", never a hard kill of a probe already in flight.
@@ -284,7 +291,7 @@ def resolve_embedded_cache(cfg: Config, pairs: list[tuple[Path, Path, Optional[s
         from verifyarr.bazarr import bazarr_library_info  # local: keeps bazarr.py's own heavier
         # dependency chain (sync_engine/correctness/subtitles/requests) out of every plain
         # discovery.py import, most of which never touch Bazarr at all.
-        embedded_cache, bazarr_titles = bazarr_library_info(cfg)
+        embedded_cache, bazarr_titles = bazarr_library_info(cfg, ids_out=ids_out)
     if extra_cache:
         for video, langs in extra_cache.items():
             embedded_cache.setdefault(video, langs)
@@ -322,7 +329,8 @@ def resolve_embedded_cache(cfg: Config, pairs: list[tuple[Path, Path, Optional[s
 def build_library_video_rows(cfg: Config, pairs: list[tuple[Path, Path, Optional[str]]],
                               all_videos: list[Path],
                               embedded_cache: Optional[dict] = None,
-                              bazarr_titles: Optional[dict] = None) -> list[dict]:
+                              bazarr_titles: Optional[dict] = None,
+                              bazarr_ids: Optional[dict] = None) -> list[dict]:
     """Rows for db.replace_library_videos, derived from a discover_pairs/discover_all_videos
     pair that already exists anyway (from a sweep, or a rescan call) — so persisting the
     Library page never needs another os.walk beyond what already happens. A video with no
@@ -339,11 +347,18 @@ def build_library_video_rows(cfg: Config, pairs: list[tuple[Path, Path, Optional
     bazarr_titles: optional {video: title} — when a video is a key here, its Bazarr-matched
     title wins over the folder/file-name guess (infer_title_and_episode), which is often
     straight-off-a-release-name garbage (see resolve_embedded_cache/bazarr.bazarr_library_info).
-    A video Bazarr doesn't manage keeps the guessed title, same as before this existed."""
+    A video Bazarr doesn't manage keeps the guessed title, same as before this existed.
+
+    bazarr_ids: optional {video: {"kind", "series_id", "episode_id", "radarr_id"}} (see
+    resolve_embedded_cache's ids_out / bazarr.bazarr_library_info) — persisted per row so a
+    SUSPECT file with no Bazarr HISTORY match can still look up which episode to search Bazarr's
+    providers for (db.get_bazarr_ids_for_video, bazarr.remediate_without_history)."""
     if embedded_cache is None:
         embedded_cache = {}
     if bazarr_titles is None:
         bazarr_titles = {}
+    if bazarr_ids is None:
+        bazarr_ids = {}
     videos_with_subtitle = {video for video, _sub, _lang in pairs}
     rows = []
     for video in all_videos:
@@ -363,6 +378,7 @@ def build_library_video_rows(cfg: Config, pairs: list[tuple[Path, Path, Optional
         # external coverage) -- see db.get_persisted_embedded_cache, which only reuses a row
         # that recorded an actual check, never one that skipped it for this reason.
         embedded_langs = embedded_cache.get(video)
+        ids = bazarr_ids.get(video) or {}
         rows.append({
             "video_path": str(video),
             "media_root": str(cfg.media_root_for(video)),
@@ -374,6 +390,9 @@ def build_library_video_rows(cfg: Config, pairs: list[tuple[Path, Path, Optional
             "video_mtime": video_mtime,
             "video_size": video_size,
             "embedded_langs_json": json.dumps(sorted(embedded_langs)) if embedded_langs is not None else None,
+            "series_id": ids.get("series_id"),
+            "episode_id": ids.get("episode_id"),
+            "radarr_id": ids.get("radarr_id"),
         })
     return rows
 

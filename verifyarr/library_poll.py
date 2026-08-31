@@ -83,8 +83,15 @@ def refresh_library_cache(conn: sqlite3.Connection, cfg: Config, use_persisted_c
         with _progress_lock:
             _progress.update(done=done, total=total)
 
+    # Populated by resolve_embedded_cache (via bazarr_library_info) -- persisted below so a
+    # SUSPECT file with no history match can still look up which episode to search Bazarr for
+    # later (db.get_bazarr_ids_for_video, bazarr.remediate_without_history), without a fresh
+    # catalog fetch. This is the most common way that cache actually stays populated, since
+    # "Detect now"/the scheduled poll run far more often than a whole-library Scan.
+    bazarr_ids: dict = {}
     embedded_cache, bazarr_titles = resolve_embedded_cache(cfg, pairs, all_videos, cancel_event=_cancel_event,
-                                                            progress_cb=_report, extra_cache=persisted)
+                                                            progress_cb=_report, extra_cache=persisted,
+                                                            ids_out=bazarr_ids)
 
     if _cancel_event.is_set():
         log.info("Library rescan cancelled by user")
@@ -95,7 +102,7 @@ def refresh_library_cache(conn: sqlite3.Connection, cfg: Config, use_persisted_c
     try:
         missing = discover_missing(cfg, pairs, all_videos, embedded_cache=embedded_cache)
         rows = build_library_video_rows(cfg, pairs, all_videos, embedded_cache=embedded_cache,
-                                         bazarr_titles=bazarr_titles)
+                                         bazarr_titles=bazarr_titles, bazarr_ids=bazarr_ids)
         db.replace_library_videos(conn, rows)
         for video, lang in missing:
             db.mark_missing(conn, video, lang, cfg.media_root_for(video))

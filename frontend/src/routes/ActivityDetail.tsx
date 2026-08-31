@@ -5,6 +5,7 @@ import type { LogLine, RunRow } from '../api/types'
 import { durationBetween, formatDateTime } from '../lib/format'
 import { runTypeLabel, runTargetLabel } from '../lib/runLabels'
 import StatusPill from '../components/StatusPill'
+import CopyLogButton from '../components/CopyLogButton'
 import styles from './ActivityDetail.module.css'
 
 export default function ActivityDetail() {
@@ -117,6 +118,9 @@ export default function ActivityDetail() {
       )}
       {run?.error_message && <div className="error-banner">{run.error_message}</div>}
 
+      <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 6 }}>
+        <CopyLogButton lines={lines} />
+      </div>
       <div className={styles.logBox} ref={logBoxRef}>
         {lines.length === 0 && <div className="text-faint">Waiting for log lines…</div>}
         {lines.map((l) => (

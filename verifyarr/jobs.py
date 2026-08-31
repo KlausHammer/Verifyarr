@@ -28,7 +28,7 @@ from verifyarr.discovery import (discover_pairs, discover_all_videos, discover_m
                                 infer_title_and_episode, resolve_embedded_cache)
 from verifyarr.pipeline import process_pair, sync_pair, correctness_and_finish
 from verifyarr.reports import write_report
-from verifyarr.bazarr import bazarr_build_history_index
+from verifyarr.bazarr import LazyHistoryIndex
 from verifyarr.correctness import JobCancelled
 
 RunAlreadyActive = db.RunAlreadyActive
@@ -191,10 +191,16 @@ def _run_sweep(conn: sqlite3.Connection, run_id: int, cfg: Config, force: bool,
     # reuse above.
     skip_bazarr_catalog = scope_roots is not None and not force
     cached_titles = db.get_scoped_bazarr_titles(conn, kind, title, season) if skip_bazarr_catalog else None
+    # Populated by resolve_embedded_cache (via bazarr_library_info) whenever the catalog fetch
+    # actually runs -- persisted below so a SUSPECT file with no history match can still look up
+    # which episode to search Bazarr for later (db.get_bazarr_ids_for_video,
+    # bazarr.remediate_without_history), without needing this fetch again.
+    bazarr_ids: dict = {}
     embedded_cache, bazarr_titles = resolve_embedded_cache(cfg, pairs, all_videos, cancel_event=cancel_event,
                                                             extra_cache=persisted,
                                                             skip_bazarr_catalog=skip_bazarr_catalog,
-                                                            cached_titles=cached_titles)
+                                                            cached_titles=cached_titles,
+                                                            ids_out=bazarr_ids)
     if cancel_event.is_set():
         log.warning("Job cancelled — stopping during embedded-subtitle check")
         raise JobCancelled("cancelled during embedded-subtitle check")
@@ -235,7 +241,7 @@ def _run_sweep(conn: sqlite3.Connection, run_id: int, cfg: Config, force: bool,
     # A scoped run only touches its own scope_roots' rows (replace_library_videos_scoped);
     # an unscoped run replaces the whole table as before.
     new_rows = build_library_video_rows(cfg, pairs, all_videos, embedded_cache=embedded_cache,
-                                         bazarr_titles=bazarr_titles)
+                                         bazarr_titles=bazarr_titles, bazarr_ids=bazarr_ids)
     if scope_roots is not None:
         db.replace_library_videos_scoped(conn, scope_roots, new_rows)
     else:
@@ -254,10 +260,10 @@ def _run_sweep(conn: sqlite3.Connection, run_id: int, cfg: Config, force: bool,
     # builds its own history_index directly, see routers/files.py). Checked against EITHER
     # per-check action (correctness_auto_action / line_order_auto_action, see pipeline.py) — a
     # sweep can produce either kind of SUSPECT, so the history index has to be ready for both.
-    history_index = bazarr_build_history_index(cfg) if cfg.correctness_auto_action in ("blacklist", "remediate") \
+    # LazyHistoryIndex defers the actual ~10s bulk fetch until (if) something's actually SUSPECT
+    # -- most runs, especially a scoped Scan, never need it at all.
+    history_index = LazyHistoryIndex(cfg) if cfg.correctness_auto_action in ("blacklist", "remediate") \
         or cfg.line_order_auto_action in ("blacklist", "remediate") else None
-    if history_index is not None:
-        log.info("Fetched %d entries from Bazarr's history for auto-blacklist lookups", len(history_index))
 
     rows = []
     # audio_cache: see verifyarr.cli — shares one audio decode per video across languages (for
@@ -342,7 +348,12 @@ def _run_sweep(conn: sqlite3.Connection, run_id: int, cfg: Config, force: bool,
                     "note": str(e), "auto_action": "-",
                 }
                 db.update_state(conn, video, subtitle, row, run_id=run_id, media_root=cfg.media_root_for(subtitle))
-            log.info("[%d/%d] done — %s", i, len(scoped_pairs), _summarize_row(row))
+            # SUSPECT (and therefore whatever auto_action fired -- quarantine/blacklist/
+            # remediate) gets logged at WARNING instead of INFO so the Activity log renders it
+            # in yellow (see levelWARNING in ActivityDetail.module.css/Settings.module.css) --
+            # a file needing attention should stand out from the normal per-file progress lines.
+            log_fn = log.warning if row.get("correctness_flag") == "SUSPECT" else log.info
+            log_fn("[%d/%d] done — %s", i, len(scoped_pairs), _summarize_row(row))
             rows.append(row)
             db.bump_run_progress(conn, run_id, row)
     if rows:

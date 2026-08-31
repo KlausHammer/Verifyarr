@@ -87,7 +87,27 @@ def bazarr_build_history_index(cfg: Config) -> dict:
     return index
 
 
-def bazarr_library_info(cfg: Config) -> tuple[dict[Path, set[str]], dict[Path, str]]:
+class LazyHistoryIndex:
+    """Defers bazarr_build_history_index's bulk /episodes/history + /movies/history fetch (Bazarr's
+    ENTIRE download history log, ~10s on a real library) until the first time a lookup is actually
+    needed, memoized after that for the rest of the run. handle_suspect only ever calls .get() on
+    this -- most runs, especially a Scan scoped to one title/season, find nothing SUSPECT at all,
+    so this often means the fetch never happens in the first place instead of always being paid
+    upfront 'just in case' regardless of whether anything ends up needing it. Drop-in replacement
+    for a plain dict wherever only .get() is used (pipeline.py, web/routers/files.py)."""
+
+    def __init__(self, cfg: Config):
+        self._cfg = cfg
+        self._index: Optional[dict] = None
+
+    def get(self, key, default=None):
+        if self._index is None:
+            self._index = bazarr_build_history_index(self._cfg)
+            log.info("Fetched %d entries from Bazarr's history for auto-blacklist lookups", len(self._index))
+        return self._index.get(key, default)
+
+
+def bazarr_library_info(cfg: Config, ids_out: Optional[dict] = None) -> tuple[dict[Path, set[str]], dict[Path, str]]:
     """One bulk read of Bazarr's /movies, /series, /episodes, returning:
       - {video_path: {lang, ...}} — every embedded subtitle track Bazarr itself already knows
         about (its own "Embedded Subtitles" provider, if enabled under its Settings ->
@@ -104,6 +124,14 @@ def bazarr_library_info(cfg: Config) -> tuple[dict[Path, set[str]], dict[Path, s
         parsing, e.g. "[TorrentCouch.com].The.IT.Crowd...720p.HDTV.x264"). For an episode this
         is the SHOW's title (from /series), not the individual episode's own "title" field.
 
+    ids_out: optional dict, mutated in place with {video_path: {"kind", "series_id",
+    "episode_id", "radarr_id"}} for every video Bazarr manages -- a side channel rather than a
+    3rd return value, so this stays a drop-in swap everywhere the 2-tuple is already unpacked.
+    Persisted into the Library cache (see discovery.build_library_video_rows,
+    db.replace_library_videos) so a SUSPECT file with no Bazarr HISTORY match can still look up
+    which episode to search Bazarr's providers for (see remediate_without_history below) without
+    needing this whole bulk catalog fetch again.
+
     A video Bazarr doesn't manage (or hasn't scanned yet) simply won't be a key in either dict
     -- callers fall back to their own detection/guess for those. Both empty without
     bazarr.url + bazarr.api_key configured, same as the rest of this module's Bazarr-backed
@@ -117,7 +145,7 @@ def bazarr_library_info(cfg: Config) -> tuple[dict[Path, set[str]], dict[Path, s
         return {sub["code2"] for sub in (item.get("subtitles") or [])
                 if sub.get("embedded_track_id") is not None and sub.get("code2")}
 
-    def _absorb(items: list[dict], title_for) -> None:
+    def _absorb(items: list[dict], title_for, ids_for) -> None:
         for item in items:
             path = item.get("path")
             if not path:
@@ -129,11 +157,15 @@ def bazarr_library_info(cfg: Config) -> tuple[dict[Path, set[str]], dict[Path, s
             title = title_for(item)
             if title:
                 titles[local] = title
+            if ids_out is not None:
+                ids_out[local] = ids_for(item)
 
     movies_resp = bazarr_request(cfg, "GET", "/movies", params={"start": 0, "length": -1})
     if movies_resp is not None and movies_resp.status_code == 200:
         try:
-            _absorb(movies_resp.json().get("data", []), title_for=lambda m: m.get("title"))
+            _absorb(movies_resp.json().get("data", []), title_for=lambda m: m.get("title"),
+                    ids_for=lambda m: {"kind": "movie", "series_id": None, "episode_id": None,
+                                        "radarr_id": m.get("radarrId")})
         except ValueError:
             pass
 
@@ -160,7 +192,9 @@ def bazarr_library_info(cfg: Config) -> tuple[dict[Path, set[str]], dict[Path, s
                 # An episode's own "title" field is the EPISODE's name, not the show's -- the
                 # show title (what we actually want here) comes from series_titles instead.
                 _absorb(episodes_resp.json().get("data", []),
-                        title_for=lambda ep: series_titles.get(ep.get("sonarrSeriesId")))
+                        title_for=lambda ep: series_titles.get(ep.get("sonarrSeriesId")),
+                        ids_for=lambda ep: {"kind": "episode", "series_id": ep.get("sonarrSeriesId"),
+                                             "episode_id": ep.get("sonarrEpisodeId"), "radarr_id": None})
             except ValueError:
                 pass
 
@@ -346,35 +380,25 @@ def verify_subtitle_candidate(video_path: Path, subtitle_path: Path, lang: Optio
     return {"ok": result["flag"] == "ok", "flag": result["flag"], "avg_score": result["avg_score"]}
 
 
-def remediate_suspect(subtitle_path: Path, video_path: Path, cfg: Config, media_root: Path,
-                       lang: Optional[str], meta: dict, cancel_event=None,
-                       conn=None, run_id: Optional[int] = None) -> str:
-    """auto-action=remediate: like 'blacklist', but instead of just leaving the language
-    missing, it tries to fetch a working replacement itself:
-      1. Wait up to 2 minutes for whatever Bazarr's own blacklist call already started
-         downloading (deleting the old file successfully is what makes Bazarr auto-search for
-         a replacement — see handle_suspect in verifyarr.pipeline, which calls this only after
-         that succeeded). If a file appears, test it (alass + Whisper, see
-         verify_subtitle_candidate). Passes -> done.
-      2. If it fails, blacklist that one too, and try up to REMEDIATE_MAX_ATTEMPTS more times
-         with manually picked candidates from Bazarr's full provider search (Bazarr's own
-         score, regardless of Bazarr's OWN minimum_score setting — the point is to test
-         candidates Bazarr itself would reject, with our check as the judge).
-         automation.remediate_min_score is our OWN, separate threshold on that same Bazarr
-         score — candidates below it are never even downloaded.
+def _remediate(video_path: Path, series_id, episode_id, lang: Optional[str], cfg: Config,
+                tried_subs_ids: set, cancel_event=None, conn=None, run_id: Optional[int] = None,
+                try_auto_download_wait: bool = True) -> str:
+    """Shared implementation behind remediate_suspect and remediate_without_history below --
+    the two differ only in whether there's a just-completed blacklist call whose own
+    auto-download is worth waiting on first (try_auto_download_wait):
+      1. (only if try_auto_download_wait) Wait up to 2 minutes for whatever Bazarr's own
+         blacklist call already started downloading (deleting the old file successfully is what
+         makes Bazarr auto-search for a replacement). If a file appears, test it (alass +
+         Whisper, see verify_subtitle_candidate). Passes -> done.
+      2. Try up to automation.remediate_max_attempts manually picked candidates from Bazarr's
+         full provider search (Bazarr's own score, regardless of Bazarr's OWN minimum_score
+         setting — the point is to test candidates Bazarr itself would reject, with our check
+         as the judge). automation.remediate_min_score is our OWN, separate threshold on that
+         same Bazarr score — candidates below it are never even downloaded.
       3. If nothing works, the language is left missing (Bazarr's normal "subtitle missing"
          state — its periodic search will try again later), and the attempt is logged in the
-         returned message.
-    Called after the original file has already been blacklisted in Bazarr (see handle_suspect
-    in verifyarr.pipeline)."""
-    series_id, episode_id = meta.get("series_id"), meta.get("episode_id")
-    if not series_id or not episode_id:
-        return "cannot remediate — missing series_id/episode_id from Bazarr"
-    if meta.get("kind") == "movie":
-        return "cannot remediate — movies not supported yet, series only"
-
-    tried_subs_ids = {meta.get("subs_id")}
-    log_lines = []
+         returned message."""
+    log_lines: list[str] = []
 
     def try_current_file_and_maybe_blacklist(source: str, max_wait_s: float = 12.0) -> Optional[str]:
         """Finds the episode's current subtitle for the language, tests it, and blacklists it
@@ -421,13 +445,14 @@ def remediate_suspect(subtitle_path: Path, video_path: Path, cfg: Config, media_
                 )
         return None
 
-    # Give Bazarr's own automatic search a real chance before we take over manually -- its
-    # search-then-pick-then-download cycle can genuinely take a while (multiple providers,
-    # rate limits of its own), and jumping to manual candidates too early would blacklist and
-    # skip past a perfectly good auto-fetch that was just running slow.
-    result = try_current_file_and_maybe_blacklist("auto-download (from blacklist)", max_wait_s=120.0)
-    if result:
-        return result
+    if try_auto_download_wait:
+        # Give Bazarr's own automatic search a real chance before we take over manually -- its
+        # search-then-pick-then-download cycle can genuinely take a while (multiple providers,
+        # rate limits of its own), and jumping to manual candidates too early would blacklist
+        # and skip past a perfectly good auto-fetch that was just running slow.
+        result = try_current_file_and_maybe_blacklist("auto-download (from blacklist)", max_wait_s=120.0)
+        if result:
+            return result
 
     candidates = bazarr_search_candidates(cfg, episode_id, lang)
     # automation.remediate_min_score (default 80%) — Bazarr's OWN judgment of the candidate, not
@@ -458,7 +483,47 @@ def remediate_suspect(subtitle_path: Path, video_path: Path, cfg: Config, media_
         if result:
             return result
 
-    total = 1 + attempts
+    total = (1 if try_auto_download_wait else 0) + attempts
+    auto_part = "1 auto + " if try_auto_download_wait else ""
     return (f"no usable subtitle found after {total} attempt(s) "
-            f"(1 auto + {attempts} manual) — language left as "
+            f"({auto_part}{attempts} manual) — language left as "
             f"missing. " + " | ".join(log_lines))
+
+
+def remediate_suspect(subtitle_path: Path, video_path: Path, cfg: Config, media_root: Path,
+                       lang: Optional[str], meta: dict, cancel_event=None,
+                       conn=None, run_id: Optional[int] = None) -> str:
+    """auto-action=remediate, called right after the original file has already been blacklisted
+    in Bazarr (see handle_suspect in verifyarr.pipeline) -- like 'blacklist', but instead of
+    just leaving the language missing, it tries to fetch a working replacement itself. See
+    _remediate for the actual steps."""
+    series_id, episode_id = meta.get("series_id"), meta.get("episode_id")
+    if not series_id or not episode_id:
+        return "cannot remediate — missing series_id/episode_id from Bazarr"
+    if meta.get("kind") == "movie":
+        return "cannot remediate — movies not supported yet, series only"
+    return _remediate(video_path, series_id, episode_id, lang, cfg, {meta.get("subs_id")},
+                       cancel_event=cancel_event, conn=conn, run_id=run_id, try_auto_download_wait=True)
+
+
+def remediate_without_history(video_path: Path, cfg: Config, lang: Optional[str], series_id, episode_id,
+                               cancel_event=None, conn=None, run_id: Optional[int] = None) -> str:
+    """auto-action=remediate, for a SUSPECT file with no Bazarr HISTORY match to blacklist (see
+    handle_suspect in verifyarr.pipeline: 'no Bazarr match' otherwise means quarantine-only,
+    since there's nothing to tell Bazarr's /episodes/blacklist endpoint to remove). Most common
+    causes: the current subtitle came bundled with the original release rather than through
+    Bazarr at all, or its own history entry is already blacklisted from an earlier run (Bazarr
+    still visibly HAS history for the episode in that case, but bazarr_build_history_index
+    deliberately excludes an already-blacklisted entry, so the normal path finds nothing to
+    reference).
+
+    If Bazarr still manages this episode at all -- series_id/episode_id known from the Library
+    cache (db.get_bazarr_ids_for_video, populated by an earlier whole-library scan/Detect now,
+    same precondition as jobs._run_sweep's scope_roots) -- a manual provider search can still
+    find and verify a replacement even though nothing could be blacklisted first. Skips straight
+    to the manual-candidate step (_remediate's try_auto_download_wait=False) since there's no
+    just-completed blacklist call whose own auto-download would be worth waiting on."""
+    if not series_id or not episode_id:
+        return "cannot search for a replacement — no Bazarr series/episode ID known for this video"
+    return _remediate(video_path, series_id, episode_id, lang, cfg, set(),
+                       cancel_event=cancel_event, conn=conn, run_id=run_id, try_auto_download_wait=False)
