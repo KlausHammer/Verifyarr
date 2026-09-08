@@ -192,36 +192,49 @@ def sync_pair(video_path: Path, subtitle_path: Path, lang: Optional[str], cfg: C
         row["sync_status"] = "alass not found"
     else:
         with tempfile.TemporaryDirectory() as td:
-            tmp_out = Path(td) / f"synced{subtitle_path.suffix}"
             reference_path = resolve_alass_reference(video_path, audio_cache, audio_cache_dir, audio_cache_lock)
-            ok, msg, stderr_tail = run_alass(alass_bin, reference_path, subtitle_path, tmp_out, cfg.split_penalty)
+            tmp_primary = Path(td) / f"synced{subtitle_path.suffix}"
+            # Try alass's simplest, safest mode FIRST: a single global offset (--no-splits)
+            # can't overfit mismatched content into pieces the way block-splitting can (see
+            # run_alass's no_splits docstring) -- block-splitting is only worth trying as a
+            # SECOND opinion below, verified against real audio content before it's ever
+            # trusted, not applied blindly just because alass was willing to compute it.
+            ok, msg, stderr_tail = run_alass(alass_bin, reference_path, subtitle_path, tmp_primary,
+                                              cfg.split_penalty, no_splits=True)
+            used_no_splits_primary = True
+            if not ok:
+                # --no-splits itself failed (rare) -- fall back to the ordinary split-penalty
+                # call as the primary attempt, same as the only option before this existed.
+                ok, msg, stderr_tail = run_alass(alass_bin, reference_path, subtitle_path,
+                                                  tmp_primary, cfg.split_penalty)
+                used_no_splits_primary = False
             if not ok:
                 row["sync_status"] = f"error: {msg}"
                 row["note"] = stderr_tail[:300]
             else:
                 try:
-                    new_subs = load_subs(tmp_out)
+                    primary_subs = load_subs(tmp_primary)
                 except Exception as e:
                     row["sync_status"] = "could not parse alass output"
                     row["note"] = str(e)
                 else:
-                    max_shift, _avg_shift, old_n, new_n = max_shift_stats(old_subs, new_subs)
+                    max_shift, _avg_shift, old_n, new_n = max_shift_stats(old_subs, primary_subs)
                     row["sync_max_shift_s"] = round(max_shift, 2) if max_shift is not None else None
                     structural = bool(old_n) and abs(old_n - new_n) / old_n > 0.1
                     row["structural_change"] = structural
 
-                    shift_blocks = parse_alass_shift_blocks(stderr_tail)
-                    row["sync_split_blocks"] = len(shift_blocks)
-                    if len(shift_blocks) > 1:
-                        spread = max(shift_blocks) - min(shift_blocks)
-                        row["sync_block_spread_s"] = round(spread, 2)
-                        row["note"] += (f" alass used {len(shift_blocks)} sync blocks with shifts "
-                                         f"{[round(s, 1) for s in shift_blocks]}s (spread "
-                                         f"{spread:.1f}s) — can be caused by real cuts in the episode, "
-                                         f"but can also be a sign of a wrong subtitle, check manually.")
-
-                    suspicious_spread = (row["sync_block_spread_s"] is not None
-                                         and row["sync_block_spread_s"] >= cfg.block_spread_suspect_threshold_s)
+                    if used_no_splits_primary:
+                        row["sync_split_blocks"] = 1
+                    else:
+                        shift_blocks = parse_alass_shift_blocks(stderr_tail)
+                        row["sync_split_blocks"] = len(shift_blocks)
+                        if len(shift_blocks) > 1:
+                            spread = max(shift_blocks) - min(shift_blocks)
+                            row["sync_block_spread_s"] = round(spread, 2)
+                            row["note"] += (f" alass used {len(shift_blocks)} sync blocks with shifts "
+                                             f"{[round(s, 1) for s in shift_blocks]}s (spread "
+                                             f"{spread:.1f}s) — can be caused by real cuts in the episode, "
+                                             f"but can also be a sign of a wrong subtitle, check manually.")
 
                     if max_shift is not None and max_shift >= cfg.min_change_seconds:
                         # Use the corrected timing for the correctness check either way — even
@@ -229,44 +242,51 @@ def sync_pair(video_path: Path, subtitle_path: Path, lang: Optional[str], cfg: C
                         # should still reflect what WOULD happen. Otherwise Whisper audio gets
                         # compared against the old, wrong timing, producing false SUSPECT flags
                         # on exactly the files with the biggest sync error.
-                        current_subs = new_subs
+                        current_subs = primary_subs
                         if cfg.dry_run:
                             row["sync_status"] = f"would fix (Δ{max_shift:.1f}s) [dry-run]"
                             if structural:
                                 row["note"] += " line count changed significantly — check the file manually."
-                        elif suspicious_spread:
-                            # Don't commit to this fix yet -- a big spread between block shifts
-                            # is exactly what alass "overfitting mismatched content in pieces"
-                            # looks like (see run_alass's no_splits docstring), not just real
-                            # cuts. Get a second opinion (alass's own --no-splits, single global
-                            # offset mode) and leave the ORIGINAL file untouched on disk for
-                            # now -- correctness_and_finish decides which of {original, this
-                            # fix, the no-splits fix} actually scores best against the real
-                            # audio (reusing the SAME Whisper samples the correctness check
-                            # already pays for, so this costs no extra API calls) before
-                            # anything gets written.
-                            no_splits_subs = None
-                            max_shift_no_splits = None
-                            tmp_out2 = Path(td) / f"synced_no_splits{subtitle_path.suffix}"
-                            ok2, _msg2, _stderr2 = run_alass(alass_bin, reference_path, subtitle_path,
-                                                              tmp_out2, cfg.split_penalty, no_splits=True)
+                        elif used_no_splits_primary:
+                            # Get a second opinion from alass's normal (possibly multi-block)
+                            # mode too, and leave the ORIGINAL file untouched on disk for now --
+                            # correctness_and_finish decides which of {original, this
+                            # single-offset fix, the multi-block fix} actually scores best
+                            # against the real audio (reusing the SAME Whisper samples the
+                            # correctness check already pays for, so this costs no extra API
+                            # calls) before anything gets written.
+                            blocks_subs = None
+                            max_shift_blocks = None
+                            blocks_split_count = None
+                            blocks_spread = None
+                            tmp_blocks = Path(td) / f"synced_blocks{subtitle_path.suffix}"
+                            ok2, _msg2, stderr2 = run_alass(alass_bin, reference_path, subtitle_path,
+                                                             tmp_blocks, cfg.split_penalty)
                             if ok2:
                                 try:
-                                    no_splits_subs = load_subs(tmp_out2)
+                                    blocks_subs = load_subs(tmp_blocks)
                                 except Exception:
-                                    no_splits_subs = None
+                                    blocks_subs = None
                                 else:
-                                    max_shift_no_splits, *_ = max_shift_stats(old_subs, no_splits_subs)
+                                    max_shift_blocks, *_ = max_shift_stats(old_subs, blocks_subs)
+                                    shift_blocks2 = parse_alass_shift_blocks(stderr2)
+                                    blocks_split_count = len(shift_blocks2)
+                                    if len(shift_blocks2) > 1:
+                                        blocks_spread = round(max(shift_blocks2) - min(shift_blocks2), 2)
                             row["_ambiguous_sync"] = {
-                                "old_subs": old_subs, "new_subs": new_subs, "max_shift_new": max_shift,
-                                "no_splits_subs": no_splits_subs, "max_shift_no_splits": max_shift_no_splits,
+                                "old_subs": old_subs, "new_subs": primary_subs, "max_shift_new": max_shift,
+                                "blocks_subs": blocks_subs, "max_shift_blocks": max_shift_blocks,
+                                "blocks_split_count": blocks_split_count, "blocks_spread": blocks_spread,
                                 "structural": structural,
                             }
                             row["sync_status"] = f"fixed (Δ{max_shift:.1f}s) [pending verification]"
                         else:
+                            # --no-splits itself failed above, so this IS the split-penalty
+                            # fallback -- nothing to compare it against, just apply it the way
+                            # every fix worked before this feature existed.
                             if cfg.backup_originals:
                                 backup_subtitle(subtitle_path, cfg.backup_dir, media_root)
-                            shutil.copyfile(tmp_out, subtitle_path)
+                            shutil.copyfile(tmp_primary, subtitle_path)
                             row["sync_status"] = f"fixed (Δ{max_shift:.1f}s)"
                             if structural:
                                 row["note"] += " line count changed significantly — check the file manually."
@@ -279,31 +299,30 @@ def sync_pair(video_path: Path, subtitle_path: Path, lang: Optional[str], cfg: C
 def _resolve_ambiguous_sync(conn: sqlite3.Connection, video_path: Path, subtitle_path: Path,
                              lang: Optional[str], cfg: Config, media_root: Path,
                              ambiguous: dict, result: dict, row: dict, cancel_event=None) -> tuple:
-    """Decides which of {the ORIGINAL subtitle, alass's default (possibly multi-block) fix, a
-    --no-splits single-global-offset retry} to actually keep, for a fix sync_pair flagged as
-    structurally suspicious and deferred writing to disk for (see sync_pair's suspicious_spread
-    branch). Scores the alternatives against the SAME cached Whisper transcripts the "new"
-    candidate's own correctness check (`result`, computed by the caller before this runs) just
-    paid for — score_against_cached_transcripts makes this free (no extra API calls) for
-    whichever candidates actually have cached samples to reuse.
+    """Decides which of {the ORIGINAL subtitle, alass's --no-splits single-global-offset fix
+    (the PRIMARY attempt — see sync_pair), a normal (possibly multi-block) split-penalty retry}
+    to actually keep. Scores the alternatives against the SAME cached Whisper transcripts the
+    primary candidate's own correctness check (`result`, computed by the caller before this
+    runs) just paid for — score_against_cached_transcripts makes this free (no extra API calls)
+    for whichever candidates actually have cached samples to reuse.
 
     Preference order: the ORIGINAL wins outright if it scores "ok" on its own — stability
-    first, don't touch a file that wasn't actually broken (this is the direct fix for a file
-    that was fine getting wrongly re-synced). Otherwise, whichever of {new, no_splits} scores
-    best wins (preferring one that clears "ok" over one that doesn't). If NONE of the three
-    clear "ok", keeps whichever scored best anyway (best effort, still correctly flagged
-    SUSPECT by the caller either way) rather than leave an even-worse fix in place.
+    first, don't touch a file that wasn't actually broken. Otherwise, whichever of {new
+    (no-splits), blocks (multi-block retry)} scores best wins (preferring one that clears "ok"
+    over one that doesn't). If NONE of the three clear "ok", keeps whichever scored best anyway
+    (best effort, still correctly flagged SUSPECT by the caller either way) rather than leave an
+    even-worse fix in place.
 
     Only called when cfg.dry_run is False (see sync_pair) -- no dry-run branching needed here.
 
     Returns (current_subs, result, swap_severity, winner) — result/swap_severity are shaped
     like finalize_line_order's own return so the rest of correctness_and_finish can keep
-    treating them the same regardless of which candidate won. old/no_splits get a SYNTHESIZED
+    treating them the same regardless of which candidate won. old/blocks get a SYNTHESIZED
     result with no line-order data (swap_severity=None, no line_issues/line_flagged) — that's a
     separate, heavier analysis pass this cheap comparison doesn't redo; it'll run properly next
     time this file's content actually differs from what's cached."""
     old_subs, new_subs = ambiguous["old_subs"], ambiguous["new_subs"]
-    no_splits_subs = ambiguous.get("no_splits_subs")
+    blocks_subs = ambiguous.get("blocks_subs")
     transcript_lang = result.get("audio_lang")
 
     scored = {"new": {"avg_score": result.get("avg_score"), "flag": result.get("flag")}}
@@ -311,11 +330,11 @@ def _resolve_ambiguous_sync(conn: sqlite3.Connection, video_path: Path, subtitle
                                                    cancel_event=cancel_event)
     if old_score is not None:
         scored["old"] = old_score
-    if no_splits_subs is not None:
-        ns_score = score_against_cached_transcripts(conn, video_path, no_splits_subs, lang, transcript_lang, cfg,
-                                                      cancel_event=cancel_event)
-        if ns_score is not None:
-            scored["no_splits"] = ns_score
+    if blocks_subs is not None:
+        b_score = score_against_cached_transcripts(conn, video_path, blocks_subs, lang, transcript_lang, cfg,
+                                                     cancel_event=cancel_event)
+        if b_score is not None:
+            scored["blocks"] = b_score
 
     if "old" in scored and scored["old"]["flag"] == "ok":
         winner = "old"
@@ -328,9 +347,9 @@ def _resolve_ambiguous_sync(conn: sqlite3.Connection, video_path: Path, subtitle
             winner = max(scorable, key=lambda k: scorable[k]["avg_score"]) if scorable else "new"
 
     others = ", ".join(f"{k}={v.get('avg_score')}" for k, v in scored.items() if k != winner)
-    note_suffix = (f" Verified alass's fix against the original and a --no-splits retry before "
-                    f"applying anything (triggered by the {row.get('sync_block_spread_s')}s block "
-                    f"spread) — kept '{winner}' (score {scored[winner].get('avg_score')})"
+    note_suffix = (f" Verified alass's single-offset fix against the original and a multi-block "
+                    f"retry before applying anything — kept '{winner}' "
+                    f"(score {scored[winner].get('avg_score')})"
                     + (f", rejected: {others}." if others else "."))
 
     def _synthetic(key: str) -> dict:
@@ -348,20 +367,21 @@ def _resolve_ambiguous_sync(conn: sqlite3.Connection, video_path: Path, subtitle
         row["note"] += note_suffix
         return new_subs, result, result.get("swap_severity"), winner
 
-    if winner == "no_splits":
-        row["sync_max_shift_s"] = (round(ambiguous["max_shift_no_splits"], 2)
-                                    if ambiguous.get("max_shift_no_splits") is not None else None)
-        row["sync_split_blocks"] = 1
-        row["sync_block_spread_s"] = None
+    if winner == "blocks":
+        row["sync_max_shift_s"] = (round(ambiguous["max_shift_blocks"], 2)
+                                    if ambiguous.get("max_shift_blocks") is not None else None)
+        row["sync_split_blocks"] = ambiguous.get("blocks_split_count")
+        row["sync_block_spread_s"] = ambiguous.get("blocks_spread")
         if cfg.backup_originals:
             backup_subtitle(subtitle_path, cfg.backup_dir, media_root)
-        no_splits_subs.save(str(subtitle_path))
-        shift_txt = f"{ambiguous['max_shift_no_splits']:.1f}s" if ambiguous.get("max_shift_no_splits") is not None else "?"
-        row["sync_status"] = f"fixed (Δ{shift_txt}, single global offset)"
+        blocks_subs.save(str(subtitle_path))
+        shift_txt = f"{ambiguous['max_shift_blocks']:.1f}s" if ambiguous.get("max_shift_blocks") is not None else "?"
+        blocks_txt = ambiguous.get("blocks_split_count") or "?"
+        row["sync_status"] = f"fixed (Δ{shift_txt}, {blocks_txt} sync block(s))"
         row["note"] += note_suffix
         row["line_order_fixed"] = None
         row["line_order_flagged"] = None
-        return no_splits_subs, _synthetic("no_splits"), None, winner
+        return blocks_subs, _synthetic("blocks"), None, winner
 
     # winner == "old" -- nothing to write, the file was never touched on disk in the first place.
     row["sync_max_shift_s"] = None
@@ -446,10 +466,11 @@ def correctness_and_finish(video_path: Path, subtitle_path: Path, lang: Optional
             row["correctness_samples"] = result.get("samples")
             swap_severity = result.get("swap_severity")
 
-            # A suspicious-spread fix sync_pair deferred writing (see its own docstring) gets
-            # resolved HERE, before any of the branches below act on `result` -- the winner
-            # might not even be "new" (the candidate `result` currently describes), so nothing
-            # downstream should judge/act on "new" until this has had a chance to replace it.
+            # A fix sync_pair deferred writing (its --no-splits primary attempt, pending a second
+            # opinion — see its own docstring) gets resolved HERE, before any of the branches
+            # below act on `result` -- the winner might not even be "new" (the candidate
+            # `result` currently describes), so nothing downstream should judge/act on "new"
+            # until this has had a chance to replace it.
             ambiguous = row.pop("_ambiguous_sync", None)
             resolved_winner = None
             if ambiguous is not None:
@@ -489,6 +510,10 @@ def correctness_and_finish(video_path: Path, subtitle_path: Path, lang: Optional
                   and row["sync_block_spread_s"] >= cfg.block_spread_suspect_threshold_s
                   and any(s.get("score") is not None and s["score"] < cfg.overlap_threshold
                           for s in result["samples"])):
+                # A safety net for the one case that skips the {original, no-splits, multi-
+                # block} comparison above entirely: --no-splits itself failed in sync_pair, so
+                # a possibly multi-block split-penalty fix got applied directly with nothing to
+                # verify it against (see sync_pair's used_no_splits_primary=False fallback).
                 # The majority-vote check alone (_aggregate_correctness) said "ok" -- but alass
                 # itself needed wildly different offsets in different parts of this file to line
                 # up the audio TIMING (real cuts can cause that on their own), AND at least one
