@@ -59,11 +59,19 @@ def parse_alass_shift_blocks(stderr_text: str) -> list[float]:
 
 
 def run_alass(alass_bin: str, reference_path: Path, subtitle_path: Path, out_path: Path,
-              split_penalty: int, timeout: int = 900):
+              split_penalty: int, timeout: int = 900, no_splits: bool = False):
     """reference_path is normally video_path, but can be a pre-extracted WAV (see
-    extract_audio_wav) — alass-cli treats both the same."""
-    cmd = [alass_bin, str(reference_path), str(subtitle_path), str(out_path),
-           "--split-penalty", str(split_penalty)]
+    extract_audio_wav) — alass-cli treats both the same.
+
+    no_splits: alass's own `--no-splits` mode -- bypasses its split-detection algorithm
+    entirely and fits a single constant offset for the whole file (split_penalty is ignored;
+    alass rejects the two together). Used as a second opinion when the default (possibly
+    multi-block) result looks structurally suspicious (see pipeline.sync_pair) -- a confused
+    multi-block fit and a clean single-offset fit disagreeing is itself informative, and a
+    single-offset fit is immune to the "overfits mismatched content in pieces" failure mode
+    multi-block splitting has (see parse_alass_shift_blocks)."""
+    cmd = [alass_bin, str(reference_path), str(subtitle_path), str(out_path)]
+    cmd += ["--no-splits"] if no_splits else ["--split-penalty", str(split_penalty)]
     log.debug("alass: %s", " ".join(cmd))
     try:
         proc = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)

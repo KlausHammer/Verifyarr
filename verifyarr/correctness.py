@@ -330,6 +330,46 @@ def _aggregate_correctness(samples: list[dict], cfg: Config) -> tuple[Optional[f
     return avg, ("ok" if passing * 2 >= len(valid) else "SUSPECT")
 
 
+def score_against_cached_transcripts(conn, video_path: Path, subs: "pysubs2.SSAFile",
+                                      sub_lang: Optional[str], transcript_lang: Optional[str],
+                                      cfg: Config, cancel_event=None) -> Optional[dict]:
+    """Scores `subs` against whatever FILLER-slot Whisper transcripts are already cached for
+    this video (video_transcript_cache, keyed by (video_path, region_index) — audio-only,
+    content-independent of any particular subtitle, see db.get_cached_transcript) — no new
+    Whisper calls. Used to cheaply judge a second/third candidate timing (the original,
+    pre-sync subtitle; an alternate alass run) against the SAME audio samples an ordinary
+    correctness_check/collect_samples call already paid for on the primary candidate, instead
+    of re-transcribing for each one (see pipeline.sync_pair's suspicious-spread handling).
+
+    Only region indices that actually have a cached transcript are usable — a "heuristic" slot
+    from line_order.collect_samples (anchored to ONE specific subtitle's own claimed line
+    timing, not a plain dialogue-dense point) is deliberately never written to this cache, so a
+    region that happened to be heuristic-anchored for the primary candidate is simply skipped
+    here rather than guessed at. Returns None (not a verdict) if nothing was cached at all --
+    caller should treat that as "not enough data to compare", not as a pass or a fail.
+
+    Comparison text may still need translation (see _compare_transcript_to_window) if sub_lang
+    differs from the audio language -- the one part of this that isn't fully free API-wise, but
+    it's the same per-sample cost an ordinary check already pays, just repeated for however many
+    extra candidates this call scores."""
+    n = max(1, cfg.sample_count)
+    samples = []
+    for idx in range(n):
+        cached = db.get_cached_transcript(conn, video_path, idx)
+        if cached is None:
+            continue
+        window_text = subs_text_in_window(subs, cached["start"], cfg.window_minutes * 60,
+                                            cfg.clip_seconds + cfg.window_minutes * 60)
+        compare = _compare_transcript_to_window(cfg, cached["transcript"], window_text, sub_lang,
+                                                 transcript_lang, cancel_event=cancel_event)
+        if "error" not in compare:
+            samples.append({"start": cached["start"], **compare})
+    if not samples:
+        return None
+    avg, flag = _aggregate_correctness(samples, cfg)
+    return {"avg_score": avg, "flag": flag, "samples": samples}
+
+
 def correctness_check(video_path: Path, subs: "pysubs2.SSAFile", sub_lang: Optional[str],
                        cfg: Config, tmp_dir: Path, conn=None, cancel_event=None) -> dict:
     """Standalone correctness check, isolated to one file — used by bazarr.py's

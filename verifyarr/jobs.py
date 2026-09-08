@@ -20,7 +20,7 @@ import threading
 from pathlib import Path
 from typing import Optional
 
-from verifyarr import log
+from verifyarr import log, HEADER, SUCCESS
 from verifyarr import db
 from verifyarr.settings import Config
 from verifyarr.discovery import (discover_pairs, discover_all_videos, discover_missing,
@@ -62,27 +62,42 @@ def _apply_dry_run(cfg: Config, dry_run: bool) -> Config:
     return cfg if cfg.dry_run == dry_run else dataclasses.replace(cfg, dry_run=dry_run)
 
 
-def _summarize_row(row: dict) -> str:
-    """One-line "what actually happened" for Activity's log, after a file's sync+correctness
-    both run (see the phase 2 loop below) — the "[i/N] path" line before it only says what's
-    ABOUT to be checked, not the outcome, which is what actually matters when reading the log
-    back afterward. `note` is included (truncated) because it's the ONLY thing that says WHY a
-    SUSPECT flag was raised -- a low correctness_avg_score alone doesn't say whether the
-    subtitle just doesn't match this episode's audio at all (note starts "Whisper heard: ...")
-    or whether it's a widespread line-order swap instead (note starts "Line order: ..."), two
-    very different problems with the same score-and-flag shape."""
-    parts = [f"sync: {row.get('sync_status', '-')}"]
+def _outcome_summary(row: dict) -> tuple[str, str]:
+    """(outcome, short text) for Activity's per-file "done" log line, after a file's sync+
+    correctness both run (see the batch loop below) -- the "[i/N] path" line before it only
+    says what's ABOUT to be checked, this is the one-glance answer to "did this file need
+    anything". outcome drives both the line's color (green/yellow/red — see levelSUCCESS/
+    levelWARNING/levelERROR in ActivityDetail.module.css/Settings.module.css) and which log
+    level it's emitted at:
+      "ok"      — nothing needed, already in sync and correctness passed (or wasn't run at all).
+      "sync"    — alass fixed the timing; correctness (if it ran) still passed.
+      "suspect" — correctness flagged it; whatever auto-action fired is summarized too.
+    Deliberately short — full detail (the "why" note, exact score, exact action message) is
+    still in `row.note`/`row.auto_action` and visible on the file's own detail page; repeating
+    all of it on every line was the "hard to follow" the log used to be."""
     flag = row.get("correctness_flag")
-    if flag not in (None, "-"):
-        score = row.get("correctness_avg_score")
-        parts.append(f"correctness: {flag}" + (f" (score={score})" if score is not None else ""))
-    action = row.get("auto_action")
-    if action not in (None, "-"):
-        parts.append(f"action: {action}")
-    note = (row.get("note") or "").strip()
-    if note:
-        parts.append(f"why: {note[:300]}{'…' if len(note) > 300 else ''}")
-    return " | ".join(parts)
+    score = row.get("correctness_avg_score")
+    synced = (row.get("sync_status") or "").startswith("fixed")
+
+    if flag == "SUSPECT":
+        # auto_action is itself a longer status string (e.g. "quarantined -> ...; blacklist
+        # skipped ...") -- just the FIRST clause is enough here to say what happened, the rest
+        # is still in the row for anyone who clicks in.
+        action = (row.get("auto_action") or "").split(";")[0].split(" -> ")[0].strip()
+        text = "SUSPECT — needs redownload"
+        if action and action not in ("-", "none (action=off)"):
+            text += f" ({action})"
+        return "suspect", text
+
+    if synced:
+        shift = row.get("sync_max_shift_s")
+        text = f"Synced (Δ{shift:.1f}s)" if shift is not None else "Synced"
+        if score is not None:
+            text += f", score {score}"
+        return "sync", text
+
+    text = "OK" + (f" (score {score})" if score is not None else "")
+    return "ok", text
 
 
 # Triggers that run WITHOUT a human choosing, right then, what to scan — the scheduled sweep
@@ -280,82 +295,114 @@ def _run_sweep(conn: sqlite3.Connection, run_id: int, cfg: Config, force: bool,
     with tempfile.TemporaryDirectory(prefix="verifyarr-audio-") as audio_cache_dir_str:
         audio_cache_dir = Path(audio_cache_dir_str)
 
-        # should_skip is checked once, up front, for both phases -- an unchanged file should
-        # never occupy a sync-pool worker OR a correctness slot.
+        # should_skip is checked once, up front -- an unchanged file should never occupy a
+        # sync-pool worker OR a correctness slot.
         to_process = [(i, video, subtitle, lang) for i, (video, subtitle, lang) in enumerate(scoped_pairs, 1)
                       if force or not db.should_skip(conn, video, subtitle, cfg)]
 
-        # Phase 1: sync (alass) for every file that needs it, in parallel (see SYNC_WORKERS).
-        # Deliberately runs the whole batch to completion once started rather than checking
-        # cancel_event partway through it: each alass call is normally a few seconds, so the
-        # bounded wait is short, and it means a file's subtitle is never left rewritten on disk
-        # (sync_pair does that itself, with no `conn`/DB involved) without a matching DB row.
-        # Cancellation is enforced promptly in phase 2 below instead, which is where a sweep can
-        # actually run long (Whisper/Groq, one file at a time).
-        sync_results: dict[int, tuple] = {}
-        sync_errors: dict[int, Exception] = {}
-        if to_process and not cancel_event.is_set():
-            # One lock PER DISTINCT VIDEO, not one lock shared by the whole batch -- the lock
-            # only needs to keep two subtitle languages of the SAME video from racing to
-            # extract/overwrite its shared audio file (see sync_engine.resolve_alass_reference).
-            # A single global lock instead would serialize every video's (slow, I/O-bound ffmpeg)
-            # extraction behind ONE thread at a time regardless of SYNC_WORKERS -- exactly the
-            # "1% CPU, not actually parallel" bug this replaces.
-            video_locks: dict[Path, threading.Lock] = {}
-            for _i, video, _subtitle, _lang in to_process:
-                video_locks.setdefault(video, threading.Lock())
+        # One lock PER DISTINCT VIDEO, not one lock shared by the whole run -- the lock only
+        # needs to keep two subtitle languages of the SAME video from racing to extract/
+        # overwrite its shared audio file (see sync_engine.resolve_alass_reference). A single
+        # global lock instead would serialize every video's (slow, I/O-bound ffmpeg) extraction
+        # behind ONE thread at a time regardless of SYNC_WORKERS -- exactly the "1% CPU, not
+        # actually parallel" bug this replaces. Built once, shared across every batch below.
+        video_locks: dict[Path, threading.Lock] = {}
+        for _i, video, _subtitle, _lang in to_process:
+            video_locks.setdefault(video, threading.Lock())
 
-            log.info("Syncing %d file(s) with alass (up to %d at a time)...", len(to_process), SYNC_WORKERS)
+        # A short "which episode/movie is this" label per file, e.g. "S02E06" or a movie's
+        # filename stem -- cheap (regex only, no filesystem access), computed once up front so
+        # every log line below can say what it's actually about instead of making the reader
+        # scroll back to match an "[i/N]" index against the one "[i/N] <path>" line that showed
+        # it (the whole point of asking for this: a batch runs several files at once, and their
+        # sync/done lines can interleave with each other's).
+        labels: dict[int, str] = {}
+        for i, video, _subtitle, _lang in to_process:
+            se, _t = infer_title_and_episode(video, cfg.media_root_for(video))
+            labels[i] = se or video.stem
+
+        if to_process:
+            log.info("Processing %d file(s) — up to %d synced with alass at a time, each batch's "
+                      "correctness check finishing before the next batch starts syncing...",
+                      len(to_process), SYNC_WORKERS)
+
+        # One batch of SYNC_WORKERS files at a time: sync the whole batch in parallel, THEN run
+        # correctness/line-order sequentially for just that batch, before the next batch's sync
+        # even starts. Previously this was two flat phases across ALL of to_process at once --
+        # correct, but on anything more than a handful of files the Activity log became "every
+        # file's sync line, all interleaved, then a long wait before ANY correctness line" --
+        # hard to follow one episode's story start to finish. Batching by SYNC_WORKERS keeps the
+        # sync parallelism (still up to SYNC_WORKERS alass processes at once) while keeping the
+        # log's interleaving bounded to one batch instead of the whole run.
+        for batch_start in range(0, len(to_process), SYNC_WORKERS):
+            batch = to_process[batch_start:batch_start + SYNC_WORKERS]
+            if cancel_event.is_set():
+                log.warning("Job cancelled — stopping before file %d/%d", batch[0][0], len(scoped_pairs))
+                raise JobCancelled("cancelled between batches")
+
+            # Sync (alass) this batch, in parallel. Deliberately runs the whole batch to
+            # completion once started rather than checking cancel_event partway through it:
+            # each alass call is normally a few seconds, so the bounded wait is short, and it
+            # means a file's subtitle is never left rewritten on disk (sync_pair does that
+            # itself, with no `conn`/DB involved) without a matching DB row. Cancellation is
+            # enforced promptly below instead, between batches and before each correctness call.
+            sync_results: dict[int, tuple] = {}
+            sync_errors: dict[int, Exception] = {}
             with concurrent.futures.ThreadPoolExecutor(max_workers=SYNC_WORKERS) as pool:
                 future_to_i = {
                     pool.submit(sync_pair, video, subtitle, lang, cfg, audio_cache, audio_cache_dir,
                                 video_locks[video]): i
-                    for i, video, subtitle, lang in to_process
+                    for i, video, subtitle, lang in batch
                 }
                 for future in concurrent.futures.as_completed(future_to_i):
                     i = future_to_i[future]
                     try:
                         sync_results[i] = future.result()
-                        log.info("[%d/%d] synced — %s", i, len(to_process), sync_results[i][0].get("sync_status", "-"))
+                        log.info("[%d/%d] %s synced — %s", i, len(to_process), labels[i],
+                                  sync_results[i][0].get("sync_status", "-"))
                     except Exception as e:
                         sync_errors[i] = e
-                        log.warning("[%d/%d] sync failed: %s", i, len(to_process), e)
+                        log.warning("[%d/%d] %s sync failed: %s", i, len(to_process), labels[i], e)
 
-        # Phase 2: correctness/line-order check + persistence, sequential -- Groq's rate-limit
-        # pacing and cancellation both expect one file at a time here, and a sqlite3 connection
-        # isn't safe to share across threads, which is why this stays out of the pool above.
-        for i, video, subtitle, lang in to_process:
-            if cancel_event.is_set():
-                log.warning("Job cancelled — stopping before file %d/%d", i, len(scoped_pairs))
-                raise JobCancelled("cancelled between files")
-            if i not in sync_results and i not in sync_errors:
-                continue  # phase 1 never ran at all (cancelled before it started)
-            log.info("[%d/%d] %s", i, len(scoped_pairs), subtitle)
-            try:
-                if i in sync_errors:
-                    raise sync_errors[i]
-                sync_row, current_subs = sync_results[i]
-                row = correctness_and_finish(video, subtitle, lang, cfg, conn, sync_row, current_subs,
-                                              history_index=history_index, run_id=run_id, cancel_event=cancel_event)
-            except JobCancelled:
-                raise
-            except Exception as e:  # one file's error must not stop the whole sweep
-                log.exception("Unexpected error for %s: %s", subtitle, e)
-                row = {
-                    "video": str(video), "subtitle": str(subtitle), "lang": lang or "",
-                    "sync_status": "unexpected-error", "sync_max_shift_s": None, "structural_change": False,
-                    "sync_split_blocks": None, "correctness_flag": "-", "correctness_avg_score": None,
-                    "note": str(e), "auto_action": "-",
-                }
-                db.update_state(conn, video, subtitle, row, run_id=run_id, media_root=cfg.media_root_for(subtitle))
-            # SUSPECT (and therefore whatever auto_action fired -- quarantine/blacklist/
-            # remediate) gets logged at WARNING instead of INFO so the Activity log renders it
-            # in yellow (see levelWARNING in ActivityDetail.module.css/Settings.module.css) --
-            # a file needing attention should stand out from the normal per-file progress lines.
-            log_fn = log.warning if row.get("correctness_flag") == "SUSPECT" else log.info
-            log_fn("[%d/%d] done — %s", i, len(scoped_pairs), _summarize_row(row))
-            rows.append(row)
-            db.bump_run_progress(conn, run_id, row)
+            # Correctness/line-order check + persistence for this SAME batch, sequential --
+            # Groq's rate-limit pacing and cancellation both expect one file at a time here, and
+            # a sqlite3 connection isn't safe to share across threads, which is why this stays
+            # out of the pool above.
+            for i, video, subtitle, lang in batch:
+                if cancel_event.is_set():
+                    log.warning("Job cancelled — stopping before file %d/%d", i, len(scoped_pairs))
+                    raise JobCancelled("cancelled between files")
+                # Bold header (levelHEADER, see verifyarr/__init__.py) marking where this file's
+                # own log lines start -- everything below it (the Groq/Whisper request lines,
+                # the outcome line) is about THIS file until the next header, so none of them
+                # need to repeat its name.
+                log.log(HEADER, "▸ [%d/%d] %s — %s", i, len(scoped_pairs), labels[i], subtitle)
+                try:
+                    if i in sync_errors:
+                        raise sync_errors[i]
+                    sync_row, current_subs = sync_results[i]
+                    row = correctness_and_finish(video, subtitle, lang, cfg, conn, sync_row, current_subs,
+                                                  history_index=history_index, run_id=run_id, cancel_event=cancel_event)
+                except JobCancelled:
+                    raise
+                except Exception as e:  # one file's error must not stop the whole sweep
+                    log.exception("Unexpected error for %s: %s", subtitle, e)
+                    row = {
+                        "video": str(video), "subtitle": str(subtitle), "lang": lang or "",
+                        "sync_status": "unexpected-error", "sync_max_shift_s": None, "structural_change": False,
+                        "sync_split_blocks": None, "correctness_flag": "-", "correctness_avg_score": None,
+                        "note": str(e), "auto_action": "-",
+                    }
+                    db.update_state(conn, video, subtitle, row, run_id=run_id, media_root=cfg.media_root_for(subtitle))
+                # Colored/leveled by outcome so Activity reads at a glance: green/SUCCESS =
+                # nothing needed, yellow/WARNING = sync fixed it, red/ERROR = needs a redownload
+                # (see _outcome_summary and levelSUCCESS/levelWARNING/levelERROR in
+                # ActivityDetail.module.css/Settings.module.css).
+                outcome, summary = _outcome_summary(row)
+                log_fn = {"ok": lambda *a: log.log(SUCCESS, *a), "sync": log.warning, "suspect": log.error}[outcome]
+                log_fn("[%d/%d] %s", i, len(scoped_pairs), summary)
+                rows.append(row)
+                db.bump_run_progress(conn, run_id, row)
     if rows:
         write_report(rows, cfg.report_dir)
     else:

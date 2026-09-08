@@ -36,3 +36,16 @@ logging.basicConfig(
     format="%(asctime)s %(levelname)s %(message)s",
 )
 log = logging.getLogger("verifyarr")
+
+# Custom levels for Activity's per-file log lines -- both between INFO(20) and WARNING(30) so
+# they're filtered out the same way ordinary INFO progress lines are once Settings -> Log's
+# level is raised past INFO, but rendered distinctly in the UI (see levelHEADER/levelSUCCESS in
+# ActivityDetail.module.css / Settings.module.css):
+#   HEADER  — "now starting file X" -- bold, marks where one file's own log lines begin so its
+#              name doesn't have to be repeated on every line below it (see jobs._run_sweep).
+#   SUCCESS — a file's "fully OK, nothing needed" outcome line (see jobs._outcome_summary) --
+#              colored green instead of blending into every other INFO line.
+HEADER = 21
+SUCCESS = 25
+logging.addLevelName(HEADER, "HEADER")
+logging.addLevelName(SUCCESS, "SUCCESS")

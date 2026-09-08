@@ -198,6 +198,8 @@
   word-break: break-word;
 }
 .levelDEBUG { color: var(--text-faint); }
+.levelHEADER { font-weight: 700; color: var(--text); }
+.levelSUCCESS { color: var(--green); }
 .levelWARNING { color: var(--yellow); }
 .levelERROR { color: var(--red); }
 .levelINFO { color: var(--text); }

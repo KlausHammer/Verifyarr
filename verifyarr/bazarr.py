@@ -17,6 +17,7 @@ from verifyarr import log
 from verifyarr import db
 from verifyarr.settings import Config
 from verifyarr.correctness import correctness_check
+from verifyarr.fileops import backup_subtitle
 
 
 def bazarr_map_path(cfg: Config, local_path: Path) -> str:
@@ -356,7 +357,8 @@ def verify_subtitle_candidate(video_path: Path, subtitle_path: Path, lang: Optio
     finalize_line_order path, which DOES call handle_suspect) -- it'll be picked up the next
     time a normal Scan reaches this file, same as any other file's line-order check reuses its
     cached correctness data (see pipeline.correctness_and_finish)."""
-    from verifyarr.pipeline import sync_pair  # local import: pipeline.py imports FROM this module
+    # local import: pipeline.py imports FROM this module
+    from verifyarr.pipeline import sync_pair, _resolve_ambiguous_sync
 
     row, current_subs = sync_pair(video_path, subtitle_path, lang, cfg)
     if current_subs is None:
@@ -370,6 +372,26 @@ def verify_subtitle_candidate(video_path: Path, subtitle_path: Path, lang: Optio
         result = correctness_check(video_path, current_subs, lang, cfg, Path(td2), conn=conn, cancel_event=cancel_event)
     if result.get("skipped"):
         return {"ok": None, "flag": "skipped", "avg_score": None, "reason": result.get("reason")}
+
+    # A candidate sync_pair flagged as a structurally suspicious multi-block fix (see its own
+    # docstring) and deferred writing for -- same resolution pipeline.correctness_and_finish
+    # uses, reusing the transcripts correctness_check just cached (score_against_cached_
+    # transcripts, no extra API calls).
+    ambiguous = row.pop("_ambiguous_sync", None)
+    if ambiguous is not None:
+        if conn is not None:
+            current_subs, result, _swap_severity, _winner = _resolve_ambiguous_sync(
+                conn, video_path, subtitle_path, lang, cfg, cfg.media_root_for(subtitle_path),
+                ambiguous, result, row, cancel_event=cancel_event)
+        else:
+            # No conn -- score_against_cached_transcripts has nothing to compare against (that
+            # cache is what makes the comparison free), so there's no way to do the smarter
+            # resolution here. Fall back to just writing the default candidate, same as every
+            # caller did before this feature existed, rather than silently leaving it unsynced.
+            if cfg.backup_originals:
+                backup_subtitle(subtitle_path, cfg.backup_dir, cfg.media_root_for(subtitle_path))
+            current_subs.save(str(subtitle_path))
+            row["sync_status"] = f"fixed (Δ{ambiguous['max_shift_new']:.1f}s)"
 
     row["correctness_flag"] = result["flag"]
     row["correctness_avg_score"] = round(result["avg_score"], 3) if result["avg_score"] is not None else None

@@ -133,6 +133,32 @@ export default function MediaLibrary({ kind, title, folderHint }: { kind: 'movie
     startSweep(false, it.title, s.season, key)
   }
 
+  function rescanOne(it: LibraryEntry) {
+    setConfirm({
+      title: 'Rescan this show?',
+      message: `This forces every file in "${it.title}" through again, including ones already scanned — not just new or changed ones — using whatever's turned on under Settings → Automation → What runs.`,
+      confirmLabel: 'Rescan show',
+      danger: true,
+      onConfirm: () => {
+        setConfirm(null)
+        startSweep(true, it.title, undefined, `${it.title}::rescan`)
+      },
+    })
+  }
+
+  function rescanSeason(it: LibraryEntry, s: SeasonEntry) {
+    setConfirm({
+      title: 'Rescan this season?',
+      message: `This forces every file in "${it.title}" ${s.season} through again, including ones already scanned — not just new or changed ones — using whatever's turned on under Settings → Automation → What runs.`,
+      confirmLabel: 'Rescan season',
+      danger: true,
+      onConfirm: () => {
+        setConfirm(null)
+        startSweep(true, it.title, s.season, `${it.title}::${s.season}::rescan`)
+      },
+    })
+  }
+
   const filtered = items?.filter((it) => it.title.toLowerCase().includes(q.toLowerCase()))
   const busy = busyKey !== null || isRunning
 
@@ -281,9 +307,19 @@ export default function MediaLibrary({ kind, title, folderHint }: { kind: 'movie
                       {formatRelative(it.last_processed)}
                     </td>
                     <td style={CELL}>
-                      <button className="btn btn-sm" disabled={busy} onClick={() => scanOne(it)}>
-                        {busyKey === it.title ? <span className="spinner" /> : 'Scan'}
-                      </button>
+                      <div style={{ display: 'flex', gap: 6 }}>
+                        <button className="btn btn-sm" disabled={busy} onClick={() => scanOne(it)}>
+                          {busyKey === it.title ? <span className="spinner" /> : 'Scan'}
+                        </button>
+                        <button
+                          className="btn btn-sm"
+                          disabled={busy}
+                          title="Rescan — reprocess every file in this show, not just new/changed ones"
+                          onClick={() => rescanOne(it)}
+                        >
+                          {busyKey === `${it.title}::rescan` ? <span className="spinner" /> : '⟳'}
+                        </button>
+                      </div>
                     </td>
                   </tr>
                   {hasSeasons &&
@@ -323,9 +359,19 @@ export default function MediaLibrary({ kind, title, folderHint }: { kind: 'movie
                             {formatRelative(s.last_processed)}
                           </td>
                           <td style={CELL}>
-                            <button className="btn btn-sm" disabled={busy} onClick={() => scanSeason(it, s)}>
-                              {busyKey === key ? <span className="spinner" /> : 'Scan'}
-                            </button>
+                            <div style={{ display: 'flex', gap: 6 }}>
+                              <button className="btn btn-sm" disabled={busy} onClick={() => scanSeason(it, s)}>
+                                {busyKey === key ? <span className="spinner" /> : 'Scan'}
+                              </button>
+                              <button
+                                className="btn btn-sm"
+                                disabled={busy}
+                                title="Rescan — reprocess every file in this season, not just new/changed ones"
+                                onClick={() => rescanSeason(it, s)}
+                              >
+                                {busyKey === `${key}::rescan` ? <span className="spinner" /> : '⟳'}
+                              </button>
+                            </div>
                           </td>
                         </tr>
                       )
