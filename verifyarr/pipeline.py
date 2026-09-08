@@ -20,7 +20,10 @@ from verifyarr.subtitles import load_subs, max_shift_stats
 from verifyarr.sync_engine import resolve_alass_bin, resolve_alass_reference, run_alass, parse_alass_shift_blocks
 from verifyarr.line_order import heuristic_candidates, collect_samples, finalize_line_order, cache_key_for, apply_line_swap
 from verifyarr.fileops import backup_subtitle, quarantine_subtitle
-from verifyarr.bazarr import bazarr_map_path, bazarr_blacklist, remediate_suspect, remediate_without_history
+from verifyarr.bazarr import (
+    bazarr_map_path, bazarr_blacklist, remediate_suspect, remediate_without_history,
+    request_replacement_fire_and_forget,
+)
 from verifyarr import db
 from verifyarr.db import update_state
 
@@ -74,12 +77,16 @@ def handle_suspect(subtitle_path: Path, video_path: Path, cfg: Config, media_roo
             log.warning("Could not quarantine %s: %s", subtitle_path, e)
             return f"quarantine failed: {e}"
         msg = f"quarantined -> {dest}; blacklist skipped (no Bazarr match)"
-        if auto_action == "remediate" and conn is not None:
+        if conn is not None and auto_action in ("remediate", "blacklist"):
             ids = db.get_bazarr_ids_for_video(conn, video_path)
             if ids and ids.get("kind") == "series" and ids.get("series_id") and ids.get("episode_id"):
-                msg += "; " + remediate_without_history(
-                    video_path, cfg, lang, ids["series_id"], ids["episode_id"],
-                    cancel_event=cancel_event, conn=conn, run_id=run_id)
+                if auto_action == "remediate":
+                    msg += "; " + remediate_without_history(
+                        video_path, cfg, lang, ids["series_id"], ids["episode_id"],
+                        cancel_event=cancel_event, conn=conn, run_id=run_id)
+                else:
+                    msg += "; " + request_replacement_fire_and_forget(
+                        cfg, ids["series_id"], ids["episode_id"], lang)
         return msg
 
     meta.setdefault("subtitles_path", bazarr_map_path(cfg, subtitle_path))
@@ -98,9 +105,12 @@ def handle_suspect(subtitle_path: Path, video_path: Path, cfg: Config, media_roo
         # the library ourselves rather than leaving a known-bad file in place doing nothing.
         try:
             dest = quarantine_subtitle(subtitle_path, cfg.quarantine_dir, media_root)
-            return f"blacklist failed; quarantined -> {dest} instead"
         except Exception as e:
             return f"blacklist failed, and could not quarantine either: {e}"
+        result = f"blacklist failed; quarantined -> {dest} instead"
+        if auto_action == "blacklist" and meta.get("kind") != "movie" and meta.get("series_id") and meta.get("episode_id"):
+            result += "; " + request_replacement_fire_and_forget(cfg, meta["series_id"], meta["episode_id"], lang)
+        return result
 
     msg = "blacklisted in Bazarr (file removed there; Bazarr is searching for a replacement)"
     if conn is not None:
@@ -155,7 +165,7 @@ def sync_pair(video_path: Path, subtitle_path: Path, lang: Optional[str], cfg: C
     row = {
         "video": str(video_path), "subtitle": str(subtitle_path), "lang": lang or "",
         "sync_status": "-", "sync_max_shift_s": None, "structural_change": False,
-        "sync_split_blocks": None,
+        "sync_split_blocks": None, "sync_block_spread_s": None,
         "correctness_flag": "-", "correctness_avg_score": None,
         "line_order_fixed": None, "line_order_flagged": None,  # None = not checked (feature off)
         "note": "",
@@ -203,6 +213,7 @@ def sync_pair(video_path: Path, subtitle_path: Path, lang: Optional[str], cfg: C
                     row["sync_split_blocks"] = len(shift_blocks)
                     if len(shift_blocks) > 1:
                         spread = max(shift_blocks) - min(shift_blocks)
+                        row["sync_block_spread_s"] = round(spread, 2)
                         row["note"] += (f" alass used {len(shift_blocks)} sync blocks with shifts "
                                          f"{[round(s, 1) for s in shift_blocks]}s (spread "
                                          f"{spread:.1f}s) — can be caused by real cuts in the episode, "
@@ -323,6 +334,28 @@ def correctness_and_finish(video_path: Path, subtitle_path: Path, lang: Optional
                     for s in result["samples"]
                 )
                 row["note"] = (row["note"] + " Whisper heard: " + excerpts).strip()
+                row["auto_action"] = handle_suspect(subtitle_path, video_path, cfg, media_root, lang,
+                                                     bazarr_meta, history_index, cfg.correctness_auto_action,
+                                                     conn=conn, run_id=run_id, cancel_event=cancel_event)
+            elif (row["sync_block_spread_s"] is not None
+                  and row["sync_block_spread_s"] >= cfg.block_spread_suspect_threshold_s
+                  and any(s.get("score") is not None and s["score"] < cfg.overlap_threshold
+                          for s in result["samples"])):
+                # The majority-vote check alone (_aggregate_correctness) said "ok" -- but alass
+                # itself needed wildly different offsets in different parts of this file to line
+                # up the audio TIMING (real cuts can cause that on their own), AND at least one
+                # Whisper sample independently disagreed with the CONTENT in its own window.
+                # Neither signal alone is trusted (a real cut can produce a big spread with every
+                # sample still matching; one bad sample alone is exactly what majority-vote is
+                # designed to overrule) -- both agreeing is what escalates it.
+                row["correctness_flag"] = "SUSPECT"
+                failing = [s for s in result["samples"]
+                           if s.get("score") is not None and s["score"] < cfg.overlap_threshold]
+                row["note"] = (row["note"] +
+                                f" Escalated to SUSPECT: alass needed a {row['sync_block_spread_s']:.1f}s-spread "
+                                f"multi-block sync AND {len(failing)}/{len(result['samples'])} Whisper sample(s) "
+                                "didn't match their window on their own -- majority-vote alone wasn't enough to "
+                                "trust this file.").strip()
                 row["auto_action"] = handle_suspect(subtitle_path, video_path, cfg, media_root, lang,
                                                      bazarr_meta, history_index, cfg.correctness_auto_action,
                                                      conn=conn, run_id=run_id, cancel_event=cancel_event)

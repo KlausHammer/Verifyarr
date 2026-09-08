@@ -30,6 +30,8 @@ CREATE TABLE IF NOT EXISTS files (
     sync_max_shift_s       REAL,
     structural_change      INTEGER,
     sync_split_blocks      INTEGER,
+    sync_block_spread_s    REAL,   -- max(shift_blocks) - min(shift_blocks); see Config.
+                                    -- block_spread_suspect_threshold_s
     correctness_flag       TEXT,
     correctness_avg_score  REAL,
     line_order_fixed       INTEGER,  -- see line_order.py. NULL = not checked (feature off),
@@ -264,6 +266,11 @@ def connect(path: Optional[Path] = None) -> sqlite3.Connection:
             conn.commit()
         except sqlite3.OperationalError:
             pass  # column already exists
+    try:
+        conn.execute("ALTER TABLE files ADD COLUMN sync_block_spread_s REAL")
+        conn.commit()
+    except sqlite3.OperationalError:
+        pass  # column already exists
     conn.commit()
     return conn
 
@@ -344,11 +351,12 @@ def update_state(conn: sqlite3.Connection, video_path: Path, subtitle_path: Path
         INSERT INTO files (subtitle_path, video_path, lang, media_root, season_episode,
                             series_or_movie_title, video_mtime, video_size, subtitle_mtime,
                             subtitle_size, last_processed, sync_status, sync_max_shift_s,
-                            structural_change, sync_split_blocks, correctness_flag,
+                            structural_change, sync_split_blocks, sync_block_spread_s,
+                            correctness_flag,
                             correctness_avg_score, line_order_fixed, line_order_flagged,
                             line_order_cache_key, line_order_cache_json,
                             note, auto_action, last_run_id)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(subtitle_path) WHERE subtitle_path IS NOT NULL DO UPDATE SET
             video_path=excluded.video_path, lang=excluded.lang, media_root=excluded.media_root,
             season_episode=excluded.season_episode, series_or_movie_title=excluded.series_or_movie_title,
@@ -356,7 +364,8 @@ def update_state(conn: sqlite3.Connection, video_path: Path, subtitle_path: Path
             subtitle_mtime=excluded.subtitle_mtime, subtitle_size=excluded.subtitle_size,
             last_processed=excluded.last_processed, sync_status=excluded.sync_status,
             sync_max_shift_s=excluded.sync_max_shift_s, structural_change=excluded.structural_change,
-            sync_split_blocks=excluded.sync_split_blocks, correctness_flag=excluded.correctness_flag,
+            sync_split_blocks=excluded.sync_split_blocks, sync_block_spread_s=excluded.sync_block_spread_s,
+            correctness_flag=excluded.correctness_flag,
             correctness_avg_score=excluded.correctness_avg_score,
             line_order_fixed=excluded.line_order_fixed, line_order_flagged=excluded.line_order_flagged,
             -- Only overwritten when THIS run actually collected fresh line-order/correctness
@@ -369,7 +378,8 @@ def update_state(conn: sqlite3.Connection, video_path: Path, subtitle_path: Path
           str(media_root) if media_root else str(video_path.parent), season_episode, title,
           video_mtime, video_size, subtitle_mtime, subtitle_size, now,
           row.get("sync_status"), row.get("sync_max_shift_s"), int(bool(row.get("structural_change"))),
-          row.get("sync_split_blocks"), row.get("correctness_flag"), row.get("correctness_avg_score"),
+          row.get("sync_split_blocks"), row.get("sync_block_spread_s"),
+          row.get("correctness_flag"), row.get("correctness_avg_score"),
           row.get("line_order_fixed"), row.get("line_order_flagged"),
           row.get("line_order_cache_key"), row.get("line_order_cache_json"),
           row.get("note"), row.get("auto_action"), run_id))

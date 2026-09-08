@@ -21,6 +21,7 @@ export interface FileRow {
   sync_max_shift_s: number | null
   structural_change: number
   sync_split_blocks: number | null
+  sync_block_spread_s: number | null
   correctness_flag: string | null
   correctness_avg_score: number | null
   line_order_fixed: number | null
@@ -191,6 +192,7 @@ export interface SyncSettings {
   clip_seconds: number
   window_minutes: number
   overlap_threshold: number
+  block_spread_suspect_threshold_s: number
   line_order_enabled: boolean
   line_order_audio_confirm: boolean
   line_order_swap_threshold_pct: number

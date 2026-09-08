@@ -1,9 +1,10 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { api, ApiError } from '../api/client'
 import type { LogLine, RunRow } from '../api/types'
 import { durationBetween, formatDateTime } from '../lib/format'
 import { runTypeLabel, runTargetLabel } from '../lib/runLabels'
+import { useAutoScrollLog } from '../hooks/useAutoScrollLog'
 import StatusPill from '../components/StatusPill'
 import CopyLogButton from '../components/CopyLogButton'
 import styles from './ActivityDetail.module.css'
@@ -14,7 +15,7 @@ export default function ActivityDetail() {
   const [lines, setLines] = useState<LogLine[]>([])
   const [error, setError] = useState<string | null>(null)
   const [cancelling, setCancelling] = useState(false)
-  const logBoxRef = useRef<HTMLDivElement>(null)
+  const { ref: logBoxRef, onScroll: onLogScroll } = useAutoScrollLog(lines)
 
   useEffect(() => {
     setLines([])
@@ -41,10 +42,6 @@ export default function ActivityDetail() {
     })
     return () => es.close()
   }, [runId])
-
-  useEffect(() => {
-    if (logBoxRef.current) logBoxRef.current.scrollTop = logBoxRef.current.scrollHeight
-  }, [lines])
 
   // Fallback poll of the run row itself (counts/status), independent of the SSE log lines.
   useEffect(() => {
@@ -121,7 +118,7 @@ export default function ActivityDetail() {
       <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 6 }}>
         <CopyLogButton lines={lines} />
       </div>
-      <div className={styles.logBox} ref={logBoxRef}>
+      <div className={styles.logBox} ref={logBoxRef} onScroll={onLogScroll}>
         {lines.length === 0 && <div className="text-faint">Waiting for log lines…</div>}
         {lines.map((l) => (
           <div key={l.id} className={`${styles.logLine} ${styles[`level${l.level}`] ?? ''}`}>

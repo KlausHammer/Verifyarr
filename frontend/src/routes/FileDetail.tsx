@@ -98,6 +98,7 @@ export default function FileDetail() {
         <Row label="Sync status">
           <StatusPill value={f.sync_status} /> {f.sync_max_shift_s !== null && `Δ${f.sync_max_shift_s}s`}
           {f.sync_split_blocks !== null && f.sync_split_blocks > 1 && ` · ${f.sync_split_blocks} blocks`}
+          {f.sync_block_spread_s !== null && ` (spread ${f.sync_block_spread_s}s)`}
         </Row>
         <Row label="Correctness">
           <StatusPill value={f.correctness_flag} />{' '}

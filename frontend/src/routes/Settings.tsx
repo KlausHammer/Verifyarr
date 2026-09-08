@@ -18,6 +18,7 @@ import ConfirmDialog from '../components/ConfirmDialog'
 import FolderBrowser from '../components/FolderBrowser'
 import LanguageMultiSelect from '../components/LanguageMultiSelect'
 import CopyLogButton from '../components/CopyLogButton'
+import { useAutoScrollLog } from '../hooks/useAutoScrollLog'
 import styles from './Settings.module.css'
 
 function SaveBar({ busy, saved, error }: { busy: boolean; saved: boolean; error: string | null }) {
@@ -555,6 +556,17 @@ function SyncTab() {
           onChange={(e) => setData({ ...data, overlap_threshold: Number(e.target.value) })}
         />
       </Field>
+      <Field
+        label="Suspicious block spread (s)"
+        tip="If alass needs sync blocks with shifts spread further apart than this AND at least one Whisper sample fails on its own, flag SUSPECT even though a majority of samples passed — catches a subtitle that's only right for part of the episode."
+      >
+        <input
+          type="number"
+          step="1"
+          value={data.block_spread_suspect_threshold_s}
+          onChange={(e) => setData({ ...data, block_spread_suspect_threshold_s: Number(e.target.value) })}
+        />
+      </Field>
 
       <h3 style={{ marginBottom: 4 }}>Line-order check</h3>
       <p className="text-dim" style={{ fontSize: 12.5, maxWidth: 480, marginTop: 0, marginBottom: 14 }}>
@@ -1066,7 +1078,7 @@ function LogTab() {
   const { busy, saved, error, save } = useSave('log')
   const [lines, setLines] = useState<AppLogLine[]>([])
   const [viewerError, setViewerError] = useState<string | null>(null)
-  const logBoxRef = useRef<HTMLDivElement>(null)
+  const { ref: logBoxRef, onScroll: onLogScroll } = useAutoScrollLog(lines)
   const lastIdRef = useRef(0)
 
   useEffect(() => {
@@ -1089,10 +1101,6 @@ function LogTab() {
       clearInterval(id)
     }
   }, [])
-
-  useEffect(() => {
-    if (logBoxRef.current) logBoxRef.current.scrollTop = logBoxRef.current.scrollHeight
-  }, [lines])
 
   return (
     <>
@@ -1134,7 +1142,7 @@ function LogTab() {
           <CopyLogButton lines={lines} />
         </div>
         {viewerError && <div className="error-banner">{viewerError}</div>}
-        <div className={styles.logBox} ref={logBoxRef}>
+        <div className={styles.logBox} ref={logBoxRef} onScroll={onLogScroll}>
           {lines.length === 0 && <div className="text-faint">No log lines yet.</div>}
           {lines.map((l) => (
             <div key={l.id} className={`${styles.logLine} ${styles[`level${l.level}`] ?? ''}`}>

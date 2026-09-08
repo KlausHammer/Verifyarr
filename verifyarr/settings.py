@@ -98,6 +98,14 @@ class Config:
     window_minutes: float
     overlap_threshold: float
     require_audio_lang: Optional[str]
+    # A big spread between alass's own per-block shifts (see pipeline.sync_pair's shift_blocks)
+    # CAN mean a real structural cut, but it's also exactly what a wrong-but-similarly-paced
+    # subtitle looks like (alass only fits speech TIMING, not content). Escalates an otherwise-
+    # "ok" majority-vote correctness verdict to SUSPECT, but ONLY when at least one individual
+    # Whisper sample ALSO disagreed on its own (see correctness_and_finish) -- spread alone isn't
+    # enough, since a real cut can legitimately produce a big spread with every sample still
+    # matching fine.
+    block_spread_suspect_threshold_s: float
 
     # Line-order check (see line_order.py). Off by default, opt-in.
     line_order_enabled: bool
@@ -190,6 +198,7 @@ class Config:
             clip_seconds=vals["sync.clip_seconds"],
             window_minutes=vals["sync.window_minutes"],
             overlap_threshold=vals["sync.overlap_threshold"],
+            block_spread_suspect_threshold_s=vals["sync.block_spread_suspect_threshold_s"],
             require_audio_lang=vals["correctness.require_audio_lang"] or None,
             line_order_enabled=vals["sync.line_order_enabled"],
             line_order_audio_confirm=vals["sync.line_order_audio_confirm"],
@@ -294,6 +303,11 @@ SETTING_DEFS: dict = {
     "sync.clip_seconds":        ("sync", "int", 30),
     "sync.window_minutes":      ("sync", "float", 0.5),
     "sync.overlap_threshold":   ("sync", "float", 0.25),
+    # See Config.block_spread_suspect_threshold_s -- 20s chosen as "clearly more than ordinary
+    # sync jitter" while still well below what a real recap/extended-cut spread usually looks
+    # like (typically 60s+), and the required agreeing Whisper sample is the actual gate that
+    # keeps a legitimate structural cut from being wrongly escalated.
+    "sync.block_spread_suspect_threshold_s": ("sync", "float", 20.0),
     # Off by default, opt-in — see line_order.py.
     "sync.line_order_enabled":       ("sync", "bool", False),
     "sync.line_order_audio_confirm": ("sync", "bool", False),

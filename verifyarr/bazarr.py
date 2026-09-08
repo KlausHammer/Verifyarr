@@ -527,3 +527,25 @@ def remediate_without_history(video_path: Path, cfg: Config, lang: Optional[str]
         return "cannot search for a replacement — no Bazarr series/episode ID known for this video"
     return _remediate(video_path, series_id, episode_id, lang, cfg, set(),
                        cancel_event=cancel_event, conn=conn, run_id=run_id, try_auto_download_wait=False)
+
+
+def request_replacement_fire_and_forget(cfg: Config, series_id, episode_id, lang: Optional[str]) -> str:
+    """auto-action=blacklist's fallback for when the bad subtitle can't be handed to Bazarr's
+    blacklist endpoint at all — either there was no history entry to reference (see
+    handle_suspect's meta-is-None branch) or the blacklist call itself failed. Unlike remediate,
+    'blacklist' never waits for or verifies a replacement (see handle_suspect's docstring), so
+    this mirrors that intentionally-lighter behavior instead of reusing _remediate: ask Bazarr's
+    provider search for its own best-scoring candidate and start the download, then stop.
+    Whatever Bazarr fetches gets picked up and verified the normal way by the next Scan that
+    reaches this file, same as any other subtitle."""
+    if not series_id or not episode_id:
+        return "no replacement search — missing series_id/episode_id"
+    candidates = bazarr_search_candidates(cfg, episode_id, lang)
+    if cfg.remediate_min_score > 0:
+        candidates = [c for c in candidates if (c.get("score") or 0) >= cfg.remediate_min_score]
+    if not candidates:
+        return "no replacement search — no candidates found"
+    best = candidates[0]
+    if bazarr_manual_download(cfg, series_id, episode_id, best.get("provider"), best.get("subtitle")):
+        return f"requested replacement from {best.get('provider')} (score={best.get('score')})"
+    return f"replacement download call failed ({best.get('provider')})"
