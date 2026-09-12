@@ -14,27 +14,32 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         pkg-config libvulkan-dev glslc spirv-headers \
     && rm -rf /var/lib/apt/lists/*
 
-# Fresh Vulkan-Headers -- Debian's own are often too old for ggml's Vulkan backend.
-# (SPIRV-Headers is fine from apt -- a much more stable spec.)
-RUN git clone --depth 1 https://github.com/KhronosGroup/Vulkan-Headers.git /tmp/vk-headers \
-    && cmake -S /tmp/vk-headers -B /tmp/vk-headers/build -GNinja -DCMAKE_INSTALL_PREFIX=/usr/local \
-    && ninja -C /tmp/vk-headers/build install \
-    && rm -rf /tmp/vk-headers
-
 # Pinned tag, not a moving branch -- bump deliberately.
 ARG WHISPER_CPP_VERSION=v1.9.4
 RUN git clone --branch ${WHISPER_CPP_VERSION} --depth 1 \
         https://github.com/ggml-org/whisper.cpp.git /tmp/whisper.cpp
-# Static link -- one binary to copy, no .so files to ship.
-RUN cmake -S /tmp/whisper.cpp -B /tmp/whisper.cpp/build -GNinja -DCMAKE_BUILD_TYPE=Release \
-        -DBUILD_SHARED_LIBS=OFF -DGGML_VULKAN=1 -DVulkan_INCLUDE_DIR=/usr/local/include \
-    && ninja -C /tmp/whisper.cpp/build -j"$(nproc)" whisper-cli \
-    && install -m755 /tmp/whisper.cpp/build/bin/whisper-cli /usr/local/bin/whisper-cli
+
+# Try Debian's own Vulkan headers first (static link -- one binary to copy, no .so files).
+# Only if that build fails (headers too old) do we fetch fresh Vulkan-Headers and retry.
+RUN set -e; \
+    CMK="cmake -S /tmp/whisper.cpp -B /tmp/whisper.cpp/build -GNinja -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF -DGGML_VULKAN=1"; \
+    if ! ( $CMK && ninja -C /tmp/whisper.cpp/build -j"$(nproc)" whisper-cli ); then \
+        echo "Debian's Vulkan headers were too old -- fetching fresh ones"; \
+        rm -rf /tmp/whisper.cpp/build; \
+        git clone --depth 1 https://github.com/KhronosGroup/Vulkan-Headers.git /tmp/vk-headers; \
+        cmake -S /tmp/vk-headers -B /tmp/vk-headers/build -GNinja -DCMAKE_INSTALL_PREFIX=/usr/local; \
+        ninja -C /tmp/vk-headers/build install; \
+        rm -rf /tmp/vk-headers; \
+        $CMK -DVulkan_INCLUDE_DIR=/usr/local/include; \
+        ninja -C /tmp/whisper.cpp/build -j"$(nproc)" whisper-cli; \
+    fi; \
+    install -m755 /tmp/whisper.cpp/build/bin/whisper-cli /usr/local/bin/whisper-cli
 
 # small.en, quantized: good speed/accuracy for short clips on weak hardware. Switch to a
 # non-".en" size for non-English audio (update the model path in Settings too).
 ARG WHISPER_MODEL=small.en-q5_1
-RUN bash /tmp/whisper.cpp/models/download-ggml-model.sh ${WHISPER_MODEL} /app/models \
+RUN mkdir -p /app/models \
+    && bash /tmp/whisper.cpp/models/download-ggml-model.sh ${WHISPER_MODEL} /app/models \
     && rm -rf /tmp/whisper.cpp
 
 # ---- build stage: React SPA (the webapp) ----
