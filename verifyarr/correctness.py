@@ -255,11 +255,8 @@ def _stt_model_and_fallback(cfg: Config) -> tuple[str, Optional[str]]:
 
 
 def _run_cancellable(cmd: list[str], timeout: float, cancel_event=None) -> tuple[int, str, str]:
-    """subprocess.run, except a cancel_event set mid-run kills the process and raises
-    JobCancelled instead of waiting it out -- needed here (unlike extract_clip's plain
-    subprocess.run) because a CPU-only local Whisper pass over even a short clip can take
-    noticeably longer than a network round-trip, long enough that Cancel doing nothing until it
-    finishes would be a real regression from the cloud path's cancel_event handling."""
+    """subprocess.run, but a cancel_event set mid-run kills the process and raises JobCancelled
+    instead of waiting it out."""
     proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
     deadline = time.monotonic() + timeout
     try:
@@ -283,11 +280,8 @@ def _run_cancellable(cmd: list[str], timeout: float, cancel_event=None) -> tuple
 
 
 def _parse_local_whisper_json(data: dict) -> dict:
-    """whisper.cpp's own `-oj`/--output-json shape -> the same {"text","language","segments":
-    [{"start","end","text"}]} shape transcribe_verbose's cloud path returns, so every caller
-    (subtitles.clip_anchor_shift, correctness_check's scoring, line_order.py) works unchanged
-    regardless of which path actually ran. offsets are milliseconds; segments/[].start,end here
-    are seconds, matching Groq/OpenRouter's verbose_json convention."""
+    """whisper.cpp's -oj JSON -> the same {"text","language","segments"} shape the cloud
+    verbose_json path returns. offsets are ms; segments' start/end here are seconds."""
     segments = []
     parts = []
     for seg in data.get("transcription") or []:
@@ -305,14 +299,8 @@ _local_whisper_backend_logged = False
 
 
 def _log_local_whisper_backend_info(stderr: str) -> None:
-    """Surfaces whisper.cpp's own one-line backend banner (e.g. "... | Vulkan : ... | CPU :
-    ... |" when a GPU device was found and loaded, vs. just "... | CPU : ... |" plus a preceding
-    "ggml_vulkan: No devices found." line when it wasn't) in verifyarr's own logs. This is the
-    only way to tell whether GPU passthrough (Settings -> Correctness -> "Use GPU", and the
-    container actually having /dev/dri -- see docker-compose.yml/the TrueNAS docs) is actually
-    being used, short of shelling into the container -- so it's worth a real log line rather
-    than being silently discarded with the rest of a successful run's stderr. Logged once per
-    process, not once per clip: whether a GPU engaged doesn't change clip to clip."""
+    """Logs whisper.cpp's own backend banner once per process -- the easy way to see from
+    Activity whether GPU (Vulkan) actually engaged, without shelling into the container."""
     global _local_whisper_backend_logged
     if _local_whisper_backend_logged:
         return
@@ -324,14 +312,8 @@ def _log_local_whisper_backend_info(stderr: str) -> None:
 
 def _run_local_whisper(cfg: Config, audio_path: Path, language: Optional[str],
                         cancel_event=None) -> dict:
-    """Runs the app's own local whisper.cpp build (Settings -> Correctness -> "Use local
-    Whisper") instead of a cloud STT call -- see Config.use_local_whisper's docstring for what
-    this does and doesn't cover. No API key, no rate limiting, no fallback model (there's only
-    the one local model configured) -- failures just raise, same contract the cloud path already
-    has (a JobCancelled or RuntimeError per failed sample, handled by whoever calls transcribe*/
-    collect_samples). GPU use (Vulkan) is whisper.cpp's own default whenever it was built with
-    it and a usable device is found -- local_whisper_use_gpu=False passes -ng to force CPU only,
-    e.g. for a host where the iGPU turned out not to help or isn't available."""
+    """Runs the local whisper.cpp build instead of a cloud STT call (Settings -> Correctness ->
+    "Use local Whisper"). No API key, no rate limit, no fallback model."""
     binary, model = cfg.local_whisper_binary, cfg.local_whisper_model
     if not binary or not Path(binary).is_file():
         raise RuntimeError(f"local Whisper binary not found: {binary!r} (see Settings -> Correctness)")
@@ -340,20 +322,13 @@ def _run_local_whisper(cfg: Config, audio_path: Path, language: Optional[str],
 
     with tempfile.TemporaryDirectory(prefix="local-whisper-") as td:
         out_stem = Path(td) / "out"
-        # Deliberately NOT passing -nt/--no-timestamps: despite the name, that doesn't just
-        # silence console printing -- it feeds into whisper_full_params.no_timestamps and turns
-        # off the model's own timestamp-token decoding, collapsing segmentation (needed for
-        # per-line anchors) into far fewer/coarser segments than normal.
+        # No -nt: that disables whisper's own timestamp decoding, not just console output.
         cmd = [binary, "-m", model, "-f", str(audio_path), "-oj", "-of", str(out_stem),
                "-t", str(max(1, cfg.local_whisper_threads)), "-l", language or "auto"]
         if not cfg.local_whisper_use_gpu:
             cmd.append("-ng")
         log.debug("local Whisper: model=%s lang=%s clip=%s", Path(model).name, language or "auto",
                   audio_path.name)
-        # Generous timeout: this runs on whatever CPU/iGPU the box has, which can be far slower
-        # than a cloud endpoint for the same clip -- see clip_seconds' own docstring for the
-        # longest a clip is ever expected to be (a few dozen seconds), so even a real-time-factor
-        # well below 1x on weak hardware fits comfortably inside this.
         returncode, _stdout, stderr = _run_cancellable(wrap_low_priority(cmd), timeout=300,
                                                         cancel_event=cancel_event)
         if returncode != 0:
@@ -406,8 +381,7 @@ def transcribe_verbose(cfg: Config, audio_path: Path, language: Optional[str], c
     this module transcribes uses this shape and caches the segments (db.save_transcript_cache)
     for whoever checks the same video next. language=None -> Whisper detects it.
 
-    use_local_whisper routes this (and transcribe() above) through _run_local_whisper instead —
-    see Config.use_local_whisper's docstring for exactly what that does and doesn't replace."""
+    use_local_whisper routes this through _run_local_whisper instead."""
     if cfg.use_local_whisper:
         return _run_local_whisper(cfg, audio_path, language, cancel_event=cancel_event)
     return _transcribe_with_fallback(cfg, audio_path, language, "verbose_json", cancel_event=cancel_event)
