@@ -103,6 +103,12 @@ export default function ActivityDetail() {
             <div className={styles.metaLabel}>Fixed / suspect / error</div>
             {run.files_changed} / {run.files_suspect} / {run.files_error}
           </div>
+          {run.files_generated > 0 && (
+            <div className={styles.metaItem}>
+              <div className={styles.metaLabel}>Generated</div>
+              {run.files_generated}
+            </div>
+          )}
           <div className={styles.metaItem}>
             <div className={styles.metaLabel}>Duration</div>
             {durationBetween(run.started_at, run.finished_at)}

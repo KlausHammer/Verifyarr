@@ -43,7 +43,7 @@ def write_report(rows: list[dict], report_dir: Path) -> Path:
 
     log.info("=== Run finished: %d files processed ===", len(rows))
     log.info("Sync fixed: %d | Already fine: %d | Errors: %d",
-              len(changed), sum(1 for r in rows if r["sync_status"] == "already in sync"), len(errors))
+              len(changed), sum(1 for r in rows if r["sync_status"].startswith("already in sync")), len(errors))
     if suspects:
         log.warning("--- %d SUSPECT file(s) ---", len(suspects))
         for r in suspects:

@@ -30,6 +30,7 @@ export default function Files() {
   const [loading, setLoading] = useState(true)
   const [searchInput, setSearchInput] = useState(params.get('q') ?? '')
   const [busyId, setBusyId] = useState<number | null>(null)
+  const [actionMsg, setActionMsg] = useState<string | null>(null)
   const [selected, setSelected] = useState<Set<number>>(new Set())
   const [bulkBusy, setBulkBusy] = useState<string | null>(null)
   const [bulkResult, setBulkResult] = useState<string | null>(null)
@@ -92,6 +93,22 @@ export default function Files() {
     setError(null)
     try {
       await api.post(`/files/${id}/remediate`)
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : String(err))
+    } finally {
+      setBusyId(null)
+    }
+  }
+
+  async function generate(id: number) {
+    setBusyId(id)
+    setError(null)
+    setActionMsg(null)
+    try {
+      // Transcribing a whole file takes minutes, and the row itself doesn't change until the
+      // job finishes -- without this the button just stops spinning and nothing visibly happens.
+      const r = await api.post<{ run_id: number }>(`/files/${id}/generate`)
+      setActionMsg(`Generating subtitle — job #${r.run_id} started. Follow it under Activity.`)
     } catch (err) {
       setError(err instanceof ApiError ? err.message : String(err))
     } finally {
@@ -194,6 +211,7 @@ export default function Files() {
     <div>
       <h1>Files</h1>
       {error && <div className="error-banner">{error}</div>}
+      {actionMsg && <div className="card" style={{ marginBottom: 16, fontSize: 13 }}>{actionMsg}</div>}
 
       <div className={styles.toolbar}>
         <input
@@ -208,6 +226,7 @@ export default function Files() {
           <option value="ok">ok</option>
           <option value="SUSPECT">SUSPECT</option>
           <option value="skipped">skipped</option>
+          <option value="generated">generated</option>
         </select>
         <select value={status} onChange={(e) => setParam('status', e.target.value)}>
           <option value="">All statuses</option>
@@ -320,6 +339,16 @@ export default function Files() {
                         onClick={() => runSingle(f.id)}
                       >
                         Run now
+                      </button>
+                    )}
+                    {!f.subtitle_path && f.sync_status === 'missing' && (
+                      <button
+                        className="btn btn-sm"
+                        disabled={busyId === f.id}
+                        onClick={() => generate(f.id)}
+                        title="Transcribe with Whisper and, if needed, translate — see Settings -> Generate"
+                      >
+                        {busyId === f.id ? <span className="spinner" /> : 'Generate'}
                       </button>
                     )}
                     {f.correctness_flag === 'SUSPECT' && (

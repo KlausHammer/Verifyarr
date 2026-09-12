@@ -3,6 +3,17 @@ services:
     build: https://github.com/KlausHammer/Verifyarr.git
     container_name: verifyarr
     restart: unless-stopped
+    # Lowest CPU scheduling priority relative to every other container on the same host
+    # (default weight is 1024 -- this is 1/8th of that). Everything this app does is background
+    # batch work with no latency requirement of its own, so it should never compete for CPU with
+    # something that actually has one (another app, a NAS's file-sharing/streaming duties). This
+    # is a SOFT weight, not a cap: on an otherwise-idle host verifyarr still gets as much CPU as
+    # it wants -- it only yields when something else is actually contending for it. The
+    # subprocess calls this app spawns itself (ffmpeg, alass, local Whisper) additionally run
+    # under `nice`/`ionice` at the process level -- see verifyarr/procprio.py -- so the same
+    # "always yields" behavior holds even without this line (e.g. running outside Docker), and
+    # this line extends it to the whole container for when other containers share the host.
+    cpu_shares: 128
     environment:
       TZ: Europe/Copenhagen
     ports:
@@ -12,3 +23,15 @@ services:
       - /path/to/media/movies:/media/movies
       - /path/to/media/tv:/media/tv
       - ./data:/data
+    # Uncomment to give the container access to an Intel/AMD iGPU or GPU for local Whisper
+    # transcription (Settings -> Correctness -> "Use local Whisper") via whisper.cpp's Vulkan
+    # backend -- without this the same binary still works, just CPU-only. Requires the render
+    # node to actually exist on the host (ls /dev/dri) and your user to be in its group (or
+    # `group_add: ["video"]`/["render"] here) -- see the README for a fuller walkthrough.
+    # devices:
+    #   - /dev/dri:/dev/dri
+    #
+    # Running this under Proxmox/another hypervisor instead of bare metal? Set the VM's CPU type
+    # to "host" (not a generic default) -- a virtualized CPU commonly hides AVX/AVX2, which
+    # whisper.cpp's CPU codepath (and its fallback when no GPU is passed through) leans on
+    # heavily; without it, transcription slows down drastically.

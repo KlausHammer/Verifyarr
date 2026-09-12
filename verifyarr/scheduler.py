@@ -21,6 +21,7 @@ _JOB_ID = "scheduled-sweep"
 _POLL_JOB_ID = "poll-new-media"
 _LIBRARY_POLL_JOB_ID = "poll-library"
 _TRANSCRIPT_PRUNE_JOB_ID = "prune-transcript-cache"
+_FULL_TRANSCRIPT_PRUNE_JOB_ID = "prune-full-transcript-cache"
 _scheduler: Optional[BackgroundScheduler] = None
 
 
@@ -42,6 +43,24 @@ def _prune_transcript_cache_job() -> None:
         removed = db.prune_transcript_cache(conn, max_age_days=30)
         if removed:
             log.info("Pruned %d cached transcript(s) older than 30 days", removed)
+    finally:
+        conn.close()
+
+
+def _prune_full_transcript_cache_job() -> None:
+    """video_full_transcript_cache (see generate.py) -- a much longer retention than the ordinary
+    sample-clip cache (90 vs 30 days): a full-track transcript is far more expensive to
+    regenerate (a whole video's worth of Whisper calls, not one 30s clip)."""
+    conn = db.connect()
+    try:
+        removed = db.prune_full_transcript_cache(conn, max_age_days=90)
+        if removed:
+            log.info("Pruned %d cached full transcript(s) older than 90 days", removed)
+        # Same daily pass cleans up generate_attempts -- a record older than 30 days is long past
+        # both the retry cooldown and the 24-hour cap window it exists for (see generate.py).
+        removed = db.prune_generate_attempts(conn, max_age_days=30)
+        if removed:
+            log.info("Pruned %d subtitle-generation attempt record(s) older than 30 days", removed)
     finally:
         conn.close()
 
@@ -103,6 +122,8 @@ def reschedule() -> None:
     # reschedule() re-adds every job on each call, harmless with replace_existing=True.
     _scheduler.add_job(_prune_transcript_cache_job, IntervalTrigger(hours=24),
                         id=_TRANSCRIPT_PRUNE_JOB_ID, replace_existing=True, max_instances=1)
+    _scheduler.add_job(_prune_full_transcript_cache_job, IntervalTrigger(hours=24),
+                        id=_FULL_TRANSCRIPT_PRUNE_JOB_ID, replace_existing=True, max_instances=1)
 
 
 def shutdown() -> None:

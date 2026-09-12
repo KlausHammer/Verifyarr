@@ -7,6 +7,7 @@ import type {
   BazarrSettings,
   CorrectnessSettings,
   GeneralSettings,
+  GenerateSettings,
   LibraryResponse,
   LogSettings,
   SchedulingSettings,
@@ -211,8 +212,9 @@ function useWhatRuns() {
   const general = useGroup<GeneralSettings>('general')
   const sync = useGroup<SyncSettings>('sync')
   const correctness = useGroup<CorrectnessSettings>('correctness')
-  const loadError = general.error || sync.error || correctness.error
-  return { general, sync, correctness, loadError }
+  const generate = useGroup<GenerateSettings>('generate')
+  const loadError = general.error || sync.error || correctness.error || generate.error
+  return { general, sync, correctness, generate, loadError }
 }
 
 const AUTO_ACTION_TIP =
@@ -229,9 +231,9 @@ function AutoActionSelect({ value, onChange }: { value: string; onChange: (v: st
   )
 }
 
-function WhatRunsTable({ general, sync, correctness }: ReturnType<typeof useWhatRuns>) {
-  if (!general.data || !sync.data || !correctness.data) return <span className="spinner" />
-  const g = general.data, s = sync.data, c = correctness.data
+function WhatRunsTable({ general, sync, correctness, generate }: ReturnType<typeof useWhatRuns>) {
+  if (!general.data || !sync.data || !correctness.data || !generate.data) return <span className="spinner" />
+  const g = general.data, s = sync.data, c = correctness.data, gen = generate.data
 
   return (
     <>
@@ -314,6 +316,23 @@ function WhatRunsTable({ general, sync, correctness }: ReturnType<typeof useWhat
               />
               <Tip text={`${AUTO_ACTION_TIP} Only for a widespread pattern -- a single swap is just fixed in place.`} />
             </td>
+          </tr>
+          <tr>
+            <td>
+              Generate missing subtitles
+              <Tip text="Transcribes the whole file with Whisper and translates it if needed, for a video that has no subtitle at all. Configured on the Generate tab." />
+            </td>
+            <td>
+              <input type="checkbox" checked={gen.enabled} onChange={(e) => generate.setData({ ...gen, enabled: e.target.checked })} />
+            </td>
+            <td>
+              <input
+                type="checkbox"
+                checked={g.auto_scan_generate_enabled}
+                onChange={(e) => general.setData({ ...g, auto_scan_generate_enabled: e.target.checked })}
+              />
+            </td>
+            <td className="text-faint">—</td>
           </tr>
         </tbody>
       </table>
@@ -567,6 +586,18 @@ function SyncTab() {
           onChange={(e) => setData({ ...data, block_spread_suspect_threshold_s: Number(e.target.value) })}
         />
       </Field>
+      <div className={styles.checkRow}>
+        <input
+          id="anchor_check_enabled"
+          type="checkbox"
+          checked={data.anchor_check_enabled}
+          onChange={(e) => setData({ ...data, anchor_check_enabled: e.target.checked })}
+        />
+        <label htmlFor="anchor_check_enabled">
+          Whisper anchor escalation (experimental)
+          <Tip text="Flag SUSPECT when a Whisper-verified line shows a timing mismatch of more than ~2.5s at that exact point, even though the overall average passed. Only works for subtitles in the spoken language (an English audio track gives Danish subtitles no anchors). Thresholds are still provisional -- expect some false alarms." />
+        </label>
+      </div>
 
       <h3 style={{ marginBottom: 4 }}>Line-order check</h3>
       <p className="text-dim" style={{ fontSize: 12.5, maxWidth: 480, marginTop: 0, marginBottom: 14 }}>
@@ -642,12 +673,68 @@ function CorrectnessTab() {
         Turned on/off from Settings → Automation → What runs — the fields below configure the
         provider it uses once it's on.
       </p>
-      <Field label="Provider" tip="Used for both transcription and translation.">
+      <Field label="Provider" tip="Used for translation always, and for transcription unless local Whisper (below) is turned on.">
         <select value={data.stt_provider} onChange={(e) => setData({ ...data, stt_provider: e.target.value as CorrectnessSettings['stt_provider'] })}>
           <option value="groq">Groq</option>
           <option value="openrouter">OpenRouter</option>
         </select>
       </Field>
+
+      <Field
+        label="Use local Whisper for transcription"
+        tip="Runs the per-clip Whisper calls on this box's own CPU/GPU via whisper.cpp instead of the cloud provider above — no API key or network needed for them. Translation and the line-order LLM confirm still use the provider above regardless of this."
+      >
+        <label style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <input
+            type="checkbox"
+            checked={data.use_local_whisper}
+            onChange={(e) => setData({ ...data, use_local_whisper: e.target.checked })}
+          />
+          <span className="text-dim" style={{ fontSize: 12.5 }}>
+            {data.use_local_whisper ? 'On — the Whisper model/fallback fields below are unused' : 'Off'}
+          </span>
+        </label>
+      </Field>
+
+      {data.use_local_whisper && (
+        <>
+          <div className={styles.row}>
+            <Field label="whisper.cpp binary path">
+              <input
+                type="text"
+                value={data.local_whisper_binary}
+                onChange={(e) => setData({ ...data, local_whisper_binary: e.target.value })}
+              />
+            </Field>
+            <Field label="Model file path" tip="A ggml/GGUF model file, e.g. ggml-small.bin — see the Dockerfile's whisper-builder stage.">
+              <input
+                type="text"
+                value={data.local_whisper_model}
+                onChange={(e) => setData({ ...data, local_whisper_model: e.target.value })}
+              />
+            </Field>
+          </div>
+          <div className={styles.row}>
+            <Field label="Use GPU" tip="Off forces CPU-only (-ng) even if the binary was built with Vulkan/GPU support.">
+              <label style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <input
+                  type="checkbox"
+                  checked={data.local_whisper_use_gpu}
+                  onChange={(e) => setData({ ...data, local_whisper_use_gpu: e.target.checked })}
+                />
+              </label>
+            </Field>
+            <Field label="CPU threads">
+              <input
+                type="number"
+                min={1}
+                value={data.local_whisper_threads}
+                onChange={(e) => setData({ ...data, local_whisper_threads: Number(e.target.value) })}
+              />
+            </Field>
+          </div>
+        </>
+      )}
 
       {!isOpenRouter && (
         <>
@@ -754,6 +841,348 @@ function CorrectnessTab() {
   )
 }
 
+function GenerateTab() {
+  const { data, setData, error: loadError } = useGroup<GenerateSettings>('generate')
+  const { busy, saved, error, save } = useSave('generate')
+  const [newGroqKey, setNewGroqKey] = useState('')
+  const [newOpenRouterKey, setNewOpenRouterKey] = useState('')
+  const [newCloudflareToken, setNewCloudflareToken] = useState('')
+  const [newGeminiKey, setNewGeminiKey] = useState('')
+  if (!data) return <span className="spinner" />
+
+  function onSubmit(e: FormEvent) {
+    e.preventDefault()
+    if (!data) return
+    // enabled is excluded -- owned by Settings -> Automation's "What runs" table (its own
+    // separate fetch/save of this same group); sending this form's possibly-stale copy would
+    // silently undo a change just made there.
+    const { groq_api_key: _o1, openrouter_api_key: _o2, cloudflare_api_token: _o3,
+      gemini_api_key: _o4, enabled: _o5, ...rest } = data
+    const values: Record<string, unknown> = { ...rest }
+    if (newGroqKey) values.groq_api_key = newGroqKey
+    if (newOpenRouterKey) values.openrouter_api_key = newOpenRouterKey
+    if (newCloudflareToken) values.cloudflare_api_token = newCloudflareToken
+    if (newGeminiKey) values.gemini_api_key = newGeminiKey
+    save(values)
+  }
+
+  return (
+    <form className={`card ${styles.formCard}`} onSubmit={onSubmit}>
+      {loadError && <div className="error-banner">{loadError}</div>}
+      <p className="text-dim" style={{ fontSize: 12.5, maxWidth: 560, marginTop: 0, marginBottom: 14 }}>
+        Generates a subtitle from scratch (via Whisper) for a video that has no subtitle at all,
+        then translates it into any other wanted language with an LLM. Turned on/off from
+        Settings → Automation → What runs — the fields below configure the providers it uses once
+        it's on. Uses its own API keys, separate from the LLM settings tab, so this heavier
+        full-length transcription never competes with the cheap correctness check's own quota.
+      </p>
+
+      <h3 style={{ marginBottom: 4 }}>Speech-to-text</h3>
+      <Field label="Provider">
+        <select
+          value={data.stt_provider}
+          onChange={(e) => setData({ ...data, stt_provider: e.target.value as GenerateSettings['stt_provider'] })}
+        >
+          <option value="groq">Groq</option>
+          <option value="openrouter">OpenRouter</option>
+          <option value="cloudflare">Cloudflare Workers AI</option>
+        </select>
+      </Field>
+
+      {data.stt_provider === 'groq' && (
+        <>
+          <Field
+            label="Groq API key"
+            tip={data.groq_api_key.is_set ? 'A key is already saved — type here only to replace it.' : 'Not set yet.'}
+          >
+            <input
+              type="text"
+              autoComplete="off"
+              placeholder={data.groq_api_key.is_set ? '••••••••••••••••  (saved — leave blank to keep)' : 'gsk_…'}
+              value={newGroqKey}
+              onChange={(e) => setNewGroqKey(e.target.value)}
+            />
+          </Field>
+          <div className={styles.row}>
+            <Field label="Whisper model">
+              <input type="text" value={data.groq_stt_model} onChange={(e) => setData({ ...data, groq_stt_model: e.target.value })} />
+            </Field>
+            <Field label="Whisper fallback model" tip="Used only if the main model hits its rate limit.">
+              <input
+                type="text"
+                value={data.groq_stt_model_fallback}
+                onChange={(e) => setData({ ...data, groq_stt_model_fallback: e.target.value })}
+              />
+            </Field>
+          </div>
+          <Field label="Chunk length (seconds)" tip="How much audio to send per request. Groq's per-request size limit gives plenty of headroom at this length.">
+            <input
+              type="number" step="30" min="30"
+              value={data.chunk_seconds_groq}
+              onChange={(e) => setData({ ...data, chunk_seconds_groq: Number(e.target.value) })}
+            />
+          </Field>
+        </>
+      )}
+
+      {data.stt_provider === 'openrouter' && (
+        <>
+          <Field
+            label="OpenRouter API key"
+            tip={data.openrouter_api_key.is_set ? 'A key is already saved — type here only to replace it.' : 'Not set yet.'}
+          >
+            <input
+              type="text"
+              autoComplete="off"
+              placeholder={data.openrouter_api_key.is_set ? '••••••••••••••••  (saved — leave blank to keep)' : 'sk-or-…'}
+              value={newOpenRouterKey}
+              onChange={(e) => setNewOpenRouterKey(e.target.value)}
+            />
+          </Field>
+          <div className={styles.row}>
+            <Field label="Whisper model">
+              <input
+                type="text"
+                value={data.openrouter_stt_model}
+                onChange={(e) => setData({ ...data, openrouter_stt_model: e.target.value })}
+              />
+            </Field>
+            <Field label="Whisper fallback model">
+              <input
+                type="text"
+                value={data.openrouter_stt_model_fallback}
+                onChange={(e) => setData({ ...data, openrouter_stt_model_fallback: e.target.value })}
+              />
+            </Field>
+          </div>
+          <Field label="Chunk length (seconds)">
+            <input
+              type="number" step="30" min="30"
+              value={data.chunk_seconds_openrouter}
+              onChange={(e) => setData({ ...data, chunk_seconds_openrouter: Number(e.target.value) })}
+            />
+          </Field>
+        </>
+      )}
+
+      {data.stt_provider === 'cloudflare' && (
+        <>
+          <p className="text-dim" style={{ fontSize: 12.5, maxWidth: 560, marginTop: 0 }}>
+            Cloudflare doesn't publish a per-request audio size/duration limit for this model —
+            start with a short chunk length and only raise it after confirming longer chunks
+            actually succeed against your own account.
+          </p>
+          <Field label="Account ID">
+            <input
+              type="text"
+              value={data.cloudflare_account_id}
+              onChange={(e) => setData({ ...data, cloudflare_account_id: e.target.value })}
+            />
+          </Field>
+          <Field
+            label="API token"
+            tip={data.cloudflare_api_token.is_set ? 'A token is already saved — type here only to replace it.' : 'Not set yet.'}
+          >
+            <input
+              type="text"
+              autoComplete="off"
+              placeholder={data.cloudflare_api_token.is_set ? '••••••••••••••••  (saved — leave blank to keep)' : 'Workers AI API token'}
+              value={newCloudflareToken}
+              onChange={(e) => setNewCloudflareToken(e.target.value)}
+            />
+          </Field>
+          <div className={styles.row}>
+            <Field label="Whisper model">
+              <input
+                type="text"
+                value={data.cloudflare_stt_model}
+                onChange={(e) => setData({ ...data, cloudflare_stt_model: e.target.value })}
+              />
+            </Field>
+            <Field label="Chunk length (seconds)" tip="Undocumented limit — tune against your own account (see note above).">
+              <input
+                type="number" step="10" min="10"
+                value={data.chunk_seconds_cloudflare}
+                onChange={(e) => setData({ ...data, chunk_seconds_cloudflare: Number(e.target.value) })}
+              />
+            </Field>
+          </div>
+        </>
+      )}
+
+      <div className={styles.row}>
+        <Field label="Audio bitrate (kbps)" tip="Lower = smaller uploads, fits more minutes per request. 64 is a reasonable default for speech.">
+          <input
+            type="number" step="8" min="16"
+            value={data.audio_bitrate_kbps}
+            onChange={(e) => setData({ ...data, audio_bitrate_kbps: Number(e.target.value) })}
+          />
+        </Field>
+        <Field
+          label="Assume spoken language"
+          tip="Fallback when neither the provider nor the file's own audio-language tag can tell us what's spoken. Leave empty to skip a video rather than guess."
+        >
+          <input
+            type="text"
+            placeholder="e.g. en"
+            value={data.assume_spoken_lang}
+            onChange={(e) => setData({ ...data, assume_spoken_lang: e.target.value })}
+          />
+        </Field>
+      </div>
+      <Field
+        label="Vocabulary hint (Groq/OpenRouter only)"
+        tip="A short, plain comma-separated list of names Whisper is likely to mishear (e.g. show/character names) -- helps with proper nouns. Keep it a plain list, not a labeled sentence ('Characters: ...') -- that shape was observed to make Whisper hallucinate extra dialogue near the end of a chunk. Saved as a single line, capped at 200 characters."
+      >
+        <input
+          type="text"
+          placeholder="e.g. Jeff, Britta, Abed, Troy, Annie, Shirley, Pierce, Chang"
+          maxLength={200}
+          value={data.vocabulary_hint}
+          onChange={(e) => setData({ ...data, vocabulary_hint: e.target.value })}
+        />
+      </Field>
+
+      <h3 style={{ marginBottom: 4 }}>Translation</h3>
+      <p className="text-dim" style={{ fontSize: 12.5, maxWidth: 560, marginTop: 0, marginBottom: 14 }}>
+        Whisper can only translate speech straight to English — any OTHER wanted language goes
+        through this LLM step instead, translating the already-timed lines without touching their
+        timestamps.
+      </p>
+      <Field label="Provider">
+        <select
+          value={data.llm_provider}
+          onChange={(e) => setData({ ...data, llm_provider: e.target.value as GenerateSettings['llm_provider'] })}
+        >
+          <option value="groq">Groq</option>
+          <option value="openrouter">OpenRouter</option>
+          <option value="gemini">Google Gemini</option>
+        </select>
+      </Field>
+
+      {data.llm_provider === 'groq' && (
+        <>
+          {data.stt_provider !== 'groq' && (
+            <Field
+              label="Groq API key"
+              tip={data.groq_api_key.is_set ? 'A key is already saved — type here only to replace it.' : 'Not set yet.'}
+            >
+              <input
+                type="text"
+                autoComplete="off"
+                placeholder={data.groq_api_key.is_set ? '••••••••••••••••  (saved — leave blank to keep)' : 'gsk_…'}
+                value={newGroqKey}
+                onChange={(e) => setNewGroqKey(e.target.value)}
+              />
+            </Field>
+          )}
+          <div className={styles.row}>
+            <Field label="Translation model">
+              <input type="text" value={data.groq_llm_model} onChange={(e) => setData({ ...data, groq_llm_model: e.target.value })} />
+            </Field>
+            <Field label="Translation fallback model">
+              <input
+                type="text"
+                value={data.groq_llm_model_fallback}
+                onChange={(e) => setData({ ...data, groq_llm_model_fallback: e.target.value })}
+              />
+            </Field>
+          </div>
+        </>
+      )}
+
+      {data.llm_provider === 'openrouter' && (
+        <>
+          {data.stt_provider !== 'openrouter' && (
+            <Field
+              label="OpenRouter API key"
+              tip={data.openrouter_api_key.is_set ? 'A key is already saved — type here only to replace it.' : 'Not set yet.'}
+            >
+              <input
+                type="text"
+                autoComplete="off"
+                placeholder={data.openrouter_api_key.is_set ? '••••••••••••••••  (saved — leave blank to keep)' : 'sk-or-…'}
+                value={newOpenRouterKey}
+                onChange={(e) => setNewOpenRouterKey(e.target.value)}
+              />
+            </Field>
+          )}
+          <div className={styles.row}>
+            <Field label="Translation model">
+              <input
+                type="text"
+                value={data.openrouter_llm_model}
+                onChange={(e) => setData({ ...data, openrouter_llm_model: e.target.value })}
+              />
+            </Field>
+            <Field label="Translation fallback model">
+              <input
+                type="text"
+                value={data.openrouter_llm_model_fallback}
+                onChange={(e) => setData({ ...data, openrouter_llm_model_fallback: e.target.value })}
+              />
+            </Field>
+          </div>
+        </>
+      )}
+
+      {data.llm_provider === 'gemini' && (
+        <>
+          <Field
+            label="Gemini API key"
+            tip={data.gemini_api_key.is_set ? 'A key is already saved — type here only to replace it.' : 'Not set yet.'}
+          >
+            <input
+              type="text"
+              autoComplete="off"
+              placeholder={data.gemini_api_key.is_set ? '••••••••••••••••  (saved — leave blank to keep)' : 'AIza…'}
+              value={newGeminiKey}
+              onChange={(e) => setNewGeminiKey(e.target.value)}
+            />
+          </Field>
+          <div className={styles.row}>
+            <Field label="Translation model">
+              <input type="text" value={data.gemini_llm_model} onChange={(e) => setData({ ...data, gemini_llm_model: e.target.value })} />
+            </Field>
+            <Field label="Translation fallback model">
+              <input
+                type="text"
+                value={data.gemini_llm_model_fallback}
+                onChange={(e) => setData({ ...data, gemini_llm_model_fallback: e.target.value })}
+              />
+            </Field>
+          </div>
+        </>
+      )}
+
+      <div className={styles.row}>
+        <Field
+          label="Lines per translation call"
+          tip="How many subtitle lines to batch into one translation request. Higher = fewer API calls; lower = safer against a provider's per-request token limit."
+        >
+          <input
+            type="number" step="1" min="1"
+            value={data.translate_batch_size}
+            onChange={(e) => setData({ ...data, translate_batch_size: Number(e.target.value) })}
+          />
+        </Field>
+        <Field
+          label="Max. videos per day"
+          tip="Caps how many DISTINCT videos get a subtitle generated in any 24 hours -- counted across every sweep, poll and scheduled run together, so a busy day can't quietly multiply it. Translating an already-transcribed video into extra languages doesn't count again. A manual Generate click ignores this."
+        >
+          <input
+            type="number" step="1" min="0"
+            value={data.max_videos_per_day}
+            onChange={(e) => setData({ ...data, max_videos_per_day: Number(e.target.value) })}
+          />
+        </Field>
+      </div>
+
+      <SaveBar busy={busy} saved={saved} error={error} />
+    </form>
+  )
+}
+
 function AutomationTab() {
   const whatRuns = useWhatRuns()
   const { data, setData, error: automationLoadError } = useGroup<AutomationSettings>('automation')
@@ -761,9 +1190,9 @@ function AutomationTab() {
   const [saved, setSaved] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
-  const { general, sync, correctness } = whatRuns
-  if (!general.data || !sync.data || !correctness.data || !data) return <span className="spinner" />
-  const g = general.data, s = sync.data, c = correctness.data
+  const { general, sync, correctness, generate } = whatRuns
+  if (!general.data || !sync.data || !correctness.data || !generate.data || !data) return <span className="spinner" />
+  const g = general.data, s = sync.data, c = correctness.data, gen = generate.data
 
   async function onSubmit(e: FormEvent) {
     e.preventDefault()
@@ -777,12 +1206,14 @@ function AutomationTab() {
             auto_scan_sync_enabled: g.auto_scan_sync_enabled,
             auto_scan_correctness_enabled: g.auto_scan_correctness_enabled,
             auto_scan_line_order_enabled: g.auto_scan_line_order_enabled,
+            auto_scan_generate_enabled: g.auto_scan_generate_enabled,
           },
         }),
         api.put('/settings/sync', {
           values: { enabled: s.enabled, line_order_enabled: s.line_order_enabled, line_order_auto_action: s.line_order_auto_action },
         }),
         api.put('/settings/correctness', { values: { enabled: c.enabled, auto_action: c.auto_action } }),
+        api.put('/settings/generate', { values: { enabled: gen.enabled } }),
         api.put('/settings/automation', { values: data }),
       ])
       setSaved(true)
@@ -1216,6 +1647,7 @@ export default function Settings() {
       {active === 'general' && <GeneralTab />}
       {active === 'sync' && <SyncTab />}
       {active === 'correctness' && <CorrectnessTab />}
+      {active === 'generate' && <GenerateTab />}
       {active === 'automation' && <AutomationTab />}
       {active === 'bazarr' && <BazarrTab />}
       {active === 'scheduling' && <SchedulingTab />}

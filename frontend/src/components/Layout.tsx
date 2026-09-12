@@ -19,6 +19,7 @@ export const SETTINGS_TABS = [
   { key: 'general', label: 'General' },
   { key: 'sync', label: 'Sync' },
   { key: 'correctness', label: 'LLM settings' },
+  { key: 'generate', label: 'Generate' },
   { key: 'automation', label: 'Automation' },
   { key: 'bazarr', label: 'Bazarr' },
   { key: 'scheduling', label: 'Scheduling' },

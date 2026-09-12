@@ -50,6 +50,38 @@ def normalize_url(url: str) -> str:
     return url
 
 
+LANG_CODE_RE = re.compile(r"^[a-z]{2,3}$")
+
+# generate.vocabulary_hint goes straight into Whisper's own "prompt" field, which is not an
+# instruction channel -- it is decoder priming, and the model will happily continue whatever
+# shape of text it is given. A short comma-separated list of names primes vocabulary; a labelled
+# or sentence-shaped prompt ("Characters: Jeff, Britta...") primes PROSE, and was observed in
+# real testing to make Whisper invent extra dialogue at the end of a clip, bleeding words from
+# the prompt itself into the transcript. A warning in a tooltip does not prevent that, so the
+# shape is enforced here instead: the value is capped in length and flattened to a single line.
+VOCABULARY_HINT_MAX_CHARS = 200
+
+
+def clean_vocabulary_hint(raw: Optional[str]) -> Optional[str]:
+    """Flattens a vocabulary hint to one line and caps its length -- see
+    VOCABULARY_HINT_MAX_CHARS. Applied both on save (so the stored value is already clean) and
+    on read (so a value stored by an older build, or written straight into the settings table,
+    can't slip past)."""
+    if not raw:
+        return None
+    hint = " ".join(str(raw).split())
+    return hint[:VOCABULARY_HINT_MAX_CHARS].strip() or None
+
+
+def clean_lang_code(raw: Optional[str]) -> str:
+    """A single ISO 639-1/639-2-shaped code, lowercased -- or "" if it isn't one. Guards the
+    settings that end up in a FILENAME (see fileops.write_new_subtitle) or in an API request's
+    `language` field, where free text is at best ignored and at worst produces a subtitle
+    discovery can never find again."""
+    value = (raw or "").strip().lower()
+    return value if LANG_CODE_RE.match(value) else ""
+
+
 def _parse_path_map(raw: str) -> list[tuple[str, str]]:
     pairs = []
     for chunk in _env_list("PATH_MAP", raw):
@@ -90,6 +122,22 @@ class Config:
     openrouter_stt_model_fallback: Optional[str]
     openrouter_llm_model: str
     openrouter_llm_model_fallback: Optional[str]
+    # Runs actual TRANSCRIPTION (transcribe/transcribe_verbose — the per-clip Whisper calls that
+    # dominate correctness-check's API usage) through a local whisper.cpp binary instead of
+    # stt_provider's cloud endpoint — no network call, no API key, no rate limit, no per-request
+    # cost. Deliberately narrow: translation (translate_to_english) and the line-order LLM
+    # confirm (line_order._llm_batch_call) are plain-text chat-completion calls, not speech
+    # recognition, so they keep using stt_provider's cloud key exactly as before regardless of
+    # this flag — a local setup that also wants those either keeps a (much cheaper, rarely-hit)
+    # cloud key for just that, or turns line_order_audio_confirm off. See has_stt_configured,
+    # and correctness._run_local_whisper for the actual subprocess call. Aimed at Intel iGPU
+    # boxes (e.g. N100) via whisper.cpp's Vulkan backend baked into the Docker image — see
+    # Dockerfile — but works anywhere the binary+model exist, GPU or not.
+    use_local_whisper: bool
+    local_whisper_binary: str
+    local_whisper_model: str
+    local_whisper_use_gpu: bool
+    local_whisper_threads: int
     # ONE count for both series and movies -- a longer file isn't harder to verify, it's still
     # the same "does this dialogue match the audio" question, so there's no reason to sample it
     # more.
@@ -106,6 +154,24 @@ class Config:
     # enough, since a real cut can legitimately produce a big spread with every sample still
     # matching fine.
     block_spread_suspect_threshold_s: float
+    # Whisper-anchor ESCALATION (see subtitles.clip_anchor_shift): a Whisper segment that
+    # clearly matches one specific subtitle line is a content-VERIFIED point estimate of the
+    # real timing offset right there, independent of the majority-vote average. With this on, a
+    # confident anchor showing a residual mismatch above subtitles.ANCHOR_SUSPECT_THRESHOLD_S
+    # (an anchor-noise-aware threshold, NOT min_change_seconds) escalates an otherwise-"ok" file
+    # to SUSPECT -- catches a subtitle that's only right for PART of the episode (see
+    # block_spread_suspect_threshold_s' own docstring for the motivating case). Off by default:
+    # the anchor-matching thresholds are still provisional, unvalidated against a wide range of
+    # real segment data -- see the anchor-sync plan's Open Questions.
+    #
+    # What this flag does NOT gate: anchors are always COMPUTED (CPU only, cached with the
+    # sample), and pipeline._resolve_ambiguous_sync always uses them to CHOOSE between alass's
+    # own sync candidates when alass produced a multi-block fit -- that choice only ever picks
+    # among alass's outputs and the original, it never flags a file, and without anchors it
+    # simply trusts alass's single-offset fit. Anchors only exist at all for a subtitle in the
+    # spoken language (subtitles.anchors_applicable) -- a Danish subtitle on English audio has
+    # none, so neither this escalation nor the candidate choice has timing evidence for it.
+    anchor_check_enabled: bool
 
     # Line-order check (see line_order.py). Off by default, opt-in.
     line_order_enabled: bool
@@ -160,6 +226,66 @@ class Config:
     # both Whisper and the LLM — see line_order.py's swap_severity).
     line_order_auto_action: str = "off"
 
+    # Same "manual Scan/CLI has its own switch, scheduled sweep + Bazarr poll share a second
+    # one" split as sync_enabled/auto_scan_sync_enabled above -- see jobs._effective_cfg.
+    generate_enabled: bool = False
+    auto_scan_generate_enabled: bool = False
+    # groq | openrouter | cloudflare -- see generate.py's per-provider STT adapters. Deliberately
+    # its OWN api keys/models per provider (not shared with correctness.* above) so generation's
+    # heavier full-track quota usage never competes with -- or is silently capped by -- whatever
+    # a user has configured for the cheap sampled correctness check.
+    generate_stt_provider: str = "groq"
+    generate_groq_api_key: Optional[str] = None
+    generate_groq_stt_model: str = "whisper-large-v3"
+    generate_groq_stt_model_fallback: Optional[str] = "whisper-large-v3-turbo"
+    generate_openrouter_api_key: Optional[str] = None
+    generate_openrouter_stt_model: str = "openai/whisper-large-v3"
+    generate_openrouter_stt_model_fallback: Optional[str] = None
+    generate_cloudflare_account_id: Optional[str] = None
+    generate_cloudflare_api_token: Optional[str] = None
+    generate_cloudflare_stt_model: str = "@cf/openai/whisper-large-v3-turbo"
+    # How many seconds of (compressed) audio to send per STT request -- per provider, since each
+    # has a different practical size/duration limit (Cloudflare's in particular is undocumented
+    # and empirically much smaller than Groq/OpenRouter's -- see generate.py).
+    generate_chunk_seconds_groq: int = 600
+    generate_chunk_seconds_openrouter: int = 600
+    generate_chunk_seconds_cloudflare: int = 60
+    generate_audio_bitrate_kbps: int = 64
+    # Fallback spoken-language assumption when a provider can't tell us (Cloudflare's Whisper
+    # models don't reliably report a detected language) and ffprobe's own audio-stream tag is
+    # also missing/unusable. Empty = give up and skip that video rather than guess.
+    generate_assume_spoken_lang: Optional[str] = None
+    # Free-text vocabulary hint (Whisper's own "prompt" field, Groq/OpenRouter only -- Cloudflare's
+    # endpoint has no equivalent) -- e.g. a show's character names, to reduce mishearing of proper
+    # nouns/invented words a generic model has no other way to know about. Empty = no hint sent.
+    # Keep it a short, plain comma-separated list (e.g. "Jeff, Britta, Abed, Chang") -- a labeled
+    # or sentence-shaped prompt ("Characters: ...") was observed to make Whisper hallucinate
+    # extra, made-up dialogue near the end of a chunk that bleeds in words from the prompt itself.
+    generate_vocabulary_hint: Optional[str] = None
+    # groq | openrouter | gemini -- the LLM used to translate a generated subtitle into any
+    # wanted language that isn't the spoken one (see generate.translate_segments).
+    generate_llm_provider: str = "groq"
+    generate_groq_llm_model: str = "openai/gpt-oss-20b"
+    generate_groq_llm_model_fallback: Optional[str] = "allam-2-7b"
+    generate_openrouter_llm_model: str = "openai/gpt-4o-mini"
+    generate_openrouter_llm_model_fallback: Optional[str] = None
+    generate_gemini_api_key: Optional[str] = None
+    generate_gemini_llm_model: str = "gemini-2.0-flash"
+    generate_gemini_llm_model_fallback: Optional[str] = None
+    # Subtitle lines per translation LLM call (a numbered list) -- keeps each call small enough
+    # to stay well clear of a free-tier's per-request token limit while still being far cheaper
+    # than one call per line. See generate.translate_segments's per-batch validation.
+    generate_translate_batch_size: int = 20
+    # Caps how many DISTINCT VIDEOS get a subtitle generated per rolling 24 HOURS -- transcription
+    # cost is per-video, so this is the actual quota-protecting knob (translating a video into
+    # several extra wanted languages doesn't count again). Default is deliberately small: a free
+    # API tier's daily quota is easy to exhaust on a handful of feature-length videos.
+    # Deliberately a DAILY cap rather than a per-run one: the Bazarr wanted-subtitles poll starts
+    # a fresh sweep every time any wanted item resolves (see bazarr_poll.py), so a per-run cap is
+    # multiplied by however many times that fired today -- which is not a quota guard at all.
+    # Counted from db.generate_attempts, so it survives restarts and spans every trigger.
+    generate_max_videos_per_day: int = 3
+
     @classmethod
     def from_db(cls, conn) -> "Config":
         from verifyarr import db
@@ -193,12 +319,18 @@ class Config:
             openrouter_stt_model_fallback=vals["correctness.openrouter_stt_model_fallback"] or None,
             openrouter_llm_model=vals["correctness.openrouter_llm_model"],
             openrouter_llm_model_fallback=vals["correctness.openrouter_llm_model_fallback"] or None,
+            use_local_whisper=vals["correctness.use_local_whisper"],
+            local_whisper_binary=vals["correctness.local_whisper_binary"],
+            local_whisper_model=vals["correctness.local_whisper_model"],
+            local_whisper_use_gpu=vals["correctness.local_whisper_use_gpu"],
+            local_whisper_threads=vals["correctness.local_whisper_threads"],
             correctness_auto_action=vals["correctness.auto_action"],
             sample_count=vals["sync.sample_count"],
             clip_seconds=vals["sync.clip_seconds"],
             window_minutes=vals["sync.window_minutes"],
             overlap_threshold=vals["sync.overlap_threshold"],
             block_spread_suspect_threshold_s=vals["sync.block_spread_suspect_threshold_s"],
+            anchor_check_enabled=vals["sync.anchor_check_enabled"],
             require_audio_lang=vals["correctness.require_audio_lang"] or None,
             line_order_enabled=vals["sync.line_order_enabled"],
             line_order_audio_confirm=vals["sync.line_order_audio_confirm"],
@@ -222,6 +354,34 @@ class Config:
             auto_scan_correctness_enabled=vals["general.auto_scan_correctness_enabled"],
             auto_scan_line_order_enabled=vals["general.auto_scan_line_order_enabled"],
             backup_originals=vals["general.backup_originals"],
+            generate_enabled=vals["generate.enabled"],
+            auto_scan_generate_enabled=vals["general.auto_scan_generate_enabled"],
+            generate_stt_provider=vals["generate.stt_provider"],
+            generate_groq_api_key=vals["generate.groq_api_key"] or None,
+            generate_groq_stt_model=vals["generate.groq_stt_model"],
+            generate_groq_stt_model_fallback=vals["generate.groq_stt_model_fallback"] or None,
+            generate_openrouter_api_key=vals["generate.openrouter_api_key"] or None,
+            generate_openrouter_stt_model=vals["generate.openrouter_stt_model"],
+            generate_openrouter_stt_model_fallback=vals["generate.openrouter_stt_model_fallback"] or None,
+            generate_cloudflare_account_id=vals["generate.cloudflare_account_id"] or None,
+            generate_cloudflare_api_token=vals["generate.cloudflare_api_token"] or None,
+            generate_cloudflare_stt_model=vals["generate.cloudflare_stt_model"],
+            generate_chunk_seconds_groq=vals["generate.chunk_seconds_groq"],
+            generate_chunk_seconds_openrouter=vals["generate.chunk_seconds_openrouter"],
+            generate_chunk_seconds_cloudflare=vals["generate.chunk_seconds_cloudflare"],
+            generate_audio_bitrate_kbps=vals["generate.audio_bitrate_kbps"],
+            generate_assume_spoken_lang=clean_lang_code(vals["generate.assume_spoken_lang"]) or None,
+            generate_vocabulary_hint=clean_vocabulary_hint(vals["generate.vocabulary_hint"]),
+            generate_llm_provider=vals["generate.llm_provider"],
+            generate_groq_llm_model=vals["generate.groq_llm_model"],
+            generate_groq_llm_model_fallback=vals["generate.groq_llm_model_fallback"] or None,
+            generate_openrouter_llm_model=vals["generate.openrouter_llm_model"],
+            generate_openrouter_llm_model_fallback=vals["generate.openrouter_llm_model_fallback"] or None,
+            generate_gemini_api_key=vals["generate.gemini_api_key"] or None,
+            generate_gemini_llm_model=vals["generate.gemini_llm_model"],
+            generate_gemini_llm_model_fallback=vals["generate.gemini_llm_model_fallback"] or None,
+            generate_translate_batch_size=vals["generate.translate_batch_size"],
+            generate_max_videos_per_day=vals["generate.max_videos_per_day"],
         )
 
     @property
@@ -230,6 +390,45 @@ class Config:
         (correctness.stt_provider — groq or openrouter). One place to ask instead of every
         caller needing to know both fields and switch on the provider name."""
         return self.openrouter_api_key if self.stt_provider == "openrouter" else self.groq_api_key
+
+    @property
+    def has_stt_configured(self) -> bool:
+        """Whether correctness.py has SOMETHING it can transcribe audio with — either a cloud
+        API key, or use_local_whisper (which needs no key at all). The gate every "can a
+        correctness check even run" check should use INSTEAD OF active_stt_api_key directly —
+        that one alone would wrongly say "not configured" for a local-only setup with no cloud
+        key. Doesn't verify local_whisper_binary/local_whisper_model actually point at real
+        files — that failure surfaces per-sample instead (same as a cloud key that turns out to
+        be invalid only failing on first use), not as a static config gate."""
+        return bool(self.active_stt_api_key) or self.use_local_whisper
+
+    @property
+    def active_generate_stt_api_key(self) -> Optional[str]:
+        """Same idea as active_stt_api_key, but for generate_stt_provider's own (separate) set
+        of keys -- Cloudflare's "key" is really its API token, used the same way here."""
+        if self.generate_stt_provider == "cloudflare":
+            return self.generate_cloudflare_api_token
+        if self.generate_stt_provider == "openrouter":
+            return self.generate_openrouter_api_key
+        return self.generate_groq_api_key
+
+    @property
+    def active_generate_llm_api_key(self) -> Optional[str]:
+        if self.generate_llm_provider == "gemini":
+            return self.generate_gemini_api_key
+        if self.generate_llm_provider == "openrouter":
+            return self.generate_openrouter_api_key
+        return self.generate_groq_api_key
+
+    def generate_chunk_seconds_for(self, provider: str) -> int:
+        """Per-provider STT chunk length in seconds (see generate.py) -- each provider has a
+        different practical per-request audio size/duration limit, so this is deliberately not
+        one global value."""
+        return {
+            "groq": self.generate_chunk_seconds_groq,
+            "openrouter": self.generate_chunk_seconds_openrouter,
+            "cloudflare": self.generate_chunk_seconds_cloudflare,
+        }.get(provider, self.generate_chunk_seconds_groq)
 
     @property
     def media_roots(self) -> list[Path]:
@@ -290,6 +489,7 @@ SETTING_DEFS: dict = {
     "general.auto_scan_sync_enabled":        ("general", "bool", True),
     "general.auto_scan_correctness_enabled": ("general", "bool", True),
     "general.auto_scan_line_order_enabled":  ("general", "bool", False),
+    "general.auto_scan_generate_enabled":    ("general", "bool", False),
 
     # sync.alass_bin removed — alass is baked into the Docker image, nothing to pick.
     "sync.enabled":            ("sync", "bool", True),
@@ -308,6 +508,7 @@ SETTING_DEFS: dict = {
     # like (typically 60s+), and the required agreeing Whisper sample is the actual gate that
     # keeps a legitimate structural cut from being wrongly escalated.
     "sync.block_spread_suspect_threshold_s": ("sync", "float", 20.0),
+    "sync.anchor_check_enabled": ("sync", "bool", False),
     # Off by default, opt-in — see line_order.py.
     "sync.line_order_enabled":       ("sync", "bool", False),
     "sync.line_order_audio_confirm": ("sync", "bool", False),
@@ -331,10 +532,60 @@ SETTING_DEFS: dict = {
     "correctness.openrouter_stt_model_fallback": ("correctness", "str", ""),
     "correctness.openrouter_llm_model":          ("correctness", "str", "openai/gpt-4o-mini"),
     "correctness.openrouter_llm_model_fallback": ("correctness", "str", ""),
+    # Local whisper.cpp transcription — see Config.use_local_whisper's docstring for exactly
+    # what this does and doesn't replace. Binary/model default to where the Dockerfile's
+    # whisper-builder stage bakes them (see Dockerfile) — only relevant once use_local_whisper
+    # is turned on, so a stock install with the defaults left as-is is unaffected.
+    "correctness.use_local_whisper":     ("correctness", "bool", False),
+    "correctness.local_whisper_binary":  ("correctness", "str", "/usr/local/bin/whisper-cli"),
+    "correctness.local_whisper_model":   ("correctness", "str", "/app/models/ggml-small.en-q5_1.bin"),
+    "correctness.local_whisper_use_gpu": ("correctness", "bool", True),
+    "correctness.local_whisper_threads": ("correctness", "int", 4),
     "correctness.require_audio_lang":       ("correctness", "str", "en"),
     # off | quarantine | blacklist | remediate — what to do with a file the correctness check
     # flags SUSPECT (see Config.correctness_auto_action). Independent of sync.line_order_auto_action.
     "correctness.auto_action":              ("correctness", "str", "off"),
+
+    # Generate missing subtitles (see generate.py) -- own settings group, deliberately separate
+    # from correctness.* even where the provider choice overlaps (groq/openrouter), so a user
+    # can pick different providers/keys/models for the cheap sampled correctness check vs. the
+    # much heavier full-track generation job.
+    "generate.enabled":                          ("generate", "bool", False),
+    "generate.stt_provider":                     ("generate", "str", "groq"),  # groq | openrouter | cloudflare
+    "generate.groq_api_key":                     ("generate", "str", ""),
+    "generate.groq_stt_model":                   ("generate", "str", "whisper-large-v3"),
+    "generate.groq_stt_model_fallback":          ("generate", "str", "whisper-large-v3-turbo"),
+    "generate.openrouter_api_key":                ("generate", "str", ""),
+    "generate.openrouter_stt_model":              ("generate", "str", "openai/whisper-large-v3"),
+    "generate.openrouter_stt_model_fallback":     ("generate", "str", ""),
+    "generate.cloudflare_account_id":             ("generate", "str", ""),
+    "generate.cloudflare_api_token":              ("generate", "str", ""),
+    "generate.cloudflare_stt_model":              ("generate", "str", "@cf/openai/whisper-large-v3-turbo"),
+    # Seconds of (compressed) audio per STT request -- per provider, since each has a different
+    # practical per-request size/duration limit (Cloudflare's is undocumented and empirically
+    # much smaller -- see generate.py's module docstring). Confirm/tune against your own account
+    # before relying on the default for Cloudflare.
+    "generate.chunk_seconds_groq":                ("generate", "int", 600),
+    "generate.chunk_seconds_openrouter":          ("generate", "int", 600),
+    "generate.chunk_seconds_cloudflare":          ("generate", "int", 60),
+    "generate.audio_bitrate_kbps":                ("generate", "int", 64),
+    "generate.assume_spoken_lang":                ("generate", "str", ""),
+    # Whisper vocabulary hint (Groq/OpenRouter only) -- short plain comma-separated list, e.g.
+    # "Jeff, Britta, Abed, Troy, Annie, Shirley, Pierce, Chang". Flattened to one line and capped
+    # at VOCABULARY_HINT_MAX_CHARS on save AND on read (clean_vocabulary_hint) -- see that
+    # constant for why the SHAPE of this field, not just its content, matters.
+    "generate.vocabulary_hint":                   ("generate", "str", ""),
+    "generate.llm_provider":                      ("generate", "str", "groq"),  # groq | openrouter | gemini
+    "generate.groq_llm_model":                    ("generate", "str", "openai/gpt-oss-20b"),
+    "generate.groq_llm_model_fallback":           ("generate", "str", "allam-2-7b"),
+    "generate.openrouter_llm_model":              ("generate", "str", "openai/gpt-4o-mini"),
+    "generate.openrouter_llm_model_fallback":     ("generate", "str", ""),
+    "generate.gemini_api_key":                    ("generate", "str", ""),
+    "generate.gemini_llm_model":                  ("generate", "str", "gemini-2.0-flash"),
+    "generate.gemini_llm_model_fallback":         ("generate", "str", ""),
+    "generate.translate_batch_size":              ("generate", "int", 20),
+    # Caps DISTINCT VIDEOS generated per rolling 24 hours -- see Config.generate_max_videos_per_day.
+    "generate.max_videos_per_day":                ("generate", "int", 3),
 
     "automation.remediate_max_attempts":   ("automation", "int", 3),
     # 0-100 (Bazarr's own percentage score for a candidate, NOT our correctness check) — 0 =
@@ -363,7 +614,11 @@ SETTING_DEFS: dict = {
     "scheduling.poll_library_interval_minutes":    ("scheduling", "int", 720),  # 12 hours
 }
 # Keys whose value is never returned in plaintext to the frontend (only "is_set: true/false").
-SECRET_KEYS = {"correctness.groq_api_key", "correctness.openrouter_api_key", "bazarr.api_key"}
+SECRET_KEYS = {
+    "correctness.groq_api_key", "correctness.openrouter_api_key", "bazarr.api_key",
+    "generate.groq_api_key", "generate.openrouter_api_key", "generate.cloudflare_api_token",
+    "generate.gemini_api_key",
+}
 
 GROUPS = sorted({g for g, *_ in SETTING_DEFS.values()})
 
@@ -438,6 +693,13 @@ def set_settings_group(conn, group: str, values: dict) -> None:
             continue
         if key == "bazarr.url":
             value = normalize_url(value)
+        elif key == "generate.vocabulary_hint":
+            value = clean_vocabulary_hint(value) or ""
+        elif key == "generate.assume_spoken_lang":
+            cleaned = clean_lang_code(value)
+            if value and not cleaned:
+                raise ValueError(f"not a language code: {value!r} — use a short code like 'en' or 'da'")
+            value = cleaned
         _group, kind, _default = SETTING_DEFS[key]
         db.set_setting_raw(conn, key, _serialize(kind, value))
 

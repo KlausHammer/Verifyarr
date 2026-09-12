@@ -19,7 +19,8 @@ from verifyarr import log
 from verifyarr import db
 from verifyarr import jobs
 from verifyarr import auth
-from verifyarr.settings import Config, DEFAULT_DB_PATH, import_from_env_once, migrate_log_level_once
+from verifyarr.settings import (Config, DEFAULT_DB_PATH, clean_lang_code,
+                                import_from_env_once, migrate_log_level_once)
 
 
 def cmd_sweep(cfg: Config, conn, force: bool, trigger: str = "cli_sweep") -> None:
@@ -52,6 +53,36 @@ def cmd_single(cfg: Config, conn, video: str, subtitle: str, lang: Optional[str]
                       video=video_p, subtitle=subtitle_p, lang=lang, bazarr_meta=bazarr_meta)
 
 
+def cmd_generate(cfg: Config, conn, video: str, lang: str, trigger: str = "cli_generate") -> None:
+    """Manual/scriptable trigger for generate.generate_one — useful for testing a provider/
+    chunk-size setup end-to-end without going through the webapp UI. Chains straight into the
+    ordinary sync pipeline afterward, same as the Files page's "Generate" button (see
+    jobs._run_generate_single).
+
+    Like that button, this deliberately ignores the per-(video, lang) retry cooldown and the
+    daily cap that the automatic sweep respects -- someone asking for this one file right now is
+    its own answer, the same split between manual and automatic triggers this app applies
+    everywhere else (see jobs._AUTO_TRIGGERS)."""
+    video_p = Path(video)
+    if not video_p.exists():
+        log.error("Video does not exist: %s", video_p)
+        sys.exit(1)
+    if not cfg.generate_enabled:
+        log.error("generate.enabled is off — turn it on under Settings -> Generate first.")
+        sys.exit(1)
+    if not clean_lang_code(lang):
+        log.error("Not a usable subtitle language code: %r — use a short code like 'en' or 'da'.", lang)
+        sys.exit(1)
+    lang = lang.lower()
+
+    from verifyarr.discovery import target_label
+    run_id = jobs.create_run(conn, trigger, "generate_single", cfg.dry_run, False,
+                              target_kind=cfg.kind_for(video_p),
+                              target_title=target_label(video_p, cfg.media_root_for(video_p)))
+    jobs.execute_run(run_id, cfg, conn, threading.Event(), "generate_single", trigger=trigger,
+                      video=video_p, lang=lang)
+
+
 def cmd_reset_password() -> None:
     conn = db.connect()
     try:
@@ -81,6 +112,10 @@ def main() -> None:
     p_single.add_argument("--episode-id", default=None)
     p_single.add_argument("--radarr-id", default=None)
 
+    p_generate = sub.add_parser("generate", help="Generate a missing subtitle via Whisper (+ LLM translation) for one video")
+    p_generate.add_argument("--video", required=True)
+    p_generate.add_argument("--lang", required=True)
+
     sub.add_parser("reset-password", help="Emergency exit: delete admin login so the web interface shows the setup screen again")
 
     args = parser.parse_args()
@@ -100,5 +135,7 @@ def main() -> None:
         elif args.mode == "single":
             cmd_single(cfg, conn, args.video, args.subtitle, args.lang,
                        args.provider, args.subs_id, args.series_id, args.episode_id, args.radarr_id)
+        elif args.mode == "generate":
+            cmd_generate(cfg, conn, args.video, args.lang)
     finally:
         conn.close()

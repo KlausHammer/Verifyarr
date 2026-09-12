@@ -50,7 +50,10 @@ from verifyarr.correctness import (JobCancelled, _LLM_URLS, _aggregate_correctne
                                     _post_ratelimited, _stt_model_and_fallback, _transcribe_once,
                                     detect_audio_language_ffprobe, extract_clip, get_duration_seconds)
 from verifyarr.settings import Config
-from verifyarr.subtitles import pick_dialogue_dense_time, subs_fingerprint, subs_text_in_window, tokenize
+from verifyarr.subtitles import (
+    pick_dialogue_dense_time, subs_fingerprint, subs_text_in_window, tokenize,
+    clip_anchor_shift, anchors_applicable,
+)
 
 # Padding either side of a candidate's own [start, end] for AUDIO EXTRACTION only (not for
 # judging which segments belong to the candidate — see _cluster_windows).
@@ -71,6 +74,7 @@ SWAP_MARGIN = 0.15
 # used when there aren't 2+ segments to split by timing. Validated against the real swap that
 # motivated this fallback (S03E01 #69: displayed 0.56 vs swapped 1.0, a 0.44 gap).
 SEQUENCE_MARGIN = 0.1
+
 
 # Batch LLM call: initial and retry (on finish_reason=="length") completion token budgets. Sized
 # generously above the largest sample count any reasonable settings.sample_count_* would produce.
@@ -337,7 +341,8 @@ def _extract_and_transcribe(video_path: Path, start_sec: float, duration_sec: fl
 
 
 def collect_samples(video_path: Path, subs, sub_lang: Optional[str], cfg: Config, tmp_dir: Path,
-                     conn=None, cancel_event=None) -> dict:
+                     conn=None, cancel_event=None,
+                     extra_target_ranges: Optional[list[tuple[float, float]]] = None) -> dict:
     """The Whisper-spending half of the combined "is this subtitle correct, and are any lines
     swapped" check. ONE sampling pass, sized exactly like correctness_check's own sample_count
     (not additive to it, and not longer for a movie than a series).
@@ -363,10 +368,22 @@ def collect_samples(video_path: Path, subs, sub_lang: Optional[str], cfg: Config
 
     conn: optional sqlite3 connection, passed straight through to video_transcript_cache (see
     correctness.correctness_check's own conn param — same table, same reasoning: the audio at
-    a given point doesn't depend on which subtitle is checking it). Only applies to "filler"
-    slots (plain dialogue-dense points) — a "heuristic" slot is anchored to THIS subtitle's own
-    claimed line timing (that's the whole point of judging its order), so it's intrinsically
-    subtitle-specific and always transcribed fresh regardless of conn."""
+    a given point doesn't depend on which subtitle is checking it). Cache HITS only apply to
+    "filler"/"extra" slots (plain dialogue-dense points) — a "heuristic" slot is anchored to
+    THIS subtitle's own claimed line timing (that's the whole point of judging its order), so
+    it's always transcribed fresh regardless of conn; its transcript is still SAVED, keyed by
+    position, as audio evidence for later candidate comparisons of the same video.
+
+    extra_target_ranges: optional [(start_sec, end_sec), ...] -- e.g. alass block boundaries a
+    suspicious multi-block fix needs individually verified (see pipeline.sync_pair/_block_time_
+    ranges). Each range not already covered by one of the n normal, evenly-spread slots gets ONE
+    extra forced filler slot of its own, appended after the normal n. Cached by POSITION, not by
+    slot number (db.find_cached_transcript_between / db.extra_slot_index): what makes such a
+    sample reusable is that it lies inside the block, and a plain "slot n" key silently
+    re-pointed a later run's targeted sample at wherever an earlier run's slot n had landed.
+    Without any of this, a file with more structural blocks than cfg.sample_count is
+    guaranteed to leave at least one block completely unchecked by pure chance of where the n
+    regions happened to fall."""
     candidates = heuristic_candidates(subs)
 
     duration = get_duration_seconds(video_path)
@@ -382,16 +399,43 @@ def collect_samples(video_path: Path, subs, sub_lang: Optional[str], cfg: Config
     regions = [(duration * i / n, duration * (i + 1) / n) for i in range(n)]
     clusters = _cluster_windows(candidates) if candidates else []
 
-    # One slot per region: ("heuristic", cluster) if a candidate cluster starts in it, else
-    # ("filler", start_sec) at that region's most dialogue-dense point. A cluster only ever
-    # starts in exactly one region, so no cluster can be picked twice here.
-    slots: list[tuple[str, object]] = []
+    # One slot per region: ("heuristic", cluster, None) if a candidate cluster starts in it,
+    # else ("filler", start_sec, (region_start, region_end)) at that region's most dialogue-
+    # dense point. A cluster only ever starts in exactly one region, so no cluster can be picked
+    # twice here. The bounds travel with the slot so a cache hit can be checked against them.
+    slots: list[tuple[str, object, Optional[tuple[float, float]]]] = []
     for region_start, region_end in regions:
         in_region = next((c for c in clusters if region_start <= c["clip_start"] < region_end), None)
         if in_region is not None:
-            slots.append(("heuristic", in_region))
+            slots.append(("heuristic", in_region, None))
         else:
-            slots.append(("filler", pick_dialogue_dense_time(subs, region_start, region_end, cfg.clip_seconds)))
+            slots.append(("filler", pick_dialogue_dense_time(subs, region_start, region_end, cfg.clip_seconds),
+                          (region_start, region_end)))
+
+    if extra_target_ranges:
+        # A slot's own chosen position (its clip's start) is what "covers" a target range, not
+        # the region boundaries -- a region can span a target range's edge without its clip
+        # actually landing inside it.
+        covered_positions = [(slot["clip_start"] if kind == "heuristic" else slot)
+                              for kind, slot, _bounds in slots]
+        for range_start, range_end in extra_target_ranges:
+            if any(range_start <= pos < range_end for pos in covered_positions):
+                continue
+            # TWO samples per uncovered block, not one: a single clip is not enough to
+            # characterize a whole block, which can span many minutes -- verified against a
+            # real file where the block's only sampled clip happened to land in one anomalous
+            # ~25s stretch (a repeated short exchange) unrepresentative of the other ~10
+            # minutes around it, and that one clip alone decided pipeline._resolve_ambiguous_
+            # sync's verdict for the entire block. Splitting the range in half and picking the
+            # dialogue-densest point in EACH half spreads the two samples apart instead of
+            # letting them cluster in the same few seconds; if the range is too short for two
+            # meaningfully distinct clips, the second is skipped (see the dedup below).
+            mid = (range_start + range_end) / 2
+            p1 = pick_dialogue_dense_time(subs, range_start, mid, cfg.clip_seconds)
+            p2 = pick_dialogue_dense_time(subs, mid, range_end, cfg.clip_seconds)
+            slots.append(("extra", p1, (range_start, range_end)))
+            if abs(p2 - p1) >= cfg.clip_seconds:
+                slots.append(("extra", p2, (range_start, range_end)))
 
     api_key = cfg.active_stt_api_key
     model, fallback = _stt_model_and_fallback(cfg)
@@ -411,26 +455,39 @@ def collect_samples(video_path: Path, subs, sub_lang: Optional[str], cfg: Config
             lang = audio_lang or cfg.require_audio_lang
         return result
 
-    for idx, (kind, slot) in enumerate(slots):
+    window_before = cfg.window_minutes * 60
+    window_after = cfg.clip_seconds + cfg.window_minutes * 60
+
+    for idx, (kind, slot, bounds) in enumerate(slots):
+        cached = None
+        cache_index = None
         if kind == "heuristic":
             cluster = slot
             start, clip_duration = cluster["clip_start"], cluster["clip_end"] - cluster["clip_start"]
         else:
             start, clip_duration = slot, cfg.clip_seconds
+            # Filler/extra slots (not heuristic -- see collect_samples' docstring) share the SAME
+            # video-level cache correctness_check uses: the audio doesn't depend on which
+            # subtitle is checking it, so an earlier check of this video (any subtitle, either
+            # code path) may already have transcribed a usable clip. A normal slot is looked up
+            # by its slot number, validated against this run's region for it (see
+            # db.get_cached_transcript's `within`); an extra slot by position alone.
+            if conn is not None and kind == "filler":
+                cache_index = idx
+                cached = db.get_cached_transcript(conn, video_path, idx, within=bounds)
+            elif conn is not None:
+                cached = db.find_cached_transcript_between(conn, video_path, bounds[0], bounds[1])
 
-        # Filler slots (not heuristic -- see collect_samples' docstring) share the SAME
-        # video-level cache correctness_check uses: the audio doesn't depend on which subtitle
-        # is checking it, so an earlier check of this video (any subtitle, either code path)
-        # may already have transcribed this region's slot.
-        cached = db.get_cached_transcript(conn, video_path, idx) if (conn is not None and kind == "filler") else None
         if cached is not None:
             start = cached["start"]
             transcript_text = cached["transcript"]
+            # A row cached before segments_json existed has segments=None -- anchors simply
+            # aren't computable from a cache hit like that, same as any other insufficient-data
+            # case (see subtitles._robust_clip_shift).
+            segments = cached.get("segments") or []
             if audio_lang is None:
                 audio_lang = cached["audio_lang"]
                 lang = audio_lang or cfg.require_audio_lang
-            window_text = subs_text_in_window(subs, start, cfg.window_minutes * 60,
-                                                cfg.clip_seconds + cfg.window_minutes * 60)
         else:
             result = _run_clip(start, clip_duration)
             if result is None:
@@ -438,28 +495,45 @@ def collect_samples(video_path: Path, subs, sub_lang: Optional[str], cfg: Config
                 continue
             if cfg.require_audio_lang and audio_lang and audio_lang != cfg.require_audio_lang:
                 return {"skipped": True, "reason": f"speech is '{audio_lang}', not '{cfg.require_audio_lang}' — skipped"}
+            segments = result.get("segments") or []
+            transcript_text = " ".join(s.get("text", "") for s in segments)
+            if conn is not None:
+                # Every fresh clip goes into the video-level cache, heuristic ones included: the
+                # audio at that position is just as valid evidence for judging OTHER sync
+                # candidates of this video (correctness.evaluate_against_cached_transcripts) as a
+                # filler clip is. Only the n normal slots are keyed by slot number; everything
+                # else by position (db.extra_slot_index), and a heuristic slot itself is still
+                # always transcribed fresh (its cluster is specific to this subtitle's timing).
+                if cache_index is None:
+                    cache_index = db.extra_slot_index(start)
+                db.save_transcript_cache(conn, video_path, cache_index, start, audio_lang, transcript_text,
+                                          segments=segments, clip_seconds=clip_duration)
 
-            if kind == "heuristic":
-                segments = result.get("segments") or []
-                transcript_text = " ".join(s.get("text", "") for s in segments)
-                window_text = _window_subtitle_text(subs, cluster["clip_start"], cluster["clip_end"])
-                for i, l1, l2, raw_start, raw_end in cluster["items"]:
-                    rel_start, rel_end = raw_start - cluster["clip_start"], raw_end - cluster["clip_start"]
-                    whisper_verdicts[i] = _judge_order(segments, rel_start, rel_end, l1, l2)
-                    tested_items.append((i, l1, l2))
-            else:
-                transcript_text = " ".join(s.get("text", "") for s in (result.get("segments") or []))
-                window_text = subs_text_in_window(subs, start, cfg.window_minutes * 60,
-                                                    cfg.clip_seconds + cfg.window_minutes * 60)
-                if conn is not None:
-                    db.save_transcript_cache(conn, video_path, idx, start, audio_lang, transcript_text)
+        if kind == "heuristic":
+            window_text = _window_subtitle_text(subs, cluster["clip_start"], cluster["clip_end"])
+            for i, l1, l2, raw_start, raw_end in cluster["items"]:
+                rel_start, rel_end = raw_start - cluster["clip_start"], raw_end - cluster["clip_start"]
+                whisper_verdicts[i] = _judge_order(segments, rel_start, rel_end, l1, l2)
+                tested_items.append((i, l1, l2))
+            anchor_window = (cluster["clip_start"], cluster["clip_end"])
+        else:
+            window_text = subs_text_in_window(subs, start, window_before, window_after)
+            anchor_window = (start - window_before, start + window_after)
+
+        # Anchors are computed whenever segments exist (CPU only, and cached with the sample so
+        # a later run never has to redo it); whether anything ACTS on them is a separate
+        # decision (Config.anchor_check_enabled, pipeline._resolve_ambiguous_sync). Never for a
+        # subtitle in another language than the audio -- see subtitles.anchors_applicable.
+        anchor_info: Optional[dict] = None
+        if segments and anchors_applicable(sub_lang, lang):
+            anchor_info = clip_anchor_shift(segments, start, subs, anchor_window[0], anchor_window[1])
 
         compare = _compare_transcript_to_window(cfg, transcript_text, window_text, sub_lang, lang,
                                                   cancel_event=cancel_event)
         if "error" in compare:
-            samples.append({"start": round(start, 1), "error": compare["error"]})
+            samples.append({"start": round(start, 1), "error": compare["error"], "anchor": anchor_info})
         else:
-            samples.append({"start": round(start, 1), **compare})
+            samples.append({"start": round(start, 1), "anchor": anchor_info, **compare})
 
     return {"skipped": False, "samples": samples, "audio_lang": audio_lang,
             "whisper_verdicts": whisper_verdicts, "tested_items": tested_items, "candidates": candidates}

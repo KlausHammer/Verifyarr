@@ -3,6 +3,9 @@ const FLAG_MAP: Record<string, { cls: string; label?: string }> = {
   SUSPECT: { cls: 'pill-bad' },
   missing: { cls: 'pill-bad' },
   skipped: { cls: 'pill-muted' },
+  // A generated subtitle deliberately never runs the Whisper correctness check (see
+  // pipeline.finish_generated) -- its own label, so it doesn't read as a check that passed.
+  generated: { cls: 'pill-info' },
   disabled: { cls: 'pill-muted' },
   running: { cls: 'pill-info' },
   completed: { cls: 'pill-ok' },

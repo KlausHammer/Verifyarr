@@ -63,6 +63,7 @@ export interface RunRow {
   files_changed: number
   files_suspect: number
   files_error: number
+  files_generated: number
   dry_run: number
   force: number
   error_message: string | null
@@ -182,6 +183,7 @@ export interface GeneralSettings {
   auto_scan_sync_enabled: boolean
   auto_scan_correctness_enabled: boolean
   auto_scan_line_order_enabled: boolean
+  auto_scan_generate_enabled: boolean
 }
 
 export interface SyncSettings {
@@ -193,6 +195,7 @@ export interface SyncSettings {
   window_minutes: number
   overlap_threshold: number
   block_spread_suspect_threshold_s: number
+  anchor_check_enabled: boolean
   line_order_enabled: boolean
   line_order_audio_confirm: boolean
   line_order_swap_threshold_pct: number
@@ -213,8 +216,43 @@ export interface CorrectnessSettings {
   openrouter_stt_model_fallback: string
   openrouter_llm_model: string
   openrouter_llm_model_fallback: string
+  use_local_whisper: boolean
+  local_whisper_binary: string
+  local_whisper_model: string
+  local_whisper_use_gpu: boolean
+  local_whisper_threads: number
   require_audio_lang: string
   auto_action: 'off' | 'quarantine' | 'blacklist' | 'remediate'
+}
+
+export interface GenerateSettings {
+  enabled: boolean
+  stt_provider: 'groq' | 'openrouter' | 'cloudflare'
+  groq_api_key: SecretField
+  groq_stt_model: string
+  groq_stt_model_fallback: string
+  openrouter_api_key: SecretField
+  openrouter_stt_model: string
+  openrouter_stt_model_fallback: string
+  cloudflare_account_id: string
+  cloudflare_api_token: SecretField
+  cloudflare_stt_model: string
+  chunk_seconds_groq: number
+  chunk_seconds_openrouter: number
+  chunk_seconds_cloudflare: number
+  audio_bitrate_kbps: number
+  assume_spoken_lang: string
+  vocabulary_hint: string
+  llm_provider: 'groq' | 'openrouter' | 'gemini'
+  groq_llm_model: string
+  groq_llm_model_fallback: string
+  openrouter_llm_model: string
+  openrouter_llm_model_fallback: string
+  gemini_api_key: SecretField
+  gemini_llm_model: string
+  gemini_llm_model_fallback: string
+  translate_batch_size: number
+  max_videos_per_day: number
 }
 
 export interface AutomationSettings {
@@ -246,6 +284,7 @@ export interface AllSettings {
   general: GeneralSettings
   sync: SyncSettings
   correctness: CorrectnessSettings
+  generate: GenerateSettings
   automation: AutomationSettings
   bazarr: BazarrSettings
   scheduling: SchedulingSettings

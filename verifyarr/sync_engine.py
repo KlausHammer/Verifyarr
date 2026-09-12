@@ -12,8 +12,11 @@ from pathlib import Path
 from typing import Optional
 
 from verifyarr import log
+from verifyarr.procprio import wrap_low_priority
 
 SHIFT_BLOCK_RE = re.compile(r"shifted block of \d+ subtitles with length [\d:.]+ by (-?)([\d:.]+)")
+# Same line, but also capturing the subtitle COUNT -- see parse_alass_shift_blocks_with_counts.
+SHIFT_BLOCK_COUNT_RE = re.compile(r"shifted block of (\d+) subtitles with length [\d:.]+ by (-?)([\d:.]+)")
 
 
 def resolve_alass_bin() -> Optional[str]:
@@ -35,7 +38,7 @@ def extract_audio_wav(video_path: Path, out_path: Path, timeout: int = 180) -> b
     cmd = ["ffmpeg", "-y", "-i", str(video_path), "-vn", "-ac", "1", "-ar", "16000",
            "-f", "wav", str(out_path)]
     try:
-        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+        proc = subprocess.run(wrap_low_priority(cmd), capture_output=True, text=True, timeout=timeout)
     except (subprocess.TimeoutExpired, OSError):
         return False
     return proc.returncode == 0 and out_path.exists() and out_path.stat().st_size > 0
@@ -58,23 +61,43 @@ def parse_alass_shift_blocks(stderr_text: str) -> list[float]:
     return shifts
 
 
+def parse_alass_shift_blocks_with_counts(stderr_text: str) -> list[tuple[int, float]]:
+    """Same as parse_alass_shift_blocks, but also keeps each block's subtitle COUNT --
+    (count, shift_seconds) per block, in the order alass reports them (chronological, matching
+    the original subtitle's own event order). Used to reconstruct each block's actual TIME
+    RANGE by walking that many events at a time through the original subtitle (see
+    pipeline.sync_pair's block-aware extra sampling) -- alass's own stderr never states a
+    block's absolute start/end directly, only how many consecutive subtitles it covers."""
+    blocks = []
+    for count, sign, magnitude in SHIFT_BLOCK_COUNT_RE.findall(stderr_text or ""):
+        h, m, s = magnitude.split(":")
+        seconds = int(h) * 3600 + int(m) * 60 + float(s)
+        blocks.append((int(count), -seconds if sign == "-" else seconds))
+    return blocks
+
+
 def run_alass(alass_bin: str, reference_path: Path, subtitle_path: Path, out_path: Path,
               split_penalty: int, timeout: int = 900, no_splits: bool = False):
     """reference_path is normally video_path, but can be a pre-extracted WAV (see
     extract_audio_wav) — alass-cli treats both the same.
 
-    no_splits: alass's own `--no-splits` mode -- bypasses its split-detection algorithm
-    entirely and fits a single constant offset for the whole file (split_penalty is ignored;
-    alass rejects the two together). Used as a second opinion when the default (possibly
-    multi-block) result looks structurally suspicious (see pipeline.sync_pair) -- a confused
-    multi-block fit and a clean single-offset fit disagreeing is itself informative, and a
-    single-offset fit is immune to the "overfits mismatched content in pieces" failure mode
-    multi-block splitting has (see parse_alass_shift_blocks)."""
+    no_splits: alass's own `--no-split` mode (real flag confirmed against `alass-cli --help` --
+    NOT the plural "--no-splits" this used to say, which alass-cli rejects outright as an
+    unknown argument, exit code 1 -- see run_alass's own error handling: that failure was never
+    loud, it just silently fell through to the split-penalty fallback path every single time,
+    which is how this got caught: a real test against Community S02E21 showed the "no-splits
+    primary" path never actually engaging). Bypasses split-detection entirely and fits a single
+    constant offset for the whole file (split_penalty is ignored; alass rejects the two
+    together). Used as a second opinion when the default (possibly multi-block) result looks
+    structurally suspicious (see pipeline.sync_pair) -- a confused multi-block fit and a clean
+    single-offset fit disagreeing is itself informative, and a single-offset fit is immune to
+    the "overfits mismatched content in pieces" failure mode multi-block splitting has (see
+    parse_alass_shift_blocks)."""
     cmd = [alass_bin, str(reference_path), str(subtitle_path), str(out_path)]
-    cmd += ["--no-splits"] if no_splits else ["--split-penalty", str(split_penalty)]
+    cmd += ["--no-split"] if no_splits else ["--split-penalty", str(split_penalty)]
     log.debug("alass: %s", " ".join(cmd))
     try:
-        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+        proc = subprocess.run(wrap_low_priority(cmd), capture_output=True, text=True, timeout=timeout)
     except subprocess.TimeoutExpired:
         return False, "timeout", ""
     except OSError as e:

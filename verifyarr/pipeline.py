@@ -16,10 +16,18 @@ from typing import Optional
 
 from verifyarr import log
 from verifyarr.settings import Config
-from verifyarr.subtitles import load_subs, max_shift_stats
-from verifyarr.sync_engine import resolve_alass_bin, resolve_alass_reference, run_alass, parse_alass_shift_blocks
+from verifyarr.subtitles import (
+    load_subs, max_shift_stats, summarize_anchor_samples, ANCHOR_PREFER_MARGIN_S,
+    ANCHOR_SUSPECT_THRESHOLD_S,
+)
+from verifyarr.sync_engine import (
+    resolve_alass_bin, resolve_alass_reference, run_alass, parse_alass_shift_blocks,
+    parse_alass_shift_blocks_with_counts,
+)
 from verifyarr.line_order import heuristic_candidates, collect_samples, finalize_line_order, cache_key_for, apply_line_swap
-from verifyarr.correctness import score_against_cached_transcripts
+from verifyarr.correctness import (
+    evaluate_against_cached_transcripts, significant_anchor_residuals, JobCancelled,
+)
 from verifyarr.fileops import backup_subtitle, quarantine_subtitle
 from verifyarr.bazarr import (
     bazarr_map_path, bazarr_blacklist, remediate_suspect, remediate_without_history,
@@ -147,14 +155,150 @@ def process_pair(video_path: Path, subtitle_path: Path, lang: Optional[str],
                                    run_id=run_id, cancel_event=cancel_event)
 
 
+# How far alass may move a freshly GENERATED subtitle before that is worth flagging. Its cues
+# were timed from this very video's audio, so the honest expectation is a shift near zero; a
+# large one means the transcription's own timeline was wrong (badly chunked audio, a mis-detected
+# spoken language), not that the subtitle was out of sync. Deliberately loose -- Whisper's segment
+# timestamps are only approximate, and alass legitimately takes up a second or two of slack.
+GENERATED_SYNC_WARN_SECONDS = 5.0
+
+
+def finish_generated(video_path: Path, subtitle_path: Path, cfg: Config, conn: sqlite3.Connection,
+                      row: dict, run_id: Optional[int] = None) -> dict:
+    """Persists the result of sync_pair for a subtitle generate.generate_one just wrote --
+    WITHOUT running the ordinary Whisper correctness check (correctness_and_finish). Skipping it
+    is deliberate, not a shortcut: the correctness check exists to catch "does this subtitle
+    actually match what's said in THIS video" -- a failure mode that can't happen for a subtitle
+    built directly from that same video's own Whisper transcript, translated or not (translation
+    only changes the wording, never which video/timestamps the text came from). Running it anyway
+    would just spend real API quota re-confirming something already guaranteed by construction.
+
+    Sync (alass) still runs, via the caller's own sync_pair call before this -- cheap (local,
+    no API cost) and still a genuine check of OUR OWN output (a timestamp/format bug in
+    build_srt_from_segments/write_new_subtitle), unlike the correctness check's redundant
+    re-verification of content. See jobs._run_generate_single, the only caller.
+
+    Note what skipping the check does NOT cover, since "guaranteed by construction" is only true
+    of the content: nothing here can see a Whisper hallucination, a mistimed chunk, or a failed
+    translation. Those are caught earlier instead, where there is actually evidence to catch them
+    with -- generate._low_confidence_reason drops segments Whisper itself was unsure of, and
+    generate.translate_segments refuses to write a partly-translated file at all. The alass shift
+    below is the one signal available at THIS stage, and a big one is now surfaced rather than
+    quietly applied: a subtitle timed from this video's own audio should already line up with it,
+    so alass disagreeing by a lot means one of the two is wrong."""
+    apply_pending_sync(subtitle_path, cfg, row, reason="no correctness check runs for a generated subtitle")
+    # Not "-" (never checked) and not None: its own flag, so Files/Stats can tell a generated
+    # subtitle apart from one whose check merely hasn't run yet, and so nothing reads the absence
+    # of a SUSPECT verdict here as a passed check.
+    row["correctness_flag"] = "generated"
+    note = (row.get("note") or "") + (
+        " Correctness check skipped -- generated directly from this video's own Whisper "
+        "transcription.")
+    shift = row.get("sync_max_shift_s")
+    if shift is not None and abs(shift) > GENERATED_SYNC_WARN_SECONDS:
+        note += (f" NOTE: alass moved this generated subtitle by {shift:.1f}s. Its timings came "
+                 "from this video's own audio, so a shift that large points at a transcription "
+                 "problem (badly chunked audio, or a mis-detected spoken language) rather than at "
+                 "a subtitle that was merely out of sync -- worth checking by hand.")
+        log.warning("Generated subtitle %s needed a %.1fs alass shift — that should be near zero "
+                    "for a subtitle timed from this video's own audio; check it manually.",
+                    subtitle_path.name, shift)
+    row["note"] = note.strip()
+    update_state(conn, video_path, subtitle_path, row, run_id=run_id, media_root=cfg.media_root_for(subtitle_path))
+    # The 'missing' placeholder for this (video, lang) is now satisfied -- without this it lives
+    # on next to the real row forever (different unique index, see db.mark_missing/clear_missing),
+    # keeping a "Generate" button on the Files page for a video that just got exactly what it
+    # asked for.
+    db.clear_missing(conn, video_path, row.get("lang"))
+    return row
+
+
+def _block_time_ranges(subs, blocks_detailed: list[tuple[int, float]]) -> list[tuple[float, float]]:
+    """(start_sec, end_sec) per alass block, IN THE AUDIO's OWN TIMELINE -- reconstructed from
+    `subs`' (the ORIGINAL subtitle's) events plus each block's own shift. alass's stderr only
+    ever says how many CONSECUTIVE events a block covers and by how much it moved them (see
+    sync_engine.parse_alass_shift_blocks_with_counts), never an absolute start/end. Walks the
+    events in chronological order (sorted defensively -- a well-formed SRT is already in order,
+    but nothing here should silently mis-map blocks if one isn't) `count` at a time, then
+    applies the block's shift so the range says where in the AUDIO that block's dialogue is --
+    which is what a targeted Whisper sample has to be extracted from (see collect_samples'
+    extra_target_ranges), regardless of which candidate's cue timing is used to pick the
+    dialogue-dense point inside it."""
+    events = sorted(subs, key=lambda e: e.start)
+    ranges = []
+    idx = 0
+    for count, shift in blocks_detailed:
+        block_events = events[idx:idx + count]
+        idx += count
+        if block_events:
+            ranges.append((max(0.0, min(e.start for e in block_events) / 1000.0 + shift),
+                            max(e.end for e in block_events) / 1000.0 + shift))
+    return ranges
+
+
+def _write_fix(subtitle_path: Path, cfg: Config, media_root: Path, source) -> None:
+    """Puts a sync result on disk, backing the original up first when configured. `source` is
+    either alass's own output file (a temp Path, copied verbatim) or an already-parsed
+    pysubs2 file (saved via pysubs2)."""
+    if cfg.backup_originals:
+        backup_subtitle(subtitle_path, cfg.backup_dir, media_root)
+    if isinstance(source, Path):
+        shutil.copyfile(source, subtitle_path)
+    else:
+        source.save(str(subtitle_path))
+
+
+def apply_pending_sync(subtitle_path: Path, cfg: Config, row: dict, reason: str):
+    """Fallback for a row whose sync_pair DEFERRED its fix (row["_ambiguous_sync"], see
+    sync_pair) but whose caller then turned out unable to run the Whisper-based comparison that
+    was supposed to settle it (_resolve_ambiguous_sync) -- correctness check off/unavailable,
+    ffprobe failing, the audio not in the required language, the job cancelled, ... Applies
+    the SAFE default (alass's single-offset fit, the same thing sync_pair would have written
+    outright had there been nothing to compare) so the file never stays unsynced on disk with
+    a "[pending verification]" status nobody will come back to, and so the internal pysubs2
+    objects never leak into what gets persisted/serialized (reports.write_report). No-op when
+    nothing is pending. Returns the subs written, or None."""
+    ambiguous = row.pop("_ambiguous_sync", None)
+    if ambiguous is None:
+        return None
+    new_subs = ambiguous["new_subs"]
+    _write_fix(subtitle_path, cfg, cfg.media_root_for(subtitle_path), new_subs)
+    max_shift_new = ambiguous["max_shift_new"]
+    row["sync_status"] = f"fixed (Δ{max_shift_new:.1f}s)"
+    row["sync_max_shift_s"] = round(max_shift_new, 2) if max_shift_new is not None else None
+    row["sync_split_blocks"] = 1
+    row["sync_block_spread_s"] = None
+    spread = ambiguous.get("blocks_spread")
+    row["note"] += (f" alass also found a {ambiguous.get('blocks_split_count') or '?'}-block fit"
+                    + (f" (spread {spread:.1f}s)" if spread is not None else "")
+                    + f", but it couldn't be verified against the audio ({reason}) — applied the "
+                    f"single-offset fit unverified.")
+    return new_subs
+
+
 def sync_pair(video_path: Path, subtitle_path: Path, lang: Optional[str], cfg: Config,
               audio_cache: Optional[dict] = None, audio_cache_dir: Optional[Path] = None,
-              audio_cache_lock=None) -> tuple[dict, object]:
+              audio_cache_lock=None, defer_verification: bool = True) -> tuple[dict, object]:
     """Sync stage only (alass) — the first half of what process_pair used to do in one piece.
     No `conn`/DB access at all, which is exactly what makes it safe to run from a worker thread
     (see jobs._run_sweep's parallel sync phase — alass itself is single-threaded per invocation,
     verified against its own Cargo.toml, so running several at once is what actually uses more
     than one of the NAS's cores). correctness_and_finish below picks up from here, sequentially.
+
+    alass runs in its normal split-penalty mode first (the only mode there was before the
+    verified-second-opinion feature). When that comes back as ONE block, it already IS a single
+    global offset -- nothing to second-guess, applied directly. Only a MULTI-block result is
+    structurally suspicious (alass can fit mismatched content in pieces just as happily as it
+    fits real cuts -- see sync_engine.parse_alass_shift_blocks), and only then is the second,
+    --no-split run made: a single-offset fit that can't overfit in pieces. Both are then held
+    back from disk (row["_ambiguous_sync"]) for correctness_and_finish to compare against the
+    original on real audio content (_resolve_ambiguous_sync) before anything is written --
+    reusing the Whisper samples the correctness check pays for anyway. That deferral only
+    happens when the comparison can actually run (correctness check on, API key present, not a
+    dry-run, and defer_verification -- a caller that will never run correctness_and_finish
+    passes False, e.g. jobs._run_generate_single); otherwise the multi-block fit is applied
+    directly, exactly as before the feature existed, and correctness_and_finish's block-spread
+    safety net still watches it.
 
     Returns (row, current_subs). current_subs is None only when the ORIGINAL subtitle file
     itself couldn't even be parsed — there's nothing for correctness_and_finish to check either
@@ -188,206 +332,360 @@ def sync_pair(video_path: Path, subtitle_path: Path, lang: Optional[str], cfg: C
         # auto-triggered run (the Bazarr wanted-subtitles poll) by auto_scan_sync_enabled — see
         # jobs._effective_cfg.
         row["sync_status"] = "skipped (disabled in settings)"
-    elif not alass_bin:
+        return row, current_subs
+    if not alass_bin:
         row["sync_status"] = "alass not found"
-    else:
-        with tempfile.TemporaryDirectory() as td:
-            reference_path = resolve_alass_reference(video_path, audio_cache, audio_cache_dir, audio_cache_lock)
-            tmp_primary = Path(td) / f"synced{subtitle_path.suffix}"
-            # Try alass's simplest, safest mode FIRST: a single global offset (--no-splits)
-            # can't overfit mismatched content into pieces the way block-splitting can (see
-            # run_alass's no_splits docstring) -- block-splitting is only worth trying as a
-            # SECOND opinion below, verified against real audio content before it's ever
-            # trusted, not applied blindly just because alass was willing to compute it.
-            ok, msg, stderr_tail = run_alass(alass_bin, reference_path, subtitle_path, tmp_primary,
-                                              cfg.split_penalty, no_splits=True)
-            used_no_splits_primary = True
-            if not ok:
-                # --no-splits itself failed (rare) -- fall back to the ordinary split-penalty
-                # call as the primary attempt, same as the only option before this existed.
-                ok, msg, stderr_tail = run_alass(alass_bin, reference_path, subtitle_path,
-                                                  tmp_primary, cfg.split_penalty)
-                used_no_splits_primary = False
-            if not ok:
-                row["sync_status"] = f"error: {msg}"
-                row["note"] = stderr_tail[:300]
-            else:
+        return row, current_subs
+
+    with tempfile.TemporaryDirectory() as td:
+        reference_path = resolve_alass_reference(video_path, audio_cache, audio_cache_dir, audio_cache_lock)
+        tmp_primary = Path(td) / f"synced{subtitle_path.suffix}"
+        ok, msg, stderr_tail = run_alass(alass_bin, reference_path, subtitle_path, tmp_primary, cfg.split_penalty)
+        if not ok:
+            row["sync_status"] = f"error: {msg}"
+            row["note"] = stderr_tail[:300]
+            return row, current_subs
+        try:
+            primary_subs = load_subs(tmp_primary)
+        except Exception as e:
+            row["sync_status"] = "could not parse alass output"
+            row["note"] = str(e)
+            return row, current_subs
+
+        max_shift, _avg_shift, old_n, new_n = max_shift_stats(old_subs, primary_subs)
+        row["sync_max_shift_s"] = round(max_shift, 2) if max_shift is not None else None
+        structural = bool(old_n) and abs(old_n - new_n) / old_n > 0.1
+        row["structural_change"] = structural
+        structural_note = " line count changed significantly — check the file manually." if structural else ""
+
+        shift_blocks = parse_alass_shift_blocks(stderr_tail)
+        row["sync_split_blocks"] = len(shift_blocks)
+        spread = None
+        blocks_note = ""
+        if len(shift_blocks) > 1:
+            spread = round(max(shift_blocks) - min(shift_blocks), 2)
+            row["sync_block_spread_s"] = spread
+            blocks_note = (f" alass used {len(shift_blocks)} sync blocks with shifts "
+                           f"{[round(s, 1) for s in shift_blocks]}s (spread {spread:.1f}s) — can be caused "
+                           f"by real cuts in the episode, but can also be a sign of a wrong subtitle, "
+                           f"check manually.")
+
+        if max_shift is None or max_shift < cfg.min_change_seconds:
+            row["sync_status"] = "already in sync"
+            row["note"] += blocks_note
+            return row, current_subs
+
+        # Use the corrected timing for the correctness check either way — even during dry-run,
+        # where nothing is written to disk yet, but the report should still reflect what WOULD
+        # happen. Otherwise Whisper audio gets compared against the old, wrong timing, producing
+        # false SUSPECT flags on exactly the files with the biggest sync error.
+        current_subs = primary_subs
+        if cfg.dry_run:
+            row["sync_status"] = f"would fix (Δ{max_shift:.1f}s) [dry-run]"
+            row["note"] += blocks_note + structural_note
+            return row, current_subs
+
+        can_verify = (len(shift_blocks) > 1 and defer_verification
+                      and cfg.enable_correctness_check and cfg.has_stt_configured)
+        if can_verify:
+            tmp_single = Path(td) / f"synced_single{subtitle_path.suffix}"
+            ok2, _msg2, _stderr2 = run_alass(alass_bin, reference_path, subtitle_path, tmp_single,
+                                             cfg.split_penalty, no_splits=True)
+            single_subs = None
+            if ok2:
                 try:
-                    primary_subs = load_subs(tmp_primary)
-                except Exception as e:
-                    row["sync_status"] = "could not parse alass output"
-                    row["note"] = str(e)
-                else:
-                    max_shift, _avg_shift, old_n, new_n = max_shift_stats(old_subs, primary_subs)
-                    row["sync_max_shift_s"] = round(max_shift, 2) if max_shift is not None else None
-                    structural = bool(old_n) and abs(old_n - new_n) / old_n > 0.1
-                    row["structural_change"] = structural
+                    single_subs = load_subs(tmp_single)
+                except Exception:
+                    single_subs = None
+            if single_subs is not None:
+                max_shift_single, *_ = max_shift_stats(old_subs, single_subs)
+                # Held back from disk: correctness_and_finish decides which of {original, this
+                # single-offset fit, the multi-block fit} actually scores best against the real
+                # audio (see _resolve_ambiguous_sync) before anything gets written. The
+                # single-offset fit is the candidate the correctness check itself runs on (the
+                # safe default); the block ranges let it aim extra samples at every block.
+                row["_ambiguous_sync"] = {
+                    "old_subs": old_subs, "new_subs": single_subs, "max_shift_new": max_shift_single,
+                    "blocks_subs": primary_subs, "max_shift_blocks": max_shift,
+                    "blocks_split_count": len(shift_blocks), "blocks_spread": spread,
+                    "blocks_time_ranges": _block_time_ranges(
+                        old_subs, parse_alass_shift_blocks_with_counts(stderr_tail)),
+                    "structural": structural,
+                }
+                current_subs = single_subs
+                shift_txt = f"{max_shift_single:.1f}" if max_shift_single is not None else "?"
+                row["sync_status"] = f"fixed (Δ{shift_txt}s) [pending verification]"
+                row["sync_max_shift_s"] = round(max_shift_single, 2) if max_shift_single is not None else None
+                row["sync_split_blocks"] = 1
+                row["sync_block_spread_s"] = None
+                return row, current_subs
+            blocks_note += " (alass's --no-split alternative failed, so this multi-block fit was applied unverified.)"
 
-                    if used_no_splits_primary:
-                        row["sync_split_blocks"] = 1
-                    else:
-                        shift_blocks = parse_alass_shift_blocks(stderr_tail)
-                        row["sync_split_blocks"] = len(shift_blocks)
-                        if len(shift_blocks) > 1:
-                            spread = max(shift_blocks) - min(shift_blocks)
-                            row["sync_block_spread_s"] = round(spread, 2)
-                            row["note"] += (f" alass used {len(shift_blocks)} sync blocks with shifts "
-                                             f"{[round(s, 1) for s in shift_blocks]}s (spread "
-                                             f"{spread:.1f}s) — can be caused by real cuts in the episode, "
-                                             f"but can also be a sign of a wrong subtitle, check manually.")
-
-                    if max_shift is not None and max_shift >= cfg.min_change_seconds:
-                        # Use the corrected timing for the correctness check either way — even
-                        # during dry-run, where nothing is written to disk yet, but the report
-                        # should still reflect what WOULD happen. Otherwise Whisper audio gets
-                        # compared against the old, wrong timing, producing false SUSPECT flags
-                        # on exactly the files with the biggest sync error.
-                        current_subs = primary_subs
-                        if cfg.dry_run:
-                            row["sync_status"] = f"would fix (Δ{max_shift:.1f}s) [dry-run]"
-                            if structural:
-                                row["note"] += " line count changed significantly — check the file manually."
-                        elif used_no_splits_primary:
-                            # Get a second opinion from alass's normal (possibly multi-block)
-                            # mode too, and leave the ORIGINAL file untouched on disk for now --
-                            # correctness_and_finish decides which of {original, this
-                            # single-offset fix, the multi-block fix} actually scores best
-                            # against the real audio (reusing the SAME Whisper samples the
-                            # correctness check already pays for, so this costs no extra API
-                            # calls) before anything gets written.
-                            blocks_subs = None
-                            max_shift_blocks = None
-                            blocks_split_count = None
-                            blocks_spread = None
-                            tmp_blocks = Path(td) / f"synced_blocks{subtitle_path.suffix}"
-                            ok2, _msg2, stderr2 = run_alass(alass_bin, reference_path, subtitle_path,
-                                                             tmp_blocks, cfg.split_penalty)
-                            if ok2:
-                                try:
-                                    blocks_subs = load_subs(tmp_blocks)
-                                except Exception:
-                                    blocks_subs = None
-                                else:
-                                    max_shift_blocks, *_ = max_shift_stats(old_subs, blocks_subs)
-                                    shift_blocks2 = parse_alass_shift_blocks(stderr2)
-                                    blocks_split_count = len(shift_blocks2)
-                                    if len(shift_blocks2) > 1:
-                                        blocks_spread = round(max(shift_blocks2) - min(shift_blocks2), 2)
-                            row["_ambiguous_sync"] = {
-                                "old_subs": old_subs, "new_subs": primary_subs, "max_shift_new": max_shift,
-                                "blocks_subs": blocks_subs, "max_shift_blocks": max_shift_blocks,
-                                "blocks_split_count": blocks_split_count, "blocks_spread": blocks_spread,
-                                "structural": structural,
-                            }
-                            row["sync_status"] = f"fixed (Δ{max_shift:.1f}s) [pending verification]"
-                        else:
-                            # --no-splits itself failed above, so this IS the split-penalty
-                            # fallback -- nothing to compare it against, just apply it the way
-                            # every fix worked before this feature existed.
-                            if cfg.backup_originals:
-                                backup_subtitle(subtitle_path, cfg.backup_dir, media_root)
-                            shutil.copyfile(tmp_primary, subtitle_path)
-                            row["sync_status"] = f"fixed (Δ{max_shift:.1f}s)"
-                            if structural:
-                                row["note"] += " line count changed significantly — check the file manually."
-                    else:
-                        row["sync_status"] = "already in sync"
-
+        _write_fix(subtitle_path, cfg, media_root, tmp_primary)
+        row["sync_status"] = f"fixed (Δ{max_shift:.1f}s)"
+        row["note"] += blocks_note + structural_note
     return row, current_subs
+
+
+# Tie-break order between sync candidates in _resolve_ambiguous_sync when the evidence can't
+# separate them: alass's single-offset fit (can't overfit in pieces) over its multi-block fit
+# (alass's evidence that a shift is needed, but structurally the riskier one) over leaving the
+# original alone (alass measured a real offset, so "untouched" is not the neutral choice).
+_CANDIDATE_PREFERENCE = {"new": 0, "blocks": 1, "old": 2}
+
+# How close two "ok" candidates' CONTENT scores (avg_score -- fraction of matching words) have
+# to be before timing/preference gets to break the tie, once content has actually been scored
+# for more than one candidate. A real gap this size or bigger is a genuine "one of these
+# matches the episode's actual dialogue much better" signal that anchors must not overrule --
+# verified against a real file where the single-offset fit scored 0.43 against the multi-block
+# fit's 0.90 (more than half its own sampled text failed to match anything) and STILL won,
+# because the old code picked among "ok" candidates using the same anchor-only pick() the free
+# fast-path gate uses, silently discarding the content scores it had just paid API calls for.
+CONTENT_SCORE_TIE_MARGIN = 0.1
 
 
 def _resolve_ambiguous_sync(conn: sqlite3.Connection, video_path: Path, subtitle_path: Path,
                              lang: Optional[str], cfg: Config, media_root: Path,
                              ambiguous: dict, result: dict, row: dict, cancel_event=None) -> tuple:
-    """Decides which of {the ORIGINAL subtitle, alass's --no-splits single-global-offset fix
-    (the PRIMARY attempt — see sync_pair), a normal (possibly multi-block) split-penalty retry}
-    to actually keep. Scores the alternatives against the SAME cached Whisper transcripts the
-    primary candidate's own correctness check (`result`, computed by the caller before this
-    runs) just paid for — score_against_cached_transcripts makes this free (no extra API calls)
-    for whichever candidates actually have cached samples to reuse.
+    """Decides which of {alass's --no-split single-global-offset fit ("new", the candidate the
+    correctness check `result` was run on), its multi-block split-penalty fit ("blocks"), the
+    ORIGINAL subtitle ("old")} to actually keep -- see sync_pair for when this arises. Every
+    candidate is judged on the SAME cached Whisper samples (correctness.evaluate_against_cached_
+    transcripts -- the ones the correctness check just paid for, plus any older ones for this
+    video), so no new Whisper calls, and no candidate gets an easier or harder sample set than
+    another.
 
-    Preference order: the ORIGINAL wins outright if it scores "ok" on its own — stability
-    first, don't touch a file that wasn't actually broken. Otherwise, whichever of {new
-    (no-splits), blocks (multi-block retry)} scores best wins (preferring one that clears "ok"
-    over one that doesn't). If NONE of the three clear "ok", keeps whichever scored best anyway
-    (best effort, still correctly flagged SUSPECT by the caller either way) rather than leave an
-    even-worse fix in place.
+    Two questions, answered by two different kinds of evidence -- keeping them apart is the
+    whole point:
+
+    1. TIMING -- which candidate's cues actually sit where the speech is? Only the per-line
+       anchors (subtitles.clip_anchor_shift) can answer this: the window-overlap score compares
+       +/-window_minutes of text around each clip and is therefore blind to any shift smaller
+       than that window (measured: identical scores for a 0.5s and a 25s offset, and a 51s
+       offset still passed the majority vote). A challenger only wins on timing if its mean
+       |residual| on the clips BOTH it and the default have a confident anchor in is smaller by
+       more than subtitles.ANCHOR_PREFER_MARGIN_S (anchor noise floor); otherwise the default
+       order _CANDIDATE_PREFERENCE stands.
+
+       The default (alass's single-offset fit) additionally has to POSITIVELY confirm itself
+       (_confirmed_in_every_block) before it gets to skip content-scoring the alternatives --
+       "no rival clearly beat it" is not the same claim as "it's actually right everywhere",
+       and with only a handful of samples spread across a whole episode, a multi-block file can
+       easily have a block where NEITHER candidate has any usable anchor at all, leaving the
+       comparison silently blind to it. Verified against a real 21-minute episode where alass
+       correctly split-fit two ~10-11 minute blocks: only 2 of 3 sampled clips produced any
+       anchor, one per block, and the single-offset fit's own anchor in the first block already
+       showed a real (if small) residual -- clearly_better let it through anyway because
+       nothing else in that block had an anchor to outscore it with, even though the
+       single-offset fit was actually wrong across nearly all ten minutes of that block. No
+       anchors at all (subtitle in another language than the audio, no cached segments) = no
+       timing evidence = trust alass's single-offset fit, exactly what every fix did before
+       this comparison existed.
+    2. CONTENT -- is this even the right episode's text? The ordinary majority-vote overlap
+       score. Costs LLM translation calls for a foreign-language subtitle, so it is only
+       computed for the alternatives when step 1 didn't already confirm the default with a
+       content-"ok" result of its own. Candidates that fail it are only ever kept when NONE
+       passes (best score wins, and the caller flags the file SUSPECT either way).
 
     Only called when cfg.dry_run is False (see sync_pair) -- no dry-run branching needed here.
 
     Returns (current_subs, result, swap_severity, winner) — result/swap_severity are shaped
     like finalize_line_order's own return so the rest of correctness_and_finish can keep
     treating them the same regardless of which candidate won. old/blocks get a SYNTHESIZED
-    result with no line-order data (swap_severity=None, no line_issues/line_flagged) — that's a
-    separate, heavier analysis pass this cheap comparison doesn't redo; it'll run properly next
-    time this file's content actually differs from what's cached."""
+    result (the cached-sample evaluation, anchors included, so the caller's anchor escalation
+    applies to them just like to "new") with no line-order data (swap_severity=None, no
+    line_issues/line_flagged) — that's a separate, heavier analysis pass this cheap comparison
+    doesn't redo; it'll run properly next time this file's content actually differs from what's
+    cached."""
     old_subs, new_subs = ambiguous["old_subs"], ambiguous["new_subs"]
     blocks_subs = ambiguous.get("blocks_subs")
     transcript_lang = result.get("audio_lang")
+    subs_by_key = {"new": new_subs, "blocks": blocks_subs, "old": old_subs}
+    subs_by_key = {k: v for k, v in subs_by_key.items() if v is not None}
 
-    scored = {"new": {"avg_score": result.get("avg_score"), "flag": result.get("flag")}}
-    old_score = score_against_cached_transcripts(conn, video_path, old_subs, lang, transcript_lang, cfg,
-                                                   cancel_event=cancel_event)
-    if old_score is not None:
-        scored["old"] = old_score
-    if blocks_subs is not None:
-        b_score = score_against_cached_transcripts(conn, video_path, blocks_subs, lang, transcript_lang, cfg,
-                                                     cancel_event=cancel_event)
-        if b_score is not None:
-            scored["blocks"] = b_score
+    # 1. Timing evidence -- free.
+    timing: dict[str, Optional[dict]] = {}
+    for key, subs in subs_by_key.items():
+        ev = evaluate_against_cached_transcripts(conn, video_path, subs, lang, transcript_lang, cfg, score=False)
+        timing[key] = summarize_anchor_samples(ev["samples"]) if ev else None
 
-    if "old" in scored and scored["old"]["flag"] == "ok":
-        winner = "old"
+    def residuals_on_common(a: str, b: str) -> Optional[tuple[float, float]]:
+        ta, tb = timing.get(a), timing.get(b)
+        if not ta or not tb:
+            return None
+        common = set(ta["regions"]) & set(tb["regions"])
+        if not common:
+            return None
+        return (sum(abs(ta["regions"][s]) for s in common) / len(common),
+                sum(abs(tb["regions"][s]) for s in common) / len(common))
+
+    def clearly_better(a: str, b: str) -> bool:
+        pair = residuals_on_common(a, b)
+        return pair is not None and pair[0] + ANCHOR_PREFER_MARGIN_S < pair[1]
+
+    def pick(pool) -> str:
+        ranked = sorted(pool, key=lambda k: _CANDIDATE_PREFERENCE[k])
+        best = ranked[0]
+        for k in ranked[1:]:
+            if clearly_better(k, best):
+                best = k
+        return best
+
+    def _confirmed_in_every_block(key: str) -> bool:
+        """True only when `key` has a confident anchor, with residual inside the noise margin,
+        somewhere in EVERY block alass's multi-block fit found -- the bar for trusting a
+        candidate's OWN timing enough to skip content-scoring the alternatives entirely (the
+        cheap fast path below). "Not proven worse than another candidate on whatever few clips
+        happened to land" (clearly_better/pick above) is a real but WEAKER claim than "proven
+        right, here, in every block" -- measured on a real file where alass split-fit two
+        blocks (~10min / ~11min) and only 2 of 3 sampled clips produced any anchor at all, one
+        per block; the single-offset fit's own anchor in the SECOND block was fine, but its
+        anchor in the FIRST was already 4.3s off (a real residual, just under the file's own
+        1s-margin comparison to an even-worse rival) -- clearly_better alone let it through
+        because nothing else in that block had a usable anchor to outscore it with, even though
+        the single-offset fit was actually wrong across nearly all of that block's ten minutes.
+        A candidate that lacks anchor evidence in some block, or whose anchor there shows a
+        real residual, has not actually demonstrated it gets that block right. Only meaningful
+        when anchors are structurally possible at all (see anchors_applicable) -- a subtitle in
+        another language than the audio has NO anchors for any candidate, which must stay
+        "no timing evidence, trust the default" (see the caller), never "nothing confirmed it,
+        so distrust the default": the latter would force every foreign-language ambiguous file
+        into paying for content-scoring/translation of every candidate, for nothing -- anchors
+        were never going to be available to confirm ANY candidate there."""
+        block_ranges = ambiguous.get("blocks_time_ranges") or []
+        t = timing.get(key)
+        if not block_ranges or not t:
+            return False
+        for lo, hi in block_ranges:
+            if not any(lo <= pos < hi and abs(shift) <= ANCHOR_PREFER_MARGIN_S
+                       for pos, shift in t["regions"].items()):
+                return False
+        return True
+
+    # Anchors structurally exist at all for this subtitle only if at least one candidate has
+    # SOME anchored clip -- if none do (wrong language, or no cached segments for any sample),
+    # _confirmed_in_every_block can never be satisfied by ANY candidate, and requiring it would
+    # just force content-scoring every time for no reason. In that case fall back to the plain
+    # "nothing disproved the default" gate, same as before per-block confirmation existed.
+    any_anchor_evidence = any(timing.get(k) for k in subs_by_key)
+
+    def _old_wins_fairly() -> bool:
+        """'old' (leave the file completely untouched) may only win when either no timing
+        evidence exists at all (nothing to contradict it) or it clears the SAME per-block bar
+        'new' needs to win the free fast path (_confirmed_in_every_block). 'old' is the
+        highest-stakes of the three possible winners: it means a file alass itself measured a
+        real, substantial multi-block spread on gets reported "already in sync", and nothing
+        checks it again until its content changes. Without this guard, 'old' can win on 1-2
+        lucky clips landing in whichever part of the file already happened to be fine --
+        reproduced on a real 21-minute episode with a genuine 5-block, ~43s-spread drift: 'old'
+        had confident anchors at only 2 clips, both inside its one unbroken stretch, and could
+        never show a BAD anchor in the ~9 genuinely broken minutes, because a wrong candidate
+        doesn't get a bad anchor in a region it's wrong about -- it gets NO anchor there at all
+        (see _confirmed_in_every_block's own docstring) -- so those minutes contributed zero
+        evidence against it, and it won a comparison that never actually looked at them."""
+        return (not any_anchor_evidence) or _confirmed_in_every_block("old")
+
+    def _reject_unproven_old(winner: str, pool) -> str:
+        """Applied after every winner determination in the content-evidence branch below:
+        downgrades an 'old' win that fails _old_wins_fairly() to whichever OTHER candidate in
+        `pool` pick() itself would have chosen -- NOT simply the best content score among the
+        rivals. Those are different questions: pick() already correctly weighed anchor timing
+        evidence between 'new' and 'blocks' before 'old' ever entered the comparison (in the
+        same real case that motivated this function, pick() had already correctly ranked 'new'
+        over 'blocks' on their own anchor residuals -- 7.1s vs 12.5s -- before 'old' briefly,
+        wrongly, beat 'new' on 2 unrepresentative lucky clips and got rejected here). Re-ranking
+        by content score ALONE at this point would silently throw that timing comparison away
+        and could resurrect the very candidate pick() had already correctly rejected -- which is
+        exactly what a first version of this function did, picking 'blocks' (a worse anchor
+        residual, marginally higher content score within the same noise-level tie margin the
+        caller already decided not to trust on its own) instead of 'new'. Falls back to 'new'
+        -- the safe, single-offset default -- only if the pool has nothing left to rank."""
+        if winner != "old" or _old_wins_fairly():
+            return winner
+        rivals = [k for k in pool if k != "old"]
+        return pick(rivals) if rivals else ("new" if "new" in subs_by_key else winner)
+
+    # 2. Content evidence -- only when timing alone didn't confirm the default.
+    scored: dict[str, dict] = {"new": {"avg_score": result.get("avg_score"), "flag": result.get("flag"),
+                                       "samples": result.get("samples") or []}}
+    new_confirmed = _confirmed_in_every_block("new") if any_anchor_evidence else True
+    if result.get("flag") == "ok" and pick(subs_by_key) == "new" and new_confirmed:
+        winner = "new"
     else:
-        ok = {k: v for k, v in scored.items() if v.get("flag") == "ok" and v.get("avg_score") is not None}
-        if ok:
-            winner = max(ok, key=lambda k: ok[k]["avg_score"])
+        for key, subs in subs_by_key.items():
+            if key == "new":
+                continue
+            ev = evaluate_against_cached_transcripts(conn, video_path, subs, lang, transcript_lang, cfg,
+                                                     score=True, cancel_event=cancel_event)
+            if ev is not None:
+                scored[key] = ev
+        content_ok = [k for k, v in scored.items() if v.get("flag") == "ok" and v.get("avg_score") is not None]
+        if content_ok:
+            # CONTENT decides first among candidates that passed it -- it's the evidence this
+            # branch just paid for, and a real gap between two "ok" scores is exactly what it
+            # exists to catch (see CONTENT_SCORE_TIE_MARGIN). Anchors/preference (pick()) only
+            # get a say among whichever candidates are within that margin of the best score --
+            # a genuine tie, not a decisive difference silently thrown away.
+            best = max(scored[k]["avg_score"] for k in content_ok)
+            near_best = [k for k in content_ok if scored[k]["avg_score"] >= best - CONTENT_SCORE_TIE_MARGIN]
+            winner = _reject_unproven_old(pick(near_best), near_best)
         else:
-            scorable = {k: v for k, v in scored.items() if v.get("avg_score") is not None}
-            winner = max(scorable, key=lambda k: scorable[k]["avg_score"]) if scorable else "new"
+            scorable = [k for k, v in scored.items() if v.get("avg_score") is not None]
+            winner = (max(scorable, key=lambda k: (scored[k]["avg_score"], -_CANDIDATE_PREFERENCE[k]))
+                      if scorable else "new")
+            winner = _reject_unproven_old(winner, scorable)
 
-    others = ", ".join(f"{k}={v.get('avg_score')}" for k, v in scored.items() if k != winner)
-    note_suffix = (f" Verified alass's single-offset fix against the original and a multi-block "
-                    f"retry before applying anything — kept '{winner}' "
-                    f"(score {scored[winner].get('avg_score')})"
-                    + (f", rejected: {others}." if others else "."))
+    def _describe(key: str) -> str:
+        parts = []
+        s = scored.get(key) or {}
+        if s.get("avg_score") is not None:
+            parts.append(f"score {s['avg_score']:.2f} ({s.get('flag')})")
+        t = timing.get(key)
+        if t:
+            parts.append(f"anchor residual {t['mean_abs_shift']:.1f}s over {len(t['regions'])} clip(s)")
+        return f"{key}: " + (", ".join(parts) if parts else "no evidence")
+
+    n_blocks = ambiguous.get("blocks_split_count") or "?"
+    note_suffix = (f" Verified alass's {n_blocks}-block fit against its single-offset fit and the original "
+                   f"on the same Whisper samples before applying anything — kept '{winner}' ["
+                   + "; ".join(_describe(k) for k in subs_by_key) + "].")
+    structural_note = " line count changed significantly — check the file manually." if ambiguous.get("structural") else ""
 
     def _synthetic(key: str) -> dict:
         s = scored[key]
         return {"avg_score": s.get("avg_score"), "flag": s.get("flag"), "samples": s.get("samples") or [],
                 "audio_lang": transcript_lang, "swap_severity": None}
 
+    max_shift_new = ambiguous.get("max_shift_new")
     if winner == "new":
-        if cfg.backup_originals:
-            backup_subtitle(subtitle_path, cfg.backup_dir, media_root)
-        new_subs.save(str(subtitle_path))
-        row["sync_status"] = f"fixed (Δ{ambiguous['max_shift_new']:.1f}s)"
-        if ambiguous.get("structural"):
-            row["note"] += " line count changed significantly — check the file manually."
-        row["note"] += note_suffix
+        _write_fix(subtitle_path, cfg, media_root, new_subs)
+        row["sync_status"] = f"fixed (Δ{max_shift_new:.1f}s)" if max_shift_new is not None else "fixed"
+        row["sync_max_shift_s"] = round(max_shift_new, 2) if max_shift_new is not None else None
+        row["sync_split_blocks"] = 1
+        row["sync_block_spread_s"] = None
+        row["note"] += structural_note + note_suffix
         return new_subs, result, result.get("swap_severity"), winner
 
     if winner == "blocks":
-        row["sync_max_shift_s"] = (round(ambiguous["max_shift_blocks"], 2)
-                                    if ambiguous.get("max_shift_blocks") is not None else None)
+        max_shift_blocks = ambiguous.get("max_shift_blocks")
+        _write_fix(subtitle_path, cfg, media_root, blocks_subs)
+        row["sync_max_shift_s"] = round(max_shift_blocks, 2) if max_shift_blocks is not None else None
         row["sync_split_blocks"] = ambiguous.get("blocks_split_count")
         row["sync_block_spread_s"] = ambiguous.get("blocks_spread")
-        if cfg.backup_originals:
-            backup_subtitle(subtitle_path, cfg.backup_dir, media_root)
-        blocks_subs.save(str(subtitle_path))
-        shift_txt = f"{ambiguous['max_shift_blocks']:.1f}s" if ambiguous.get("max_shift_blocks") is not None else "?"
-        blocks_txt = ambiguous.get("blocks_split_count") or "?"
-        row["sync_status"] = f"fixed (Δ{shift_txt}, {blocks_txt} sync block(s))"
-        row["note"] += note_suffix
+        shift_txt = f"{max_shift_blocks:.1f}s" if max_shift_blocks is not None else "?"
+        row["sync_status"] = f"fixed (Δ{shift_txt}, {n_blocks} sync block(s))"
+        row["note"] += structural_note + note_suffix
         row["line_order_fixed"] = None
         row["line_order_flagged"] = None
         return blocks_subs, _synthetic("blocks"), None, winner
 
     # winner == "old" -- nothing to write, the file was never touched on disk in the first place.
-    row["sync_max_shift_s"] = None
+    # sync_max_shift_s deliberately keeps the offset alass measured: it's the one fact worth
+    # seeing in the UI about a file whose re-sync was rejected.
+    shift_txt = f"{max_shift_new:.1f}s" if max_shift_new is not None else "?"
+    row["sync_status"] = f"already in sync (alass suggested Δ{shift_txt}, rejected — didn't verify better than the original)"
     row["sync_split_blocks"] = None
     row["sync_block_spread_s"] = None
-    row["sync_status"] = "already in sync (rejected alass re-sync — didn't score better)"
     row["note"] += note_suffix
     row["line_order_fixed"] = None
     row["line_order_flagged"] = None
@@ -415,7 +713,7 @@ def correctness_and_finish(video_path: Path, subtitle_path: Path, lang: Optional
     correctness_unavailable_flag = None
     if not cfg.enable_correctness_check:
         correctness_unavailable_flag = "disabled"
-    elif not cfg.active_stt_api_key:
+    elif not cfg.has_stt_configured:
         correctness_unavailable_flag = f"no {cfg.stt_provider} API key"
 
     if correctness_unavailable_flag is None:
@@ -436,9 +734,17 @@ def correctness_and_finish(video_path: Path, subtitle_path: Path, lang: Optional
                 collected["tested_items"] = [tuple(t) for t in collected["tested_items"]]
                 collected["candidates"] = [tuple(c) for c in collected["candidates"]]
             else:
+                # Peeked, not popped -- the actual resolution (which candidate wins) happens
+                # further down, after this Whisper pass; this only needs the block time-ranges
+                # to make sure sampling doesn't miss one of them entirely (see sync_pair's
+                # _block_time_ranges and collect_samples' extra_target_ranges).
+                extra_target_ranges = (row.get("_ambiguous_sync") or {}).get("blocks_time_ranges") or None
                 with tempfile.TemporaryDirectory() as td2:
                     collected = collect_samples(video_path, current_subs, lang, cfg, Path(td2),
-                                                 conn=conn, cancel_event=cancel_event)
+                                                 conn=conn, cancel_event=cancel_event,
+                                                 extra_target_ranges=extra_target_ranges)
+        except JobCancelled:
+            raise  # a cancelled job is not a "skipped" check -- let jobs.py end the run cleanly
         except Exception as e:
             log.warning("Correctness/line-order check failed for %s: %s", subtitle_path, e)
             collected = {"skipped": True, "reason": str(e)}
@@ -466,8 +772,9 @@ def correctness_and_finish(video_path: Path, subtitle_path: Path, lang: Optional
             row["correctness_samples"] = result.get("samples")
             swap_severity = result.get("swap_severity")
 
-            # A fix sync_pair deferred writing (its --no-splits primary attempt, pending a second
-            # opinion — see its own docstring) gets resolved HERE, before any of the branches
+            # A fix sync_pair deferred writing (a multi-block alass result held back together
+            # with its single-offset alternative — see its own docstring) gets resolved HERE,
+            # before any of the branches
             # below act on `result` -- the winner might not even be "new" (the candidate
             # `result` currently describes), so nothing downstream should judge/act on "new"
             # until this has had a chance to replace it.
@@ -505,15 +812,15 @@ def correctness_and_finish(video_path: Path, subtitle_path: Path, lang: Optional
                 row["auto_action"] = handle_suspect(subtitle_path, video_path, cfg, media_root, lang,
                                                      bazarr_meta, history_index, cfg.correctness_auto_action,
                                                      conn=conn, run_id=run_id, cancel_event=cancel_event)
-            elif (resolved_winner in (None, "new")
+            elif (resolved_winner is None
                   and row["sync_block_spread_s"] is not None
                   and row["sync_block_spread_s"] >= cfg.block_spread_suspect_threshold_s
                   and any(s.get("score") is not None and s["score"] < cfg.overlap_threshold
                           for s in result["samples"])):
-                # A safety net for the one case that skips the {original, no-splits, multi-
-                # block} comparison above entirely: --no-splits itself failed in sync_pair, so
-                # a possibly multi-block split-penalty fix got applied directly with nothing to
-                # verify it against (see sync_pair's used_no_splits_primary=False fallback).
+                # A safety net for the one case that skips the {original, single-offset,
+                # multi-block} comparison above entirely: sync_pair applied a multi-block fix
+                # directly (its --no-split alternative failed, or the comparison couldn't run)
+                # with nothing to verify it against.
                 # The majority-vote check alone (_aggregate_correctness) said "ok" -- but alass
                 # itself needed wildly different offsets in different parts of this file to line
                 # up the audio TIMING (real cuts can cause that on their own), AND at least one
@@ -529,6 +836,26 @@ def correctness_and_finish(video_path: Path, subtitle_path: Path, lang: Optional
                                 f"multi-block sync AND {len(failing)}/{len(result['samples'])} Whisper sample(s) "
                                 "didn't match their window on their own -- majority-vote alone wasn't enough to "
                                 "trust this file.").strip()
+                row["auto_action"] = handle_suspect(subtitle_path, video_path, cfg, media_root, lang,
+                                                     bazarr_meta, history_index, cfg.correctness_auto_action,
+                                                     conn=conn, run_id=run_id, cancel_event=cancel_event)
+            elif cfg.anchor_check_enabled and (bad := significant_anchor_residuals(
+                    result.get("samples") or [], ANCHOR_SUSPECT_THRESHOLD_S)):
+                # A Whisper anchor (subtitles.clip_anchor_shift) is a CONTENT-verified point
+                # estimate of the true timing offset at one exact instant -- not the bag-of-
+                # words window score every other branch here relies on, which can be fooled by
+                # shared vocabulary (character names, series jargon) scoring "ok" even against
+                # the wrong episode. A confident anchor still showing a residual mismatch above
+                # the anchor noise floor (ANCHOR_SUSPECT_THRESHOLD_S, NOT min_change_seconds)
+                # means majority-vote/whole-file averaging missed a genuine problem at that
+                # specific point (see Config.anchor_check_enabled).
+                worst = max(abs(s["anchor"]["shift"]) for s in bad)
+                where = ", ".join(f"{s['start']}s (Δ{s['anchor']['shift']:.1f}s)" for s in bad)
+                row["correctness_flag"] = "SUSPECT"
+                row["note"] = (row["note"] +
+                                f" Escalated to SUSPECT: {len(bad)} Whisper anchor(s) show a confirmed "
+                                f"timing mismatch of up to {worst:.1f}s at [{where}], even though "
+                                "the overall average passed.").strip()
                 row["auto_action"] = handle_suspect(subtitle_path, video_path, cfg, media_root, lang,
                                                      bazarr_meta, history_index, cfg.correctness_auto_action,
                                                      conn=conn, run_id=run_id, cancel_event=cancel_event)
@@ -577,5 +904,11 @@ def correctness_and_finish(video_path: Path, subtitle_path: Path, lang: Optional
                 row["note"] += (f" Line order: {len(issues)} block(s) flagged for manual "
                                  f"review (not auto-fixed, low confidence).")
 
+    # Every path above that actually ran the Whisper check has resolved a deferred sync by now
+    # (_resolve_ambiguous_sync). Any path that didn't (check disabled/unavailable, skipped for
+    # lack of duration/wrong audio language, failed) must still put SOMETHING on disk -- the
+    # safe default -- rather than leave the file unsynced under a "[pending]" status.
+    if "_ambiguous_sync" in row:
+        apply_pending_sync(subtitle_path, cfg, row, reason=f"correctness check: {row.get('correctness_flag')}")
     update_state(conn, video_path, subtitle_path, row, run_id=run_id, media_root=media_root)
     return row

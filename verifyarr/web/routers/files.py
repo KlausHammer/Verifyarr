@@ -59,6 +59,45 @@ def run_single_for_file(file_id: int, user=Depends(require_auth), conn=Depends(g
     return {"run_id": run_id}
 
 
+@router.post("/{file_id}/generate")
+def generate_for_file(file_id: int, user=Depends(require_auth), conn=Depends(get_conn)):
+    """Generates a brand-new subtitle for a 'missing' row (see generate.py) — the counterpart
+    to run-single above, which requires a subtitle already existing. On success, chains straight
+    into the ordinary sync+correctness pipeline (see jobs._run_generate_single) so Activity
+    shows the full result, not just "file written"."""
+    row = db.get_file(conn, file_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="file not found")
+    if row["subtitle_path"]:
+        raise HTTPException(status_code=400, detail="this file already has a subtitle — nothing to generate")
+    if not row["lang"]:
+        raise HTTPException(status_code=400, detail="no wanted language recorded for this file")
+    cfg = Config.from_db(conn)
+    if not cfg.generate_enabled:
+        raise HTTPException(status_code=400, detail="subtitle generation is disabled (Settings -> Generate)")
+
+    video_path = Path(row["video_path"])
+    if not video_path.exists():
+        # The row is a cached scan result -- the file behind it can be gone (renamed, upgraded,
+        # deleted) since. Better to say so than to start a job that fails minutes later on an
+        # ffprobe error nobody connects back to this click.
+        raise HTTPException(status_code=404, detail=f"the video file is no longer there: {video_path}")
+    # Checked up front as well as inside write_new_subtitle, which still owns the authoritative
+    # (race-free) check -- this one exists so a second click, or a Bazarr download that landed
+    # since this page was loaded, answers immediately instead of spending a whole transcription
+    # first and only discovering it at the final write.
+    dest = video_path.with_name(f"{video_path.stem}.{row['lang']}.srt")
+    if dest.exists():
+        db.clear_missing(conn, video_path, row["lang"])
+        raise HTTPException(status_code=409,
+                             detail=f"a subtitle already exists at {dest.name} — nothing to generate")
+    try:
+        run_id = jobs.runner.start_generate("manual_ui", video_path, row["lang"])
+    except jobs.RunAlreadyActive:
+        raise HTTPException(status_code=409, detail="a job is already running")
+    return {"run_id": run_id}
+
+
 def _apply_action(conn, file_id: int, action: str) -> dict:
     """Shared by the three manual action buttons below — lets a dry-run sweep flag SUSPECT
     files first, then the user picks per-file what to do, instead of the saved correctness/

@@ -26,7 +26,7 @@ from verifyarr.settings import Config
 from verifyarr.discovery import (discover_pairs, discover_all_videos, discover_missing,
                                 parse_lang_from_filename, build_library_video_rows,
                                 infer_title_and_episode, resolve_embedded_cache)
-from verifyarr.pipeline import process_pair, sync_pair, correctness_and_finish
+from verifyarr.pipeline import process_pair, sync_pair, correctness_and_finish, finish_generated
 from verifyarr.reports import write_report
 from verifyarr.bazarr import LazyHistoryIndex
 from verifyarr.correctness import JobCancelled
@@ -122,6 +122,7 @@ def _effective_cfg(cfg: Config, trigger: str) -> Config:
         sync_enabled=cfg.auto_scan_sync_enabled,
         enable_correctness_check=cfg.auto_scan_correctness_enabled,
         line_order_enabled=cfg.auto_scan_line_order_enabled,
+        generate_enabled=cfg.auto_scan_generate_enabled,
     )
 
 
@@ -146,6 +147,8 @@ def execute_run(run_id: int, cfg: Config, conn: sqlite3.Connection, cancel_event
     try:
         if mode == "sweep":
             _run_sweep(conn, run_id, cfg, force, cancel_event, kind=kind, title=title, season=season)
+        elif mode == "generate_single":
+            _run_generate_single(conn, run_id, cfg, video, lang, cancel_event)
         else:
             _run_single(conn, run_id, cfg, video, subtitle, lang, bazarr_meta, cancel_event)
     except JobCancelled:
@@ -264,6 +267,18 @@ def _run_sweep(conn: sqlite3.Connection, run_id: int, cfg: Config, force: bool,
 
     for video, lang in missing:
         db.mark_missing(conn, video, lang, cfg.media_root_for(video))
+
+    # Generate missing subtitles (see generate.py) -- capped to generate_max_videos_per_day
+    # DISTINCT videos across the last 24 HOURS (not per run: the Bazarr poll below starts a fresh
+    # sweep every time a wanted item resolves, so a per-run cap would multiply by however many
+    # times that fired today). Deliberately does NOT sync/verify the new file within this same
+    # run -- see generate.run_generation_batch's docstring; it's picked up by the NEXT sweep.
+    if cfg.generate_enabled and missing:
+        from verifyarr.generate import run_generation_batch
+        generated = run_generation_batch(conn, run_id, cfg, missing, cancel_event=cancel_event)
+        if generated:
+            log.log(SUCCESS, "Generated %d new subtitle file(s) — they'll be synced and verified "
+                              "on the next scan", generated)
 
     # BUG FIX (found during optimization review): "remediate" needs the history index just as much
     # as "blacklist" does — handle_suspect only falls back to it when no bazarr_meta was passed in,
@@ -419,6 +434,40 @@ def _run_single(conn: sqlite3.Connection, run_id: int, cfg: Config, video: Path,
     db.bump_run_progress(conn, run_id, row)
 
 
+def _run_generate_single(conn: sqlite3.Connection, run_id: int, cfg: Config, video: Path, lang: str,
+                          cancel_event: threading.Event) -> None:
+    """Manual/CLI "Generate subtitle" for one (video, lang) -- runs Sync (alass) right after
+    writing the file, for Activity feedback and as a cheap local sanity check of our own output,
+    but deliberately does NOT run the ordinary Whisper correctness check afterward (see
+    pipeline.finish_generated's docstring for why that would just spend API quota re-confirming
+    something already guaranteed by construction)."""
+    from verifyarr.generate import generate_one
+    from verifyarr.fileops import SubtitleAlreadyExists
+    with tempfile.TemporaryDirectory(prefix="verifyarr-generate-") as tmp_dir_str:
+        log.log(HEADER, "▸ Generating %s subtitle for %s", lang, video.name)
+        try:
+            dest = generate_one(cfg, video, lang, Path(tmp_dir_str), conn, cancel_event=cancel_event)
+        except SubtitleAlreadyExists as e:
+            # Not a failure: the file this run was asked to create is already there (Bazarr's
+            # poll, a concurrent sweep, or simply a second click on the button). Letting it
+            # escape would mark the whole run "failed" and show the user a red error for a
+            # completed outcome.
+            log.log(SUCCESS, "%s — nothing to generate", e)
+            db.clear_missing(conn, video, lang)
+            return
+        if dest is None:
+            return  # dry-run -- already logged inside generate_one; no file to sync/verify
+        log.log(SUCCESS, "Generated %s", dest.name)
+    # defer_verification=False: no correctness_and_finish follows here (see finish_generated), so
+    # there'd be nobody to resolve a deferred multi-block-vs-single-offset comparison -- apply
+    # alass's result directly instead of paying for the second alass run for nothing.
+    row, _current_subs = sync_pair(video, dest, lang, cfg, defer_verification=False)
+    row = finish_generated(video, dest, cfg, conn, row, run_id=run_id)
+    write_report([row], cfg.report_dir)
+    db.bump_run_progress(conn, run_id, row)
+    db.bump_run_generated(conn, run_id)
+
+
 class JobRunner:
     """Tracks the ONE job allowed to run at a time in the webapp. `runner` below is this
     module's singleton, used by routers/runs.py and scheduler.py."""
@@ -453,6 +502,11 @@ class JobRunner:
         return self._start(trigger, "single", video=video, subtitle=subtitle, lang=lang,
                             bazarr_meta=bazarr_meta, dry_run_override=dry_run_override)
 
+    def start_generate(self, trigger: str, video: Path, lang: str) -> int:
+        """Manual "Generate subtitle" for one (video, lang) -- e.g. the Files page's action on a
+        row whose sync_status is 'missing'. See jobs._run_generate_single."""
+        return self._start(trigger, "generate_single", video=video, lang=lang)
+
     def _start(self, trigger: str, mode: str, *, dry_run_override: Optional[bool] = None, **kwargs) -> int:
         with self._lock:
             if self.is_running():
@@ -469,7 +523,7 @@ class JobRunner:
                     target_kind, target_title = kwargs.get("kind"), kwargs.get("title")
                     if target_title and kwargs.get("season"):
                         target_title = f"{target_title} {kwargs['season']}"
-                elif mode == "single" and kwargs.get("video") is not None:
+                elif mode in ("single", "generate_single") and kwargs.get("video") is not None:
                     from verifyarr.discovery import target_label
                     target_kind = cfg.kind_for(kwargs["video"])
                     target_title = target_label(kwargs["video"], cfg.media_root_for(kwargs["video"]))

@@ -15,6 +15,8 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional
 
+from verifyarr import log
+
 _SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS files (
     id                    INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -189,10 +191,69 @@ CREATE TABLE IF NOT EXISTS video_transcript_cache (
     clip_start    REAL NOT NULL,     -- the actual clip start time that was transcribed
     audio_lang    TEXT,
     transcript    TEXT NOT NULL,
+    segments_json TEXT,              -- Whisper's own [{"start","end","text"}, ...] for this
+                                      -- clip (relative to clip_start), NULL for a row saved
+                                      -- before this column existed -- see
+                                      -- correctness.evaluate_against_cached_transcripts, which
+                                      -- needs real segment timing (anchors), not just the flat
+                                      -- transcript text.
+    clip_seconds  REAL,              -- how long the transcribed clip was (a heuristic line-order
+                                      -- cluster clip can be much longer than sync.clip_seconds);
+                                      -- NULL = assume the current sync.clip_seconds.
+    video_mtime   REAL,              -- the video file's mtime/size when this was transcribed:
+    video_size    INTEGER,           -- a replaced video (new cut, other release) invalidates
+                                      -- every row for it on the next lookup, instead of serving
+                                      -- audio from a file that no longer exists for up to the
+                                      -- prune age -- see _load_video_cache_rows. NULL on rows
+                                      -- saved before these columns existed (accepted as-is
+                                      -- until they age out).
     created_at    TEXT NOT NULL,
     PRIMARY KEY (video_path, region_index)
 );
 CREATE INDEX IF NOT EXISTS ix_video_transcript_cache_created ON video_transcript_cache(created_at);
+
+-- One row per VIDEO (not per language) -- the full-track Whisper transcript for a generated
+-- subtitle (see generate.py). Keyed on video_path only: the spoken audio doesn't depend on
+-- which wanted language is being generated, so a video that already has a full transcript
+-- cached here (from generating one wanted language) can generate any OTHER wanted language
+-- via translation only, with zero further Whisper calls -- see generate.generate_one.
+-- The video's own size/mtime and the STT provider+model are stored alongside it and CHECKED
+-- on read (see get_full_transcript_cache): the path alone is not enough to identify what was
+-- transcribed. A file replaced in place by a different cut/release keeps its path, and reusing
+-- the old transcript for it produces a subtitle whose every timestamp belongs to a different
+-- video -- and a user who switched provider/model precisely BECAUSE the transcript was poor
+-- would otherwise be served that same poor transcript for the rest of its 90-day retention.
+-- Pruned by age, not row count -- see scheduler._prune_full_transcript_cache_job.
+CREATE TABLE IF NOT EXISTS video_full_transcript_cache (
+    video_path    TEXT PRIMARY KEY,
+    spoken_lang   TEXT,
+    segments_json TEXT NOT NULL,   -- [{"start","end","text"}, ...], absolute seconds, whole video
+    stt_provider  TEXT,
+    stt_model     TEXT,
+    video_mtime   REAL,
+    video_size    INTEGER,
+    created_at    TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS ix_video_full_transcript_cache_created ON video_full_transcript_cache(created_at);
+
+-- One row per (video, language) generation attempt (see generate.run_generation_batch). Two
+-- jobs, both of which need memory ACROSS runs:
+--   1. A failed attempt is not retried for generate.RETRY_COOLDOWN_HOURS. Generation is capped
+--      to a few videos a day, so without this one permanently broken video (unreadable audio,
+--      no determinable spoken language) re-takes one of those slots on every single sweep and
+--      never lets anything behind it through.
+--   2. The daily cap itself counts distinct SUCCESSFUL videos here, not per run -- the Bazarr
+--      poll starts a fresh sweep every time a wanted item resolves, so a per-run cap multiplies
+--      by however many times that fired today.
+CREATE TABLE IF NOT EXISTS generate_attempts (
+    video_path   TEXT NOT NULL,
+    lang         TEXT NOT NULL,
+    attempted_at TEXT NOT NULL,
+    ok           INTEGER NOT NULL,
+    error        TEXT,
+    PRIMARY KEY (video_path, lang)
+);
+CREATE INDEX IF NOT EXISTS ix_generate_attempts_at ON generate_attempts(attempted_at);
 """
 
 
@@ -216,6 +277,28 @@ def connect(path: Optional[Path] = None) -> sqlite3.Connection:
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA foreign_keys=ON")
     conn.executescript(_SCHEMA_SQL)
+    # A one-time repair for a schema that never shipped in any committed version of this file:
+    # some environments have a video_transcript_cache whose primary key column is named
+    # "grid_bucket" (a clip-start-snapped-to-a-grid design, per that column's own leftover SQL
+    # comment) instead of "region_index" (slot-index based -- what every function below, and
+    # every version of this file in git history, actually reads/writes). "CREATE TABLE IF NOT
+    # EXISTS" above is a no-op against an existing table under either name, so without this the
+    # table stays permanently unusable: every column-name lookup/insert below raises
+    # sqlite3.OperationalError. Safe to just drop and let CREATE TABLE make a correct one fresh
+    # -- this table is pure, freely-regenerable Whisper-clip cache (see prune_transcript_cache),
+    # nothing here is load-bearing data, and "region_index" and "grid_bucket" don't even mean
+    # the same thing (a slot number vs. a snapped timestamp) so there is no sane row-by-row
+    # migration between them to attempt.
+    try:
+        legacy_cols = {r[1] for r in conn.execute("PRAGMA table_info(video_transcript_cache)")}
+    except sqlite3.OperationalError:
+        legacy_cols = set()
+    if legacy_cols and "region_index" not in legacy_cols:
+        log.warning("video_transcript_cache has an unrecognized schema (columns: %s) -- "
+                    "recreating it empty (it's pure cache, nothing of value is lost).",
+                    sorted(legacy_cols))
+        conn.execute("DROP TABLE video_transcript_cache")
+        conn.executescript(_SCHEMA_SQL)
     # Light, non-destructive column migrations for fields added AFTER a table already
     # existed for a user — "CREATE TABLE IF NOT EXISTS" alone adds nothing to an existing
     # table. library_videos is pure cache (see replace_library_videos), so no data is lost
@@ -271,6 +354,28 @@ def connect(path: Optional[Path] = None) -> sqlite3.Connection:
         conn.commit()
     except sqlite3.OperationalError:
         pass  # column already exists
+    try:
+        conn.execute("ALTER TABLE video_transcript_cache ADD COLUMN segments_json TEXT")
+        conn.commit()
+    except sqlite3.OperationalError:
+        pass  # column already exists
+    for col, typ in (("video_mtime", "REAL"), ("video_size", "INTEGER"), ("clip_seconds", "REAL")):
+        try:
+            conn.execute(f"ALTER TABLE video_transcript_cache ADD COLUMN {col} {typ}")
+            conn.commit()
+        except sqlite3.OperationalError:
+            pass  # column already exists
+    try:
+        conn.execute("ALTER TABLE runs ADD COLUMN files_generated INTEGER DEFAULT 0")
+        conn.commit()
+    except sqlite3.OperationalError:
+        pass  # column already exists
+    for col, coltype in (("stt_model", "TEXT"), ("video_mtime", "REAL"), ("video_size", "INTEGER")):
+        try:
+            conn.execute(f"ALTER TABLE video_full_transcript_cache ADD COLUMN {col} {coltype}")
+            conn.commit()
+        except sqlite3.OperationalError:
+            pass  # column already exists
     conn.commit()
     return conn
 
@@ -313,7 +418,7 @@ def should_skip(conn: sqlite3.Connection, video_path: Path, subtitle_path: Path,
         # correctness_and_finish sets correctness_flag to exactly "disabled", or "no {provider}
         # API key", when correctness couldn't run because of settings (not file content) — see
         # correctness_unavailable_flag in pipeline.py.
-        if cfg.enable_correctness_check and cfg.active_stt_api_key:
+        if cfg.enable_correctness_check and cfg.has_stt_configured:
             flag = row["correctness_flag"] or ""
             if flag == "disabled" or flag.endswith("API key"):
                 return False
@@ -419,6 +524,25 @@ def mark_missing(conn: sqlite3.Connection, video_path: Path, lang: str,
     """, (str(video_path), lang, str(media_root) if media_root else None, season_episode, title,
           video_mtime, video_size, now))
     conn.commit()
+
+
+def clear_missing(conn: sqlite3.Connection, video_path: Path, lang: Optional[str]) -> int:
+    """Drops the 'missing' placeholder row for (video, lang) once that language actually has a
+    subtitle file -- see mark_missing above and pipeline.finish_generated, which calls this
+    right after generating one.
+
+    Without it the two rows coexist: update_state's own row is keyed on subtitle_path, the
+    placeholder on (video_path, lang) with subtitle_path NULL, so neither replaces the other.
+    The Files page would keep offering "Generate" for a video that now has exactly the subtitle
+    it asked for, and the Stats page would keep counting it as missing forever."""
+    if not lang:
+        return 0
+    cur = conn.execute(
+        "DELETE FROM files WHERE video_path = ? AND lang = ? AND subtitle_path IS NULL",
+        (str(video_path), lang),
+    )
+    conn.commit()
+    return cur.rowcount
 
 
 def get_file(conn: sqlite3.Connection, file_id: int) -> Optional[sqlite3.Row]:
@@ -847,32 +971,253 @@ def replace_library_videos_scoped(conn: sqlite3.Connection, roots: list[Path], r
     conn.commit()
 
 
-def get_cached_transcript(conn: sqlite3.Connection, video_path: Path, region_index: int) -> Optional[dict]:
-    """{"start", "audio_lang", "transcript"} for the region_index-th sample slot of this video,
-    if one was transcribed recently enough to still be cached (see prune_transcript_cache) —
-    None on a miss. `start` is the ACTUAL clip start that was transcribed; the caller uses it
+# region_index namespace for every sample that is NOT one of the n evenly-spread slots
+# (0..n-1): the block-targeted EXTRA slots and the heuristic line-order cluster clips
+# line_order.collect_samples transcribes. Keyed on the clip's own start second, so the same
+# audio position always maps to the same row (shared across runs/languages) and two different
+# positions can never overwrite each other -- which a plain "n, n+1, ..." numbering did,
+# silently re-pointing a later run's targeted sample at wherever an EARLIER run's extra slot
+# happened to land. Far above any realistic sample_count so the two ranges can't collide.
+EXTRA_SLOT_INDEX_BASE = 100000
+
+
+def extra_slot_index(start_sec: float) -> int:
+    return EXTRA_SLOT_INDEX_BASE + int(round(start_sec))
+
+
+def _video_signature(video_path: Path) -> tuple[Optional[float], Optional[int]]:
+    try:
+        st = Path(video_path).stat()
+        return st.st_mtime, st.st_size
+    except OSError:
+        return None, None
+
+
+def _cache_row_to_dict(row: sqlite3.Row) -> dict:
+    return {"region_index": row["region_index"], "start": row["clip_start"], "audio_lang": row["audio_lang"],
+            "transcript": row["transcript"], "clip_seconds": row["clip_seconds"],
+            "segments": json.loads(row["segments_json"]) if row["segments_json"] else None}
+
+
+def _load_video_cache_rows(conn: sqlite3.Connection, video_path: Path) -> list[dict]:
+    """Every cached transcript row for this video, oldest region first -- AFTER checking they
+    still belong to the video file that's on disk now. A row that recorded a video_mtime/size
+    which no longer matches means the video was replaced since (other release, different cut),
+    so its audio samples are worthless for it: every row for that video is deleted and nothing
+    is returned, rather than scoring/anchoring a subtitle against audio that no longer exists.
+    Rows with NULL signature (saved before the columns existed) can't be checked and are
+    accepted. If the video can't be stat()ed right now (share offline), the rows are kept --
+    nothing can be transcribed to replace them anyway."""
+    rows = conn.execute(
+        "SELECT region_index, clip_start, audio_lang, transcript, segments_json, video_mtime, video_size, "
+        "clip_seconds FROM video_transcript_cache WHERE video_path = ? ORDER BY region_index",
+        (str(video_path),),
+    ).fetchall()
+    if not rows:
+        return []
+    mtime, size = _video_signature(video_path)
+    if mtime is not None:
+        for r in rows:
+            if r["video_mtime"] is None or r["video_size"] is None:
+                continue
+            if r["video_size"] != size or abs(r["video_mtime"] - mtime) >= 1.0:
+                conn.execute("DELETE FROM video_transcript_cache WHERE video_path = ?", (str(video_path),))
+                conn.commit()
+                return []
+    return [_cache_row_to_dict(r) for r in rows]
+
+
+def get_cached_transcript(conn: sqlite3.Connection, video_path: Path, region_index: int,
+                          within: Optional[tuple[float, float]] = None) -> Optional[dict]:
+    """{"start", "audio_lang", "transcript", "segments"} for the region_index-th sample slot of
+    this video, if one was transcribed recently enough to still be cached (see
+    prune_transcript_cache) and still belongs to the video on disk (see _load_video_cache_rows)
+    -- None on a miss. `start` is the ACTUAL clip start that was transcribed; the caller uses it
     (not its own freshly-computed one) for scoring, so a cache hit skips the dialogue-density
-    pick entirely, not just the Whisper call."""
-    row = conn.execute(
-        "SELECT clip_start, audio_lang, transcript FROM video_transcript_cache "
-        "WHERE video_path = ? AND region_index = ?",
-        (str(video_path), region_index),
-    ).fetchone()
-    if row is None:
-        return None
-    return {"start": row["clip_start"], "audio_lang": row["audio_lang"], "transcript": row["transcript"]}
+    pick entirely, not just the Whisper call.
+
+    within: (lo_sec, hi_sec) the caller's region for this slot -- a hit whose start falls
+    outside it is treated as a miss. Slot i is only "the same sample" as slot i of an earlier
+    run if both runs split the video into the same regions; a changed sync.sample_count moves
+    every region, and silently reusing the old position would leave this run's region unsampled.
+
+    `segments` is Whisper's own [{"start","end","text"}, ...] (relative to `start`), decoded
+    from JSON, or None for a row saved before that column existed."""
+    for r in _load_video_cache_rows(conn, video_path):
+        if r["region_index"] != region_index:
+            continue
+        if within is not None and not (within[0] <= r["start"] < within[1]):
+            return None
+        return r
+    return None
+
+
+def find_cached_transcript_between(conn: sqlite3.Connection, video_path: Path,
+                                   lo_sec: float, hi_sec: float) -> Optional[dict]:
+    """Any cached transcript (see get_cached_transcript for the shape) whose clip starts in
+    [lo_sec, hi_sec) -- regardless of which slot index saved it. For the block-targeted extra
+    samples (line_order.collect_samples' extra_target_ranges) the only thing that matters is
+    that the audio sample actually lies inside the block being verified, not which run or
+    language produced it."""
+    for r in _load_video_cache_rows(conn, video_path):
+        if lo_sec <= r["start"] < hi_sec:
+            return r
+    return None
+
+
+def get_cached_transcripts_for_video(conn: sqlite3.Connection, video_path: Path) -> list[dict]:
+    """Every still-valid cached transcript for this video (see get_cached_transcript for the
+    row shape, plus "region_index"), normal and extra slots alike -- the common evidence set
+    correctness.evaluate_against_cached_transcripts scores every sync candidate on."""
+    return _load_video_cache_rows(conn, video_path)
 
 
 def save_transcript_cache(conn: sqlite3.Connection, video_path: Path, region_index: int, start_sec: float,
-                           audio_lang: Optional[str], transcript: str) -> None:
+                           audio_lang: Optional[str], transcript: str,
+                           segments: Optional[list[dict]] = None,
+                           clip_seconds: Optional[float] = None) -> None:
+    mtime, size = _video_signature(video_path)
     conn.execute(
         "INSERT INTO video_transcript_cache (video_path, region_index, clip_start, audio_lang, "
-        "transcript, created_at) VALUES (?, ?, ?, ?, ?, ?) "
+        "transcript, segments_json, video_mtime, video_size, clip_seconds, created_at) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
         "ON CONFLICT(video_path, region_index) DO UPDATE SET "
         "clip_start=excluded.clip_start, audio_lang=excluded.audio_lang, "
-        "transcript=excluded.transcript, created_at=excluded.created_at",
-        (str(video_path), region_index, start_sec, audio_lang, transcript, datetime.now(timezone.utc).isoformat()),
+        "transcript=excluded.transcript, segments_json=excluded.segments_json, "
+        "video_mtime=excluded.video_mtime, video_size=excluded.video_size, "
+        "clip_seconds=excluded.clip_seconds, created_at=excluded.created_at",
+        (str(video_path), region_index, start_sec, audio_lang, transcript,
+         json.dumps(segments) if segments is not None else None, mtime, size, clip_seconds,
+         datetime.now(timezone.utc).isoformat()),
     )
+    conn.commit()
+
+
+def _video_stat(video_path: Path) -> tuple[Optional[float], Optional[int]]:
+    try:
+        st = video_path.stat()
+        return st.st_mtime, st.st_size
+    except OSError:
+        return None, None
+
+
+def get_full_transcript_cache(conn: sqlite3.Connection, video_path: Path,
+                               stt_provider: Optional[str] = None,
+                               stt_model: Optional[str] = None) -> Optional[dict]:
+    """{"spoken_lang", "segments", "stt_provider", "stt_model"} for this video's full-track
+    transcript (see generate.transcribe_full_track), if one was generated recently enough to
+    still be cached (see prune_full_transcript_cache) -- None on a miss. "segments" is already
+    decoded from JSON.
+
+    A hit is only returned when the cached entry still describes the same work: the video's own
+    size and mtime must be unchanged (a different cut/release at the same path is a different
+    video, and its transcript's timestamps would be wrong everywhere), and -- when the caller
+    passes them -- the STT provider and model must match what is configured now. Same
+    stat-comparison idea as should_skip above, for the same reason: a path is an identifier for
+    a location, not for content."""
+    row = conn.execute(
+        "SELECT spoken_lang, segments_json, stt_provider, stt_model, video_mtime, video_size "
+        "FROM video_full_transcript_cache WHERE video_path = ?",
+        (str(video_path),),
+    ).fetchone()
+    if row is None:
+        return None
+    if stt_provider is not None and row["stt_provider"] and row["stt_provider"] != stt_provider:
+        return None
+    if stt_model is not None and row["stt_model"] and row["stt_model"] != stt_model:
+        return None
+    mtime, size = _video_stat(video_path)
+    # A row written before these columns existed has NULL for both -- there is nothing to
+    # compare it against, so it stays usable rather than being thrown away for having been
+    # cached by an older version.
+    if row["video_size"] is not None and size is not None and row["video_size"] != size:
+        return None
+    if row["video_mtime"] is not None and mtime is not None and abs(row["video_mtime"] - mtime) > 1:
+        return None
+    return {"spoken_lang": row["spoken_lang"], "segments": json.loads(row["segments_json"]),
+            "stt_provider": row["stt_provider"], "stt_model": row["stt_model"]}
+
+
+def save_full_transcript_cache(conn: sqlite3.Connection, video_path: Path, spoken_lang: Optional[str],
+                                segments: list[dict], stt_provider: Optional[str] = None,
+                                stt_model: Optional[str] = None) -> None:
+    mtime, size = _video_stat(video_path)
+    conn.execute(
+        "INSERT INTO video_full_transcript_cache (video_path, spoken_lang, segments_json, stt_provider, "
+        "stt_model, video_mtime, video_size, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?) "
+        "ON CONFLICT(video_path) DO UPDATE SET "
+        "spoken_lang=excluded.spoken_lang, segments_json=excluded.segments_json, "
+        "stt_provider=excluded.stt_provider, stt_model=excluded.stt_model, "
+        "video_mtime=excluded.video_mtime, video_size=excluded.video_size, "
+        "created_at=excluded.created_at",
+        (str(video_path), spoken_lang, json.dumps(segments), stt_provider, stt_model,
+         mtime, size, datetime.now(timezone.utc).isoformat()),
+    )
+    conn.commit()
+
+
+def record_generate_attempt(conn: sqlite3.Connection, video_path: Path, lang: str, ok: bool,
+                             error: Optional[str] = None) -> None:
+    """Records the outcome of one (video, lang) generation attempt -- see generate.generate_one
+    and the generate_attempts table's own comment for what the two readers below use it for."""
+    conn.execute(
+        "INSERT INTO generate_attempts (video_path, lang, attempted_at, ok, error) "
+        "VALUES (?, ?, ?, ?, ?) "
+        "ON CONFLICT(video_path, lang) DO UPDATE SET attempted_at=excluded.attempted_at, "
+        "ok=excluded.ok, error=excluded.error",
+        (str(video_path), lang, datetime.now(timezone.utc).isoformat(), int(bool(ok)),
+         (error or None) if not ok else None),
+    )
+    conn.commit()
+
+
+def generate_failed_since(conn: sqlite3.Connection, video_path: Path, lang: str, since: str) -> bool:
+    """True if generating this (video, lang) FAILED at or after `since` (an ISO timestamp) --
+    i.e. it's still inside its retry cooldown and should not take a generation slot again yet."""
+    row = conn.execute(
+        "SELECT 1 FROM generate_attempts WHERE video_path = ? AND lang = ? AND ok = 0 "
+        "AND attempted_at >= ? LIMIT 1",
+        (str(video_path), lang, since),
+    ).fetchone()
+    return row is not None
+
+
+def count_generated_videos_since(conn: sqlite3.Connection, since: str) -> int:
+    """How many DISTINCT videos have been successfully generated for at or after `since` --
+    what generate.run_generation_batch measures its daily cap against. Counts successes only:
+    a failure spends little or no quota, is already held off by its own cooldown, and must not
+    be able to lock the whole library out of generation for a day."""
+    row = conn.execute(
+        "SELECT COUNT(DISTINCT video_path) FROM generate_attempts WHERE ok = 1 AND attempted_at >= ?",
+        (since,),
+    ).fetchone()
+    return row[0] if row else 0
+
+
+def prune_generate_attempts(conn: sqlite3.Connection, max_age_days: int = 30) -> int:
+    """Drops attempt records older than max_age_days -- long past both the retry cooldown and
+    the 24-hour cap window, so they only take up space. Same age-based approach as the two
+    transcript caches (see prune_transcript_cache)."""
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=max_age_days)).isoformat()
+    cur = conn.execute("DELETE FROM generate_attempts WHERE attempted_at < ?", (cutoff,))
+    conn.commit()
+    return cur.rowcount
+
+
+def prune_full_transcript_cache(conn: sqlite3.Connection, max_age_days: int = 90) -> int:
+    """Same idea as prune_transcript_cache, but a much longer default retention -- a full-track
+    transcript is far more expensive to regenerate (a whole movie's worth of Whisper calls, not
+    one 30s clip), so there's more to lose by pruning it aggressively."""
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=max_age_days)).isoformat()
+    cur = conn.execute("DELETE FROM video_full_transcript_cache WHERE created_at < ?", (cutoff,))
+    conn.commit()
+    return cur.rowcount
+
+
+def bump_run_generated(conn: sqlite3.Connection, run_id: int, count: int = 1) -> None:
+    """Increments runs.files_generated -- how many NEW subtitle files a generation run has
+    written so far, shown alongside files_processed/files_changed/etc. in the Activity view."""
+    conn.execute("UPDATE runs SET files_generated = files_generated + ? WHERE id = ?", (count, run_id))
     conn.commit()
 
 

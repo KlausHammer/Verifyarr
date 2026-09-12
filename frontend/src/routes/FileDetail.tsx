@@ -62,6 +62,19 @@ export default function FileDetail() {
     }
   }
 
+  async function generate() {
+    setBusy(true)
+    setActionMsg(null)
+    try {
+      const r = await api.post<{ run_id: number }>(`/files/${id}/generate`)
+      setActionMsg(`Job #${r.run_id} started.`)
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : String(err))
+    } finally {
+      setBusy(false)
+    }
+  }
+
   if (error) return <div className="error-banner">{error}</div>
   if (!data) return <span className="spinner" />
 
@@ -80,6 +93,12 @@ export default function FileDetail() {
           {f.subtitle_path && (
             <button className="btn" disabled={busy} onClick={runSingle}>
               Run now
+            </button>
+          )}
+          {!f.subtitle_path && f.sync_status === 'missing' && (
+            <button className="btn" disabled={busy} onClick={generate}
+                    title="Transcribe with Whisper and, if needed, translate — see Settings -> Generate">
+              Generate
             </button>
           )}
           {f.correctness_flag === 'SUSPECT' && (
