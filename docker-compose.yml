@@ -7,6 +7,10 @@ services:
     cpu_shares: 128
     environment:
       TZ: Europe/Copenhagen
+      # Local Whisper model (Settings -> Correctness -> "Use local Whisper"). Any whisper.cpp
+      # model name works; small.en-q5_1 ships pre-baked, others download once into ./data on
+      # first use. Non-English audio needs a multilingual model (small, medium, ...), not .en.
+      WHISPER_MODEL: small.en-q5_1
     ports:
       - "8787:8787"
     volumes:

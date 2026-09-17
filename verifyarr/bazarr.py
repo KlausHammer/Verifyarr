@@ -17,6 +17,7 @@ from verifyarr import log
 from verifyarr import db
 from verifyarr.settings import Config
 from verifyarr.correctness import correctness_check
+from verifyarr.discovery import SUBTITLE_EXTS, _lang_from_name_parts
 
 
 
@@ -38,8 +39,26 @@ def bazarr_to_local_path(cfg: Config, bazarr_path: str) -> Path:
     return Path(bazarr_path)
 
 
+def _bazarr_configured(cfg: Config) -> bool:
+    """Whether Bazarr calls can even go out — every lookup below degrades to its own
+    "no data" answer without this, so there is one place saying what "configured" means."""
+    return bool(cfg.bazarr_url and cfg.bazarr_api_key)
+
+
+def response_items(resp) -> list:
+    """A Bazarr GET's data[] list, or [] on ANY failure (no connection, non-200 status,
+    unparseable JSON). Every catalog/history read shares this so "Bazarr is down" degrades
+    to "no data" the same way in all of them — never an exception, never a partial answer."""
+    if resp is None or resp.status_code != 200:
+        return []
+    try:
+        return resp.json().get("data", [])
+    except ValueError:
+        return []
+
+
 def bazarr_request(cfg: Config, method: str, path: str, **kwargs):
-    if not cfg.bazarr_url or not cfg.bazarr_api_key:
+    if not _bazarr_configured(cfg):
         return None
     headers = kwargs.pop("headers", {})
     headers["X-API-KEY"] = cfg.bazarr_api_key
@@ -57,18 +76,11 @@ def bazarr_build_history_index(cfg: Config) -> dict:
     provider/subs_id/ids, so existing (not just-downloaded) files can also be
     auto-blacklisted. Requires bazarr.url + bazarr.api_key."""
     index: dict[str, dict] = {}
-    if not cfg.bazarr_url or not cfg.bazarr_api_key:
+    if not _bazarr_configured(cfg):
         return index
-    for kind, endpoint, id_field in (("episode", "/episodes/history", "sonarrEpisodeId"),
-                                      ("movie", "/movies/history", "radarrId")):
+    for kind, endpoint in (("episode", "/episodes/history"), ("movie", "/movies/history")):
         resp = bazarr_request(cfg, "GET", endpoint, params={"start": 0, "length": -1})
-        if resp is None or resp.status_code != 200:
-            continue
-        try:
-            entries = resp.json().get("data", [])
-        except ValueError:
-            continue
-        for e in entries:
+        for e in response_items(resp):
             sp = e.get("subtitles_path")
             if not sp or e.get("blacklisted"):
                 continue
@@ -139,7 +151,7 @@ def bazarr_library_info(cfg: Config, ids_out: Optional[dict] = None) -> tuple[di
     lookups."""
     embedded: dict[Path, set[str]] = {}
     titles: dict[Path, str] = {}
-    if not cfg.bazarr_url or not cfg.bazarr_api_key:
+    if not _bazarr_configured(cfg):
         return embedded, titles
 
     def _embedded_langs(item: dict) -> set[str]:
@@ -162,48 +174,36 @@ def bazarr_library_info(cfg: Config, ids_out: Optional[dict] = None) -> tuple[di
                 ids_out[local] = ids_for(item)
 
     movies_resp = bazarr_request(cfg, "GET", "/movies", params={"start": 0, "length": -1})
-    if movies_resp is not None and movies_resp.status_code == 200:
-        try:
-            _absorb(movies_resp.json().get("data", []), title_for=lambda m: m.get("title"),
-                    ids_for=lambda m: {"kind": "movie", "series_id": None, "episode_id": None,
-                                        "radarr_id": m.get("radarrId")})
-        except ValueError:
-            pass
+    _absorb(response_items(movies_resp), title_for=lambda m: m.get("title"),
+            ids_for=lambda m: {"kind": "movie", "series_id": None, "episode_id": None,
+                                "radarr_id": m.get("radarrId")})
 
     series_resp = bazarr_request(cfg, "GET", "/series", params={"start": 0, "length": -1})
     series_titles: dict = {}
     series_ids: list = []
-    if series_resp is not None and series_resp.status_code == 200:
-        try:
-            for s in series_resp.json().get("data", []):
-                sid = s.get("sonarrSeriesId")
-                if sid is not None:
-                    series_ids.append(sid)
-                    if s.get("title"):
-                        series_titles[sid] = s["title"]
-        except ValueError:
-            pass
+    for s in response_items(series_resp):
+        sid = s.get("sonarrSeriesId")
+        if sid is not None:
+            series_ids.append(sid)
+            if s.get("title"):
+                series_titles[sid] = s["title"]
 
     # One request with every seriesid[] repeated, rather than one call per show -- /episodes
     # requires at least one seriesid[]/episodeid[] (unlike /movies, it 404s with neither).
     if series_ids:
         episodes_resp = bazarr_request(cfg, "GET", "/episodes", params={"seriesid[]": series_ids})
-        if episodes_resp is not None and episodes_resp.status_code == 200:
-            try:
-                # An episode's own "title" field is the EPISODE's name, not the show's -- the
-                # show title (what we actually want here) comes from series_titles instead.
-                _absorb(episodes_resp.json().get("data", []),
-                        title_for=lambda ep: series_titles.get(ep.get("sonarrSeriesId")),
-                        ids_for=lambda ep: {"kind": "episode", "series_id": ep.get("sonarrSeriesId"),
-                                             "episode_id": ep.get("sonarrEpisodeId"), "radarr_id": None})
-            except ValueError:
-                pass
+        # An episode's own "title" field is the EPISODE's name, not the show's -- the
+        # show title (what we actually want here) comes from series_titles instead.
+        _absorb(response_items(episodes_resp),
+                title_for=lambda ep: series_titles.get(ep.get("sonarrSeriesId")),
+                ids_for=lambda ep: {"kind": "episode", "series_id": ep.get("sonarrSeriesId"),
+                                     "episode_id": ep.get("sonarrEpisodeId"), "radarr_id": None})
 
     return embedded, titles
 
 
 def bazarr_blacklist(cfg: Config, meta: dict) -> bool:
-    if not cfg.bazarr_url or not cfg.bazarr_api_key:
+    if not _bazarr_configured(cfg):
         return False
     if meta.get("kind") == "movie":
         path, data = "/movies/blacklist", {
@@ -234,12 +234,7 @@ def bazarr_current_subtitle_path(cfg: Config, series_id, episode_id, lang: str) 
     filename can change (e.g. .en.srt -> .en.hi.srt) depending on which release the search
     found, so we can't just reuse the original path."""
     resp = bazarr_request(cfg, "GET", "/episodes", params={"seriesid[]": series_id})
-    if resp is None or resp.status_code != 200:
-        return None
-    try:
-        episodes = resp.json().get("data", [])
-    except ValueError:
-        return None
+    episodes = response_items(resp)
     for e in episodes:
         if e.get("sonarrEpisodeId") == episode_id:
             for s in e.get("subtitles", []):
@@ -254,12 +249,7 @@ def bazarr_current_subtitle_path_movie(cfg: Config, radarr_id, lang: str) -> Opt
     without the episode level. Movie support elsewhere in bazarr.py (blacklist/remediate)
     is still series-only; only this function supports movies."""
     resp = bazarr_request(cfg, "GET", "/movies", params={"radarrid[]": radarr_id})
-    if resp is None or resp.status_code != 200:
-        return None
-    try:
-        movies = resp.json().get("data", [])
-    except ValueError:
-        return None
+    movies = response_items(resp)
     for m in movies:
         if m.get("radarrId") == radarr_id:
             for s in m.get("subtitles", []):
@@ -275,11 +265,8 @@ def bazarr_history_score(cfg: Config, kind: str, subtitles_path: str) -> Optiona
     that was already there and never went through Bazarr)."""
     endpoint = "/movies/history" if kind == "movie" else "/episodes/history"
     resp = bazarr_request(cfg, "GET", endpoint, params={"start": 0, "length": -1})
-    if resp is None or resp.status_code != 200:
-        return None
-    try:
-        entries = resp.json().get("data", [])
-    except ValueError:
+    entries = response_items(resp)
+    if not entries:
         return None
     # Bazarr returns history newest-first, so the first match for this path is the latest —
     # there's no reliable sortable timestamp field in the response to double-check that with
@@ -300,13 +287,18 @@ def bazarr_search_candidates(cfg: Config, episode_id, lang: str) -> list[dict]:
     so we pick among candidates Bazarr would otherwise reject, using our own Whisper check
     as the judge instead of its score."""
     resp = bazarr_request(cfg, "GET", "/providers/episodes", params={"episodeid": episode_id, "language": lang})
-    if resp is None or resp.status_code != 200:
-        return []
-    try:
-        candidates = resp.json().get("data", [])
-    except ValueError:
-        return []
+    candidates = response_items(resp)
     return sorted(candidates, key=lambda c: -(c.get("score") or 0))
+
+
+def _candidates_above_min_score(cfg: Config, candidates: list[dict]) -> list[dict]:
+    """Bazarr provider-search candidates clearing automation.remediate_min_score (Bazarr's OWN
+    0-100 judgment, not our correctness check) — 0 disables the filter. Shared by _remediate
+    and request_replacement_fire_and_forget so both agree on which candidates are even
+    attemptable."""
+    if cfg.remediate_min_score <= 0:
+        return list(candidates)
+    return [c for c in candidates if (c.get("score") or 0) >= cfg.remediate_min_score]
 
 
 def bazarr_manual_download(cfg: Config, series_id, episode_id, provider: str, subtitle_id: str) -> bool:
@@ -396,6 +388,33 @@ def verify_subtitle_candidate(video_path: Path, subtitle_path: Path, lang: Optio
     return {"ok": result["flag"] == "ok", "flag": result["flag"], "avg_score": result["avg_score"]}
 
 
+def _find_fresh_local_subtitle(video_path: Path, lang: Optional[str], newer_than: float) -> Optional[Path]:
+    """Fallback for when bazarr_to_local_path can't find the file (missing/wrong path_map) --
+    looks directly in the video's own folder instead, which needs no path_map at all. Only
+    matches a file modified after `newer_than` (this attempt's own start time), so an old,
+    unrelated subtitle already there is never mistaken for the new one."""
+    try:
+        entries = list(video_path.parent.iterdir())
+    except OSError:
+        return None
+    stem = video_path.stem
+    candidates = []
+    for f in entries:
+        if not f.is_file() or f.suffix.lower() not in SUBTITLE_EXTS or not f.name.startswith(stem):
+            continue
+        try:
+            if f.stat().st_mtime <= newer_than:
+                continue
+        except OSError:
+            continue
+        # First lang-shaped segment after the stem, not the last-before-extension -- avoids
+        # misreading "en.hi.srt" as language "hi" (parse_lang_from_filename's own trap here).
+        if lang and _lang_from_name_parts(f.name, len(stem)) != lang:
+            continue
+        candidates.append(f)
+    return max(candidates, key=lambda f: f.stat().st_mtime) if candidates else None
+
+
 def _remediate(video_path: Path, series_id, episode_id, lang: Optional[str], cfg: Config,
                 tried_subs_ids: set, cancel_event=None, conn=None, run_id: Optional[int] = None,
                 try_auto_download_wait: bool = True) -> str:
@@ -419,15 +438,22 @@ def _remediate(video_path: Path, series_id, episode_id, lang: Optional[str], cfg
     def try_current_file_and_maybe_blacklist(source: str, max_wait_s: float = 12.0) -> Optional[str]:
         """Finds the episode's current subtitle for the language, tests it, and blacklists it
         if it fails. Returns a success message if it passed, otherwise None."""
+        started_at = time.time()
         bpath = bazarr_wait_for_subtitle(cfg, series_id, episode_id, lang,
                                           attempts=max(1, int(max_wait_s // 2)), delay_s=2.0)
-        if not bpath:
-            log_lines.append(f"{source}: no file appeared")
-            return None
-        local_path = bazarr_to_local_path(cfg, bpath)
-        if not local_path.exists():
-            log_lines.append(f"{source}: Bazarr says {bpath}, but the file does not exist locally (path mapping?)")
-            return None
+        local_path = bazarr_to_local_path(cfg, bpath) if bpath else None
+        if local_path is None or not local_path.exists():
+            # Bazarr's own path didn't resolve (missing/wrong path_map, or no report at all) --
+            # look directly in the video's own folder instead, no path_map needed.
+            fallback = _find_fresh_local_subtitle(video_path, lang, started_at)
+            if fallback is not None:
+                local_path = fallback
+            elif not bpath:
+                log_lines.append(f"{source}: no file appeared")
+                return None
+            else:
+                log_lines.append(f"{source}: Bazarr says {bpath}, but the file does not exist locally (path mapping?)")
+                return None
         result = verify_subtitle_candidate(video_path, local_path, lang, cfg, conn=conn, run_id=run_id,
                                             cancel_event=cancel_event)
         if result["ok"]:
@@ -436,15 +462,9 @@ def _remediate(video_path: Path, series_id, episode_id, lang: Optional[str], cfg
         log_lines.append(f"{source}: {result['flag']} (score={result['avg_score']})")
         # find provider/subs_id for THIS specific file via the history, so we blacklist exactly it
         hist = bazarr_request(cfg, "GET", "/episodes/history", params={"episodeid": episode_id, "length": -1})
-        entry = None
-        if hist is not None and hist.status_code == 200:
-            try:
-                for row in hist.json().get("data", []):
-                    if (row.get("language") or {}).get("code2") == lang and str(row.get("subs_id")) not in map(str, tried_subs_ids):
-                        entry = row
-                        break
-            except ValueError:
-                pass
+        entry = next((row for row in response_items(hist)
+                      if (row.get("language") or {}).get("code2") == lang
+                      and str(row.get("subs_id")) not in map(str, tried_subs_ids)), None)
         if entry:
             tried_subs_ids.add(entry.get("subs_id"))
             bl_meta = {
@@ -474,12 +494,11 @@ def _remediate(video_path: Path, series_id, episode_id, lang: Optional[str], cfg
     # automation.remediate_min_score (default 80%) — Bazarr's OWN judgment of the candidate, not
     # our correctness check (that only runs after a download). Filters out candidates before ever
     # downloading them, so a clearly-bad match never even gets attempted.
-    if cfg.remediate_min_score > 0:
-        before = len(candidates)
-        candidates = [c for c in candidates if (c.get("score") or 0) >= cfg.remediate_min_score]
-        skipped = before - len(candidates)
-        if skipped:
-            log_lines.append(f"skipped {skipped} candidate(s) below Bazarr score {cfg.remediate_min_score}")
+    before = len(candidates)
+    candidates = _candidates_above_min_score(cfg, candidates)
+    skipped = before - len(candidates)
+    if skipped:
+        log_lines.append(f"skipped {skipped} candidate(s) below Bazarr score {cfg.remediate_min_score}")
 
     attempts = 0
     for cand in candidates:
@@ -556,9 +575,7 @@ def request_replacement_fire_and_forget(cfg: Config, series_id, episode_id, lang
     reaches this file, same as any other subtitle."""
     if not series_id or not episode_id:
         return "no replacement search — missing series_id/episode_id"
-    candidates = bazarr_search_candidates(cfg, episode_id, lang)
-    if cfg.remediate_min_score > 0:
-        candidates = [c for c in candidates if (c.get("score") or 0) >= cfg.remediate_min_score]
+    candidates = _candidates_above_min_score(cfg, bazarr_search_candidates(cfg, episode_id, lang))
     if not candidates:
         return "no replacement search — no candidates found"
     best = candidates[0]

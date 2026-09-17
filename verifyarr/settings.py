@@ -24,6 +24,22 @@ DEFAULT_BACKUP_DIR = DATA_DIR / "backups"
 DEFAULT_REPORT_DIR = DATA_DIR / "reports"
 DEFAULT_QUARANTINE_DIR = DATA_DIR / "quarantine"
 
+# Which local Whisper model ships as the default (Settings -> Correctness -> "Model file path")
+# -- a real Docker requirement (which model the image can use without downloading), so it's a
+# docker-compose env var, same as DATA_DIR above, not a settings-table value. Matches the
+# Dockerfile's own WHISPER_MODEL build arg default -- change one, change the other to keep them
+# in sync. small.en-q5_1 over plain small: same measured scores (0.915 vs 0.913 on the
+# correct-vs-wrong-subtitle margin) at ~180MB instead of ~490MB, which matters on an N100 sharing
+# memory with its iGPU. English-only, so see _run_local_whisper's language handling.
+WHISPER_MODEL = os.environ.get("WHISPER_MODEL", "small.en-q5_1")
+_WHISPER_MODEL_FILENAME = f"ggml-{WHISPER_MODEL}.bin"
+_BAKED_IN_WHISPER_MODEL_PATH = Path("/app/models") / _WHISPER_MODEL_FILENAME
+# The Dockerfile only bakes in ONE model (whatever WHISPER_MODEL was at build time) -- if this
+# env var asks for a DIFFERENT one, correctness._download_local_whisper_model fetches it into
+# /data instead (persisted by docker-compose's existing /data volume, no separate volume needed).
+DEFAULT_LOCAL_WHISPER_MODEL_PATH = (_BAKED_IN_WHISPER_MODEL_PATH if _BAKED_IN_WHISPER_MODEL_PATH.is_file()
+                                    else DATA_DIR / "whisper-models" / _WHISPER_MODEL_FILENAME)
+
 
 def _env_bool(name: str, default: bool) -> bool:
     val = os.environ.get(name)
@@ -92,6 +108,16 @@ def _parse_path_map(raw: str) -> list[tuple[str, str]]:
     return pairs
 
 
+def _is_under(path: Path, root: Path) -> bool:
+    """Whether path lives anywhere under root. One place for the try/relative_to idiom
+    so kind_for and media_root_for can't disagree on what "under" means."""
+    try:
+        path.relative_to(root)
+        return True
+    except ValueError:
+        return False
+
+
 @dataclass
 class Config:
     movies_folder: Optional[Path]
@@ -125,27 +151,41 @@ class Config:
     # Runs actual TRANSCRIPTION (transcribe/transcribe_verbose — the per-clip Whisper calls that
     # dominate correctness-check's API usage) through a local whisper.cpp binary instead of
     # stt_provider's cloud endpoint — no network call, no API key, no rate limit, no per-request
-    # cost. Deliberately narrow: translation (translate_to_english) and the line-order LLM
-    # confirm (line_order._llm_batch_call) are plain-text chat-completion calls, not speech
-    # recognition, so they keep using stt_provider's cloud key exactly as before regardless of
-    # this flag — a local setup that also wants those either keeps a (much cheaper, rarely-hit)
-    # cloud key for just that, or turns line_order_audio_confirm off. See has_stt_configured,
-    # and correctness._run_local_whisper for the actual subprocess call. Aimed at Intel iGPU
-    # boxes (e.g. N100) via whisper.cpp's Vulkan backend baked into the Docker image — see
-    # Dockerfile — but works anywhere the binary+model exist, GPU or not.
+    # cost. Deliberately narrow: translation (translate_to_english) is a plain-text
+    # chat-completion call, not speech recognition, so it keeps using stt_provider's cloud key
+    # exactly as before regardless of this flag — a local setup that also wants translated
+    # subtitles either keeps a (much cheaper, rarely-hit) cloud key for just that, or only checks
+    # same-language subtitles. See has_stt_configured, and correctness._run_local_whisper for the
+    # actual subprocess call. Aimed at Intel iGPU boxes (e.g. N100) via whisper.cpp's Vulkan
+    # backend baked into the Docker image — see Dockerfile — but works anywhere the binary+model
+    # exist, GPU or not.
     use_local_whisper: bool
     local_whisper_binary: str
     local_whisper_model: str
     local_whisper_use_gpu: bool
     local_whisper_threads: int
+    # VAD timeline traffic control (see vad.py). Binary+model are local-only and optional:
+    # empty means "no binary timeline", and placement falls back to cached transcript
+    # segments, then to subtitle dialogue density. Nothing here is language-specific.
+    vad_binary: str
+    vad_model: str
+    vad_min_speech_seconds: float
     # ONE count for both series and movies -- a longer file isn't harder to verify, it's still
     # the same "does this dialogue match the audio" question, so there's no reason to sample it
-    # more.
+    # more. 5 rather than 3 because of the TIMING screen, not the content check: content
+    # separates perfectly at 3 clips, but 3 clips only produce ~2.3 confident anchors and catch
+    # 7 of 10 mis-timed files, where 5 clips produce ~3.9 and catch 9 of 10 (see
+    # pipeline._screen_says_needs_full).
     sample_count: int
     clip_seconds: int
     window_minutes: float
     overlap_threshold: float
     require_audio_lang: Optional[str]
+    # sampled (default) = a handful of short clips, as above. full = one whole-file Whisper
+    # transcription (cached per video), used to sync-verify/correctness-check/line-order-check
+    # EVERY line instead of a few samples -- much stronger, but far more Whisper work per file
+    # (local Whisper: mostly time; cloud: real API cost/quota). See generate.full_transcript_for_check.
+    whisper_mode: str
     # A big spread between alass's own per-block shifts (see pipeline.sync_pair's shift_blocks)
     # CAN mean a real structural cut, but it's also exactly what a wrong-but-similarly-paced
     # subtitle looks like (alass only fits speech TIMING, not content). Escalates an otherwise-
@@ -160,9 +200,10 @@ class Config:
     # confident anchor showing a residual mismatch above subtitles.ANCHOR_SUSPECT_THRESHOLD_S
     # (an anchor-noise-aware threshold, NOT min_change_seconds) escalates an otherwise-"ok" file
     # to SUSPECT -- catches a subtitle that's only right for PART of the episode (see
-    # block_spread_suspect_threshold_s' own docstring for the motivating case). Off by default:
-    # the anchor-matching thresholds are still provisional, unvalidated against a wide range of
-    # real segment data -- see the anchor-sync plan's Open Questions.
+    # block_spread_suspect_threshold_s' own docstring for the motivating case). ON by default
+    # since being validated against 52 real episodes: it found 9 genuinely misaligned files alass
+    # had reported "already in sync", with 0 false escalations once correctness.
+    # ANCHOR_SUSPECT_MIN_SAMPLES required 3 agreeing residuals instead of accepting a single one.
     #
     # What this flag does NOT gate: anchors are always COMPUTED (CPU only, cached with the
     # sample), and pipeline._resolve_ambiguous_sync always uses them to CHOOSE between alass's
@@ -172,6 +213,18 @@ class Config:
     # spoken language (subtitles.anchors_applicable) -- a Danish subtitle on English audio has
     # none, so neither this escalation nor the candidate choice has timing evidence for it.
     anchor_check_enabled: bool
+    # With this on, a file the anchors condemn is CORRECTED from those same anchors rather than
+    # only flagged -- per-region, so a file that needs different offsets in different stretches is
+    # handled too. The correction is re-measured against the audio before anything is written, and
+    # a file whose anchor evidence isn't consistent enough to plan from (a continuous drift, say)
+    # falls back to the ordinary SUSPECT path untouched. Needs anchor_check_enabled.
+    anchor_resync_enabled: bool
+    # Sampled mode screens with a few clips; when those clips disagree about the offset (or one
+    # shows a real residual), a handful of probes cannot say WHERE the file changes -- measured,
+    # escalating with more probes plans the correction right on only 4 of 9 real files, while
+    # escalating to a full transcript gets 8 of 9. So a flagged file is re-checked against the
+    # whole transcript instead. Costs a full transcription, but only for files that screened bad.
+    escalate_sampled_to_full: bool
 
     # Line-order check (see line_order.py). Off by default, opt-in.
     line_order_enabled: bool
@@ -203,10 +256,13 @@ class Config:
     poll_library_enabled: bool = True
     poll_library_interval_minutes: int = 720  # 12 hours
 
-    # Off by default — see fileops.backup_subtitle. Gates EVERY backup_subtitle call (both the
+    # ON by default — see fileops.backup_subtitle. Gates EVERY backup_subtitle call (both the
     # ordinary sync-fix and the line-order auto-fix), not a separate switch per feature — see
-    # pipeline.py.
-    backup_originals: bool = False
+    # pipeline.py. On rather than off because this app rewrites subtitles in place in three
+    # different places, and the line-order auto-fix runs at ~98% precision -- measured, so ~2% of
+    # its swaps are wrong, and without this there is nothing to undo them with. A failed backup
+    # never blocks the fix itself (pipeline._backup_best_effort).
+    backup_originals: bool = True
 
     # A manual Scan (and CLI calls) always use sync_enabled/enable_correctness_check/
     # line_order_enabled above as-is — its own, independent switch. The scheduled sweep AND the
@@ -219,12 +275,11 @@ class Config:
     auto_scan_line_order_enabled: bool = False
 
     # What to do with a file the CORRECTNESS check flags SUSPECT (off | quarantine | blacklist |
-    # remediate) — independent of line_order_auto_action below, since the two checks can disagree
-    # about how much to trust their own SUSPECT verdict. See pipeline.py's handle_suspect calls.
+    # remediate). There is deliberately no line-order equivalent: a confirmed swap is a safe
+    # mechanical per-line fix (measured precision 0.98 against an independent reference), so
+    # "the lines are out of order" is never on its own a reason to throw the file away and fetch
+    # another release. A real content problem is caught by the correctness score instead.
     correctness_auto_action: str = "off"
-    # Same, but for line-order's own SUSPECT-equivalent (a widespread swap pattern confirmed by
-    # both Whisper and the LLM — see line_order.py's swap_severity).
-    line_order_auto_action: str = "off"
 
     # Same "manual Scan/CLI has its own switch, scheduled sweep + Bazarr poll share a second
     # one" split as sync_enabled/auto_scan_sync_enabled above -- see jobs._effective_cfg.
@@ -324,6 +379,9 @@ class Config:
             local_whisper_model=vals["correctness.local_whisper_model"],
             local_whisper_use_gpu=vals["correctness.local_whisper_use_gpu"],
             local_whisper_threads=vals["correctness.local_whisper_threads"],
+            vad_binary=vals["sync.vad_binary"],
+            vad_model=vals["sync.vad_model"],
+            vad_min_speech_seconds=vals["sync.vad_min_speech_seconds"],
             correctness_auto_action=vals["correctness.auto_action"],
             sample_count=vals["sync.sample_count"],
             clip_seconds=vals["sync.clip_seconds"],
@@ -331,12 +389,14 @@ class Config:
             overlap_threshold=vals["sync.overlap_threshold"],
             block_spread_suspect_threshold_s=vals["sync.block_spread_suspect_threshold_s"],
             anchor_check_enabled=vals["sync.anchor_check_enabled"],
+            anchor_resync_enabled=vals["sync.anchor_resync_enabled"],
+            escalate_sampled_to_full=vals["sync.escalate_sampled_to_full"],
             require_audio_lang=vals["correctness.require_audio_lang"] or None,
+            whisper_mode=vals["sync.whisper_mode"],
             line_order_enabled=vals["sync.line_order_enabled"],
             line_order_audio_confirm=vals["sync.line_order_audio_confirm"],
             line_order_swap_threshold_pct=vals["sync.line_order_swap_threshold_pct"],
             line_order_swap_threshold_min=vals["sync.line_order_swap_threshold_min"],
-            line_order_auto_action=vals["sync.line_order_auto_action"],
             quarantine_dir=DEFAULT_QUARANTINE_DIR,
             bazarr_url=normalize_url(vals["bazarr.url"]) or None,
             bazarr_api_key=vals["bazarr.api_key"] or None,
@@ -444,29 +504,18 @@ class Config:
         discovery.infer_title_and_episode) for files that aren't under either yet. Used for
         the Movies/Series tabs in the webapp's library view (see
         discovery.build_library_video_rows)."""
-        if self.series_folder:
-            try:
-                path.relative_to(self.series_folder)
-                return "series"
-            except ValueError:
-                pass
-        if self.movies_folder:
-            try:
-                path.relative_to(self.movies_folder)
-                return "movie"
-            except ValueError:
-                pass
+        if self.series_folder and _is_under(path, self.series_folder):
+            return "series"
+        if self.movies_folder and _is_under(path, self.movies_folder):
+            return "movie"
         from verifyarr.discovery import infer_title_and_episode
         season_episode, _title = infer_title_and_episode(path)
         return "series" if season_episode else "movie"
 
     def media_root_for(self, path: Path) -> Path:
         for root in self.media_roots:
-            try:
-                path.relative_to(root)
+            if _is_under(path, root):
                 return root
-            except ValueError:
-                continue
         return path.parent
 
     def with_dry_run(self, dry_run: bool) -> "Config":
@@ -480,9 +529,9 @@ SETTING_DEFS: dict = {
     "general.movies_folder":   ("general", "str", ""),
     "general.series_folder":   ("general", "str", ""),
     "general.subtitle_langs":  ("general", "list", ["en"]),
-    # Off by default — see fileops.backup_subtitle / pipeline.py. Gates every backup, not just one
+    # On by default — see fileops.backup_subtitle / pipeline.py. Gates every backup, not just one
     # feature's.
-    "general.backup_originals": ("general", "bool", False),
+    "general.backup_originals": ("general", "bool", True),
     # What the scheduled sweep AND the Bazarr wanted-subtitles poll do (shared — NOT a manual
     # Scan, which uses sync.enabled/correctness.enabled/sync.line_order_enabled as its own,
     # separate switch). See jobs._effective_cfg / pipeline.py.
@@ -499,24 +548,31 @@ SETTING_DEFS: dict = {
     # shift and how well the correctness check compares, hence grouped with sync tuning.
     # ONE count for both series and movies — a longer file isn't harder to verify, no reason
     # to sample it more.
-    "sync.sample_count":        ("sync", "int", 3),
-    "sync.clip_seconds":        ("sync", "int", 30),
+    "sync.sample_count":        ("sync", "int", 5),
+    "sync.clip_seconds":        ("sync", "int", 60),
     "sync.window_minutes":      ("sync", "float", 0.5),
     "sync.overlap_threshold":   ("sync", "float", 0.25),
+    # sampled | full -- see Config.whisper_mode.
+    "sync.whisper_mode":        ("sync", "str", "sampled"),
+    # VAD timeline for sample placement (see vad.py). Empty binary = disabled; the model
+    # is deliberately NOT auto-downloaded (no verified stable URL), mount or place it at
+    # vad_model. Language-independent by construction: speech activity has no language.
+    "sync.vad_binary":          ("sync", "str", ""),
+    "sync.vad_model":           ("sync", "str", "/app/models/ggml-silero-v5.1.2.bin"),
+    "sync.vad_min_speech_seconds": ("sync", "float", 2.0),
     # See Config.block_spread_suspect_threshold_s -- 20s chosen as "clearly more than ordinary
     # sync jitter" while still well below what a real recap/extended-cut spread usually looks
     # like (typically 60s+), and the required agreeing Whisper sample is the actual gate that
     # keeps a legitimate structural cut from being wrongly escalated.
     "sync.block_spread_suspect_threshold_s": ("sync", "float", 20.0),
-    "sync.anchor_check_enabled": ("sync", "bool", False),
+    "sync.anchor_check_enabled": ("sync", "bool", True),
+    "sync.anchor_resync_enabled": ("sync", "bool", True),
+    "sync.escalate_sampled_to_full": ("sync", "bool", True),
     # Off by default, opt-in — see line_order.py.
     "sync.line_order_enabled":       ("sync", "bool", False),
     "sync.line_order_audio_confirm": ("sync", "bool", False),
     "sync.line_order_swap_threshold_pct": ("sync", "float", 0.30),
     "sync.line_order_swap_threshold_min": ("sync", "int", 3),
-    # off | quarantine | blacklist | remediate — what to do with a file line-order flags as a
-    # widespread swap (see Config.line_order_auto_action).
-    "sync.line_order_auto_action": ("sync", "str", "off"),
 
     "correctness.enabled":                  ("correctness", "bool", True),
     "correctness.stt_provider":             ("correctness", "str", "groq"),  # groq | openrouter
@@ -533,17 +589,18 @@ SETTING_DEFS: dict = {
     "correctness.openrouter_llm_model":          ("correctness", "str", "openai/gpt-4o-mini"),
     "correctness.openrouter_llm_model_fallback": ("correctness", "str", ""),
     # Local whisper.cpp transcription — see Config.use_local_whisper's docstring for exactly
-    # what this does and doesn't replace. Binary/model default to where the Dockerfile's
-    # whisper-builder stage bakes them (see Dockerfile) — only relevant once use_local_whisper
-    # is turned on, so a stock install with the defaults left as-is is unaffected.
+    # what this does and doesn't replace. Binary defaults to where the Dockerfile bakes it; model
+    # defaults to WHISPER_MODEL (docker-compose env var, default "small.en-q5_1" — see
+    # DEFAULT_LOCAL_WHISPER_MODEL_PATH), downloaded on first use if it isn't already baked into
+    # the image. Only relevant once use_local_whisper is turned on.
     "correctness.use_local_whisper":     ("correctness", "bool", False),
     "correctness.local_whisper_binary":  ("correctness", "str", "/usr/local/bin/whisper-cli"),
-    "correctness.local_whisper_model":   ("correctness", "str", "/app/models/ggml-small.en-q5_1.bin"),
+    "correctness.local_whisper_model":   ("correctness", "str", str(DEFAULT_LOCAL_WHISPER_MODEL_PATH)),
     "correctness.local_whisper_use_gpu": ("correctness", "bool", True),
     "correctness.local_whisper_threads": ("correctness", "int", 4),
     "correctness.require_audio_lang":       ("correctness", "str", "en"),
     # off | quarantine | blacklist | remediate — what to do with a file the correctness check
-    # flags SUSPECT (see Config.correctness_auto_action). Independent of sync.line_order_auto_action.
+    # flags SUSPECT (see Config.correctness_auto_action).
     "correctness.auto_action":              ("correctness", "str", "off"),
 
     # Generate missing subtitles (see generate.py) -- own settings group, deliberately separate
@@ -644,9 +701,9 @@ def _deserialize(kind: str, raw: Optional[str], default):
         return int(raw)
     if kind == "float":
         return float(raw)
-    if kind == "list":
-        return json.loads(raw) if raw else []
-    if kind == "list_pairs":
+    if kind in ("list", "list_pairs"):
+        # Same JSON-array storage for both (see _serialize) — the pair structure is just
+        # a convention on top, not a separate encoding.
         return json.loads(raw) if raw else []
     return raw
 
@@ -723,10 +780,9 @@ _ENV_IMPORT_MAP = {
     "correctness.groq_llm_model":           ("GROQ_LLM_MODEL", "str"),
     "correctness.groq_llm_model_fallback":  ("GROQ_LLM_MODEL_FALLBACK", "str"),
     "correctness.require_audio_lang":       ("CORRECTNESS_REQUIRE_AUDIO_LANG", "str"),
-    # The old single AUTO_ACTION_ON_SUSPECT seeds BOTH new per-check settings the same way, so an
-    # upgrading user's old global behavior is preserved until they choose to split them apart.
+    # The old single AUTO_ACTION_ON_SUSPECT still seeds this, so an upgrading user's behavior is
+    # preserved; it used to seed a line-order action too, which no longer exists.
     "correctness.auto_action":              ("AUTO_ACTION_ON_SUSPECT", "str"),
-    "sync.line_order_auto_action":          ("AUTO_ACTION_ON_SUSPECT", "str"),
     "automation.remediate_max_attempts":    ("REMEDIATE_MAX_ATTEMPTS", "int"),
     "automation.dry_run":                   ("DRY_RUN", "bool"),
     "bazarr.url":                           ("BAZARR_URL", "str"),

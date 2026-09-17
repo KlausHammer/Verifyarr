@@ -35,34 +35,34 @@ def _run_scheduled_sweep() -> None:
         log.info("Scheduled sweep skipped — another job started just before")
 
 
+def _prune_with_fresh_conn(prune_fn, max_age_days: int, item_desc: str) -> None:
+    """One prune pass on its own connection: open, prune, log only when something was
+    actually removed, always close. All three daily cache prunes share this so the
+    connect/try/log/finally shape exists once."""
+    conn = db.connect()
+    try:
+        removed = prune_fn(conn, max_age_days=max_age_days)
+        if removed:
+            log.info("Pruned %d %s older than %d days", removed, item_desc, max_age_days)
+    finally:
+        conn.close()
+
+
 def _prune_transcript_cache_job() -> None:
     """video_transcript_cache (see correctness.correctness_check) has no settings knob -- fixed
     at 30 days, same as the reasoning behind reports.MAX_REPORTS not being one either."""
-    conn = db.connect()
-    try:
-        removed = db.prune_transcript_cache(conn, max_age_days=30)
-        if removed:
-            log.info("Pruned %d cached transcript(s) older than 30 days", removed)
-    finally:
-        conn.close()
+    _prune_with_fresh_conn(db.prune_transcript_cache, 30, "cached transcript(s)")
 
 
 def _prune_full_transcript_cache_job() -> None:
     """video_full_transcript_cache (see generate.py) -- a much longer retention than the ordinary
     sample-clip cache (90 vs 30 days): a full-track transcript is far more expensive to
     regenerate (a whole video's worth of Whisper calls, not one 30s clip)."""
-    conn = db.connect()
-    try:
-        removed = db.prune_full_transcript_cache(conn, max_age_days=90)
-        if removed:
-            log.info("Pruned %d cached full transcript(s) older than 90 days", removed)
-        # Same daily pass cleans up generate_attempts -- a record older than 30 days is long past
-        # both the retry cooldown and the 24-hour cap window it exists for (see generate.py).
-        removed = db.prune_generate_attempts(conn, max_age_days=30)
-        if removed:
-            log.info("Pruned %d subtitle-generation attempt record(s) older than 30 days", removed)
-    finally:
-        conn.close()
+    _prune_with_fresh_conn(db.prune_full_transcript_cache, 90, "cached full transcript(s)")
+    # Same daily pass cleans up generate_attempts -- a record older than 30 days is long past
+    # both the retry cooldown and the 24-hour cap window it exists for (see generate.py).
+    _prune_with_fresh_conn(db.prune_generate_attempts, 30,
+                            "subtitle-generation attempt record(s)")
 
 
 def _cron_to_trigger(cron_expr: str) -> CronTrigger:

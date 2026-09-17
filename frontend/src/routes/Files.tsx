@@ -226,6 +226,8 @@ export default function Files() {
           <option value="ok">ok</option>
           <option value="SUSPECT">SUSPECT</option>
           <option value="skipped">skipped</option>
+          {/* every Whisper sample failed to score -- nothing verified, not a pass */}
+          <option value="unknown">unknown</option>
           <option value="generated">generated</option>
         </select>
         <select value={status} onChange={(e) => setParam('status', e.target.value)}>

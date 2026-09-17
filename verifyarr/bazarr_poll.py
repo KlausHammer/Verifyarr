@@ -19,7 +19,7 @@ from __future__ import annotations
 import json
 
 from verifyarr import db, jobs, log
-from verifyarr.bazarr import bazarr_request
+from verifyarr.bazarr import bazarr_request, response_items
 from verifyarr.settings import Config
 
 _WANTED_ENDPOINTS = (("episode", "series", "/episodes/wanted"), ("movie", "movie", "/movies/wanted"))
@@ -32,12 +32,7 @@ def _wanted_keys(cfg: Config, kind: str, endpoint: str) -> set:
     up (not every release has Danish subs available) doesn't block noticing that another language
     (e.g. English) already resolved and is ready to scan."""
     resp = bazarr_request(cfg, "GET", endpoint, params={"start": 0, "length": -1})
-    if resp is None or resp.status_code != 200:
-        return set()
-    try:
-        items = resp.json().get("data", [])
-    except ValueError:
-        return set()
+    items = response_items(resp)
     id_field = "sonarrEpisodeId" if kind == "episode" else "radarrId"
     return {
         (i[id_field], lang.get("code2"))

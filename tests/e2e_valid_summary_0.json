@@ -1,0 +1,92 @@
+{
+ "models": [
+  "turbo",
+  "small.en-q5_1",
+  "tiny.en-cpu"
+ ],
+ "slugs": [
+  "C_S02E02"
+ ],
+ "scenarios": [
+  "clean",
+  "uniform",
+  "drift",
+  "piecewise",
+  "swap",
+  "gap"
+ ],
+ "by_scenario": {
+  "clean": {
+   "runs": 3,
+   "errors": 0,
+   "skipped": 0,
+   "mean_p50": 0.0,
+   "mean_frac_le_1s": 1.0,
+   "untouched": 0
+  },
+  "uniform": {
+   "runs": 3,
+   "errors": 0,
+   "skipped": 0,
+   "mean_p50": 0.003,
+   "mean_frac_le_1s": 1.0
+  },
+  "drift": {
+   "runs": 3,
+   "errors": 0,
+   "skipped": 0,
+   "mean_p50": 1.082,
+   "mean_frac_le_1s": 0.465
+  },
+  "piecewise": {
+   "runs": 3,
+   "errors": 0,
+   "skipped": 0,
+   "mean_p50": 0.345,
+   "mean_frac_le_1s": 0.629
+  },
+  "swap": {
+   "runs": 3,
+   "errors": 0,
+   "skipped": 0,
+   "mean_frac_restored": 0.444,
+   "noticed": 3
+  },
+  "gap": {
+   "runs": 3,
+   "errors": 0,
+   "skipped": 0,
+   "mean_p50": 0.051,
+   "mean_frac_le_1s": 1.0
+  }
+ },
+ "by_model": {
+  "turbo": {
+   "runs": 6,
+   "errors": 0,
+   "skipped": 0,
+   "mean_frac_le_1s": 0.801,
+   "mean_frac_restored": 0.5,
+   "clean_untouched": 0,
+   "clean_runs": 1
+  },
+  "small.en-q5_1": {
+   "runs": 6,
+   "errors": 0,
+   "skipped": 0,
+   "mean_frac_le_1s": 0.833,
+   "mean_frac_restored": 0.333,
+   "clean_untouched": 0,
+   "clean_runs": 1
+  },
+  "tiny.en-cpu": {
+   "runs": 6,
+   "errors": 0,
+   "skipped": 0,
+   "mean_frac_le_1s": 0.822,
+   "mean_frac_restored": 0.5,
+   "clean_untouched": 0,
+   "clean_runs": 1
+  }
+ }
+}

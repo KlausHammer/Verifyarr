@@ -23,9 +23,35 @@ from verifyarr.settings import (Config, DEFAULT_DB_PATH, clean_lang_code,
                                 import_from_env_once, migrate_log_level_once)
 
 
+def _existing_path(raw: str, label: str) -> Path:
+    """A CLI path argument that must already exist — exits(1) with the same message shape
+    every command uses, so a typo'd path fails fast before any run row is created."""
+    path = Path(raw)
+    if not path.exists():
+        log.error("%s does not exist: %s", label, path)
+        sys.exit(1)
+    return path
+
+
+def _run_target_meta(cfg: Config, video_p: Path) -> dict:
+    """The Activity-list title/kind for a one-video run — shared by cmd_single and
+    cmd_generate so the manual paths label runs exactly like the Files-page button."""
+    from verifyarr.discovery import target_label
+    return {"target_kind": cfg.kind_for(video_p),
+            "target_title": target_label(video_p, cfg.media_root_for(video_p))}
+
+
+def _execute_command(cfg: Config, conn, *, trigger: str, run_kind: str, force: bool = False,
+                     create_kwargs: Optional[dict] = None, **execute_kwargs) -> None:
+    """Create + synchronously execute one CLI run — the identical two lines every command
+    ends with, so a future change (e.g. run bookkeeping) lands in one place."""
+    run_id = jobs.create_run(conn, trigger, run_kind, cfg.dry_run, force, **(create_kwargs or {}))
+    jobs.execute_run(run_id, cfg, conn, threading.Event(), run_kind,
+                     trigger=trigger, **execute_kwargs)
+
+
 def cmd_sweep(cfg: Config, conn, force: bool, trigger: str = "cli_sweep") -> None:
-    run_id = jobs.create_run(conn, trigger, "sweep", cfg.dry_run, force)
-    jobs.execute_run(run_id, cfg, conn, threading.Event(), "sweep", trigger=trigger, force=force)
+    _execute_command(cfg, conn, trigger=trigger, run_kind="sweep", force=force)
 
 
 def cmd_single(cfg: Config, conn, video: str, subtitle: str, lang: Optional[str],
@@ -34,6 +60,8 @@ def cmd_single(cfg: Config, conn, video: str, subtitle: str, lang: Optional[str]
                radarr_id: Optional[str], trigger: str = "cli_single") -> None:
     video_p, subtitle_p = Path(video), Path(subtitle)
     if not video_p.exists() or not subtitle_p.exists():
+        # Combined check (not two _existing_path calls): the message names both paths at
+        # once, exactly as before — a CLI error string other tooling may match on.
         log.error("Video or subtitle does not exist: %s / %s", video_p, subtitle_p)
         sys.exit(1)
 
@@ -45,12 +73,9 @@ def cmd_single(cfg: Config, conn, video: str, subtitle: str, lang: Optional[str]
             "series_id": series_id, "episode_id": episode_id, "radarr_id": radarr_id,
         }
 
-    from verifyarr.discovery import target_label
-    run_id = jobs.create_run(conn, trigger, "single", cfg.dry_run, False,
-                              target_kind=cfg.kind_for(video_p),
-                              target_title=target_label(video_p, cfg.media_root_for(video_p)))
-    jobs.execute_run(run_id, cfg, conn, threading.Event(), "single", trigger=trigger,
-                      video=video_p, subtitle=subtitle_p, lang=lang, bazarr_meta=bazarr_meta)
+    _execute_command(cfg, conn, trigger=trigger, run_kind="single",
+                     create_kwargs=_run_target_meta(cfg, video_p),
+                     video=video_p, subtitle=subtitle_p, lang=lang, bazarr_meta=bazarr_meta)
 
 
 def cmd_generate(cfg: Config, conn, video: str, lang: str, trigger: str = "cli_generate") -> None:
@@ -63,10 +88,7 @@ def cmd_generate(cfg: Config, conn, video: str, lang: str, trigger: str = "cli_g
     daily cap that the automatic sweep respects -- someone asking for this one file right now is
     its own answer, the same split between manual and automatic triggers this app applies
     everywhere else (see jobs._AUTO_TRIGGERS)."""
-    video_p = Path(video)
-    if not video_p.exists():
-        log.error("Video does not exist: %s", video_p)
-        sys.exit(1)
+    video_p = _existing_path(video, "Video")
     if not cfg.generate_enabled:
         log.error("generate.enabled is off — turn it on under Settings -> Generate first.")
         sys.exit(1)
@@ -75,12 +97,9 @@ def cmd_generate(cfg: Config, conn, video: str, lang: str, trigger: str = "cli_g
         sys.exit(1)
     lang = lang.lower()
 
-    from verifyarr.discovery import target_label
-    run_id = jobs.create_run(conn, trigger, "generate_single", cfg.dry_run, False,
-                              target_kind=cfg.kind_for(video_p),
-                              target_title=target_label(video_p, cfg.media_root_for(video_p)))
-    jobs.execute_run(run_id, cfg, conn, threading.Event(), "generate_single", trigger=trigger,
-                      video=video_p, lang=lang)
+    _execute_command(cfg, conn, trigger=trigger, run_kind="generate_single",
+                     create_kwargs=_run_target_meta(cfg, video_p),
+                     video=video_p, lang=lang)
 
 
 def cmd_reset_password() -> None:

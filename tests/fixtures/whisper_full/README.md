@@ -31,3 +31,27 @@ changed):
   confound) and is instead used AS-IS in `RealWorldFixTests`, which also documents two real
   bugs `_resolve_ambiguous_sync` had that this file's genuine complexity (alass fits it as
   FIVE blocks) surfaced and that running this file through the suite led to fixing.
+
+## The 52 local fixtures (`C_S02*`, `C_S03*`, `SH_S01*`) -- two known caveats
+
+Built with local whisper.cpp (`ggml-small.en-q5_1.bin`) rather than Groq, via
+`generate.full_transcript_for_check`. Two things to know before trusting a number derived
+from them:
+
+1. **Repetition loops in 9 of the 52.** The whisper.cpp build used locks the decoder into
+   repeating one line for minutes at a time: C_S02E04 has a single 189-segment run covering
+   110-386s, and up to 41% of a transcript is affected (SH_S01E01, C_S02E04, C_S03E07,
+   C_S02E02, C_S03E03 are the worst). Root cause is NOT established -- source commit, model
+   file (sha256-identical), decoder flags, thread count, audio, backend and compiled CPU
+   features were all matched against a build that does not do it, leaving only the OS/compiler
+   toolchain. Do not assume the shipped Docker image is exempt; it has not been tested.
+   `generate._drop_repetition_loops` strips these on read, so the fixtures are usable as-is --
+   but any per-segment count taken straight from the JSON is inflated, and line-order recall
+   measured on the affected episodes runs ~0.15 lower than on the clean ones.
+2. **Seven of the Community S02 subtitles are the WRONG EPISODE's text** -- not a fixture bug,
+   a real defect in the library they were built from, confirmed against an independent
+   large-v3-turbo reference (vocabulary overlap 0.22-0.31 with their own episode, 0.89-0.94
+   with the NEXT one): C_S02E14, E15's `.en.hi.srt`, E16, E17, E20, E22, E23. These are
+   genuinely useful as wrong-subtitle test cases, but they are NOT clean baselines and must not
+   be treated as such. (E15 also has a correct `.en.srt` on disk; the fixture points at the
+   `.en.hi.srt`, which is E16's text.)

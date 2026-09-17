@@ -34,6 +34,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from verifyarr import db, pipeline
+from verifyarr.correctness import significant_anchor_residuals
+from verifyarr.subtitles import (anchor_points, anchor_regions, plan_anchor_resync,
+                                 apply_anchor_resync)
+import pysubs2
 from verifyarr.settings import Config
 from verifyarr.subtitles import load_subs
 
@@ -76,6 +80,189 @@ def _test_config(conn) -> Config:
     ).items():
         object.__setattr__(cfg, k, v)
     return cfg
+
+
+def _prime_full_cache(conn, cfg, fixtures) -> None:
+    """Pre-populate the full-transcript cache from fixtures -- the same pattern
+    verifyarr_handoff/e2e_after.py's run_one uses. Anything that escalates to a
+    full-track transcript (notably the sampled->full path) then reads real,
+    previously-transcribed segments instead of needing a live STT call."""
+    for slug, fx in fixtures.items():
+        video_path, _ = fixture_paths(fx)
+        db.save_full_transcript_cache(conn, video_path, fx["language"], fx["segments"],
+                                      stt_provider=cfg.stt_provider, stt_model=cfg.groq_model)
+
+
+
+class AnchorEscalationThresholdTests(unittest.TestCase):
+    """significant_anchor_residuals' minimum count. Measured over 52 real episodes: every FALSE
+    escalation had 1-2 flagged samples and every true one had 3-14, so the count separates them
+    where the magnitude does not (a real 3.4s residual and a false 4.8s one both occur)."""
+
+    @staticmethod
+    def _samples(shifts):
+        return [{"start": float(i * 60), "anchor": {"shift": v, "mad": 0.1, "anchor_count": 4}}
+                for i, v in enumerate(shifts)]
+
+    def test_a_single_large_residual_is_not_enough(self):
+        self.assertEqual(significant_anchor_residuals(self._samples([0.1, 0.2, -9.9])), [])
+
+    def test_two_are_still_not_enough(self):
+        self.assertEqual(significant_anchor_residuals(self._samples([0.1, -4.8, -2.8])), [])
+
+    def test_three_escalate(self):
+        bad = significant_anchor_residuals(self._samples([-19.4, -19.7, -19.1, 0.2]))
+        self.assertEqual(len(bad), 3)
+
+    def test_they_need_not_agree_in_sign(self):
+        # a genuinely broken file can be off in both directions (C_S02E19: +54, +19, -24)
+        bad = significant_anchor_residuals(self._samples([54.2, 18.9, -24.5]))
+        self.assertEqual(len(bad), 3)
+
+    def test_samples_without_a_confident_anchor_never_count(self):
+        samples = self._samples([-19.0, -19.0]) + [{"start": 900.0, "anchor": None}]
+        self.assertEqual(significant_anchor_residuals(samples), [])
+
+
+
+class AnchorResyncPlanningTests(unittest.TestCase):
+    """The planner that turns anchors into an actual correction (subtitles.plan_anchor_resync).
+    Every shape here is taken from a real file in the 52-episode corpus."""
+
+    @staticmethod
+    def _samples(pairs):
+        return [{"start": float(t), "anchor": {"shift": v, "mad": 0.1, "anchor_count": 4}}
+                for t, v in pairs]
+
+    def _subs(self, n=80, step=15000, dur=4000):
+        f = pysubs2.SSAFile()
+        for i in range(n):
+            f.append(pysubs2.SSAEvent(start=i * step, end=i * step + dur, text=f"line {i}"))
+        return f
+
+    def test_a_flat_healthy_file_gets_no_plan(self):
+        pts = [(t, 0.2) for t in range(0, 1200, 60)]
+        self.assertIsNone(plan_anchor_resync(self._subs(), self._samples(pts)))
+
+    def test_two_clean_regions_are_found(self):
+        # C_S03E14's shape: a mis-timed opening stretch, then the rest fine
+        pts = [(t, 15.1) for t in range(0, 380, 20)] + [(t, 0.0) for t in range(400, 1260, 20)]
+        regions = anchor_regions(anchor_points(self._samples(pts)))
+        self.assertEqual(len(regions), 2)
+        self.assertAlmostEqual(regions[0]["shift"], 15.1, places=1)
+        self.assertAlmostEqual(regions[1]["shift"], 0.0, places=1)
+
+    def test_a_lone_noisy_anchor_does_not_veto_the_plan(self):
+        # C_S03E11: one -6.6s reading in an otherwise flat stretch
+        pts = [(t, 0.1) for t in range(0, 660, 20)] + [(680, -6.6)] + \
+              [(t, 0.1) for t in range(700, 960, 20)] + [(t, -18.5) for t in range(980, 1240, 20)]
+        regions = anchor_regions(anchor_points(self._samples(pts)))
+        self.assertIsNotNone(regions, "a single outlier should be absorbed, not fail the file")
+        self.assertEqual(len(regions), 2)
+
+    def test_a_continuously_drifting_file_is_refused(self):
+        # C_S02E19: no run of agreeing anchors anywhere, so nothing can be planned
+        pts = [(200, 37.2), (300, 21.7), (340, 14.8), (380, 5.6), (400, 2.0), (500, -1.1),
+               (520, -2.8), (560, -11.8), (680, -31.0), (700, -34.4), (720, -38.8), (780, -36.3)]
+        self.assertIsNone(anchor_regions(anchor_points(self._samples(pts))))
+
+    def test_a_straddling_transition_anchor_is_dropped_not_vetoing(self):
+        # was test_a_genuine_transition_with_too_little_evidence_is_refused: a clip window
+        # covering the boundary measures the median of two offsets, i.e. a value strictly
+        # between its disagreeing neighbours. That one anchor is dropped so the solid regions
+        # on both sides can still be planned from -- real on C_S02E09 piecewise, where 6 clean
+        # runs of 8-9 anchors were vetoed by one straddler per boundary. The plan is still
+        # re-measured densely before anything is written.
+        pts = [(t, 0.0) for t in range(0, 300, 20)] + [(320, -12.0)] + \
+              [(t, -25.0) for t in range(340, 700, 20)]
+        regions = anchor_regions(anchor_points(self._samples(pts)))
+        self.assertIsNotNone(regions)
+        self.assertEqual(len(regions), 2)
+        self.assertAlmostEqual(regions[0]["shift"], 0.0, places=1)
+        self.assertAlmostEqual(regions[1]["shift"], -25.0, places=1)
+
+    def test_a_wild_thin_run_between_different_offsets_still_vetoes(self):
+        # same shape, but the thin value is OUTSIDE both neighbours -- not a straddle, so
+        # genuinely undecidable (noise or a third offset with no evidence): still None.
+        pts = [(t, 0.0) for t in range(0, 300, 20)] + [(320, 14.0)] + \
+              [(t, -25.0) for t in range(340, 700, 20)]
+        self.assertIsNone(anchor_regions(anchor_points(self._samples(pts))))
+
+    def test_several_runs_with_a_straddler_each_still_plan(self):
+        # C_S02E09 piecewise shape: clean runs with one boundary-straddling anchor between
+        # each pair must yield one region per run, not None.
+        pts = [(t, -6.8) for t in range(0, 150, 20)] + [(160, 0.9)] + \
+              [(t, 8.0) for t in range(220, 380, 20)] + [(400, -2.0)] + \
+              [(t, -12.0) for t in range(420, 600, 20)]
+        regions = anchor_regions(anchor_points(self._samples(pts)))
+        self.assertIsNotNone(regions)
+        self.assertEqual(len(regions), 3)
+        self.assertAlmostEqual(regions[0]["shift"], -6.8, places=1)
+        self.assertAlmostEqual(regions[1]["shift"], 8.0, places=1)
+        self.assertAlmostEqual(regions[2]["shift"], -12.0, places=1)
+
+    def test_applying_a_plan_moves_each_region_by_its_own_shift(self):
+        subs = self._subs()
+        pts = [(t, 10.0) for t in range(0, 300, 20)] + [(t, 0.0) for t in range(400, 1100, 20)]
+        plan = plan_anchor_resync(subs, self._samples(pts))
+        self.assertIsNotNone(plan)
+        out = apply_anchor_resync(subs, plan)
+        early = [e for e in out.events if e.start < 200_000]
+        self.assertTrue(all(e.start % 15000 != 0 for e in early),
+                        "the first region should have been shifted off its original grid")
+
+    def test_a_plan_never_leaves_cues_overlapping(self):
+        subs = self._subs()
+        pts = [(t, 0.0) for t in range(0, 300, 20)] + [(t, -25.0) for t in range(400, 1100, 20)]
+        plan = plan_anchor_resync(subs, self._samples(pts))
+        out = apply_anchor_resync(subs, plan)
+        for current, following in zip(out.events, out.events[1:]):
+            self.assertLessEqual(current.end, following.start)
+
+    def test_shifts_never_produce_a_negative_timestamp(self):
+        subs = self._subs()
+        pts = [(t, -400.0) for t in range(0, 1100, 20)]
+        plan = plan_anchor_resync(subs, self._samples(pts))
+        out = apply_anchor_resync(subs, plan)
+        self.assertTrue(all(e.start >= 0 and e.end >= e.start for e in out.events))
+
+
+class ResyncVerifiedTests(unittest.TestCase):
+    """pipeline._resync_verified with anchor-less samples (resync4.log crash).
+
+    A sample whose window holds only silence/music gets anchor=None -- normal and
+    common -- and must be ignored as non-evidence, not crash the mean residual."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls._td = tempfile.TemporaryDirectory()
+        cls.cfg = _test_config(db.connect(Path(cls._td.name) / "t.db"))
+
+    @classmethod
+    def tearDownClass(cls):
+        cls._td.cleanup()
+
+    @staticmethod
+    def _s(t, shift=None):
+        a = None if shift is None else {"shift": shift, "mad": 0.1, "anchor_count": 4}
+        return {"start": float(t), "anchor": a}
+
+    def test_none_anchors_are_ignored_not_crashed(self):
+        plan = [{"cut_audio_s": None}]
+        after = [self._s(100, 0.2), self._s(200, None), self._s(300, -0.1)]
+        self.assertAlmostEqual(
+            pipeline._resync_verified(plan, after, self.cfg, Path("t.srt")), 0.15)
+
+    def test_all_none_anchors_verifies_nothing(self):
+        plan = [{"cut_audio_s": None}]
+        after = [self._s(100, None), self._s(200, None)]
+        self.assertIsNone(pipeline._resync_verified(plan, after, self.cfg, Path("t.srt")))
+
+    def test_cut_straddlers_still_excluded(self):
+        plan = [{"cut_audio_s": 200.0}]
+        after = [self._s(100, 0.1), self._s(205, 45.0), self._s(400, 0.1)]
+        self.assertAlmostEqual(
+            pipeline._resync_verified(plan, after, self.cfg, Path("t.srt")), 0.1)
 
 
 class SyncVerificationCase(unittest.TestCase):
@@ -176,6 +363,10 @@ class GlobalShiftTests(SyncVerificationCase):
 
 
 class PartialShiftTests(SyncVerificationCase):
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        _prime_full_cache(cls.conn, cls.cfg, cls.fixtures)
     """The scenario that motivated pipeline._resolve_ambiguous_sync's whole design (and caught
     3 real bugs in it during the audit session that built this suite) -- a genuine two-part
     discontinuity, which only alass's multi-block fit can correct in full; a plain single
@@ -215,8 +406,21 @@ class WrongEpisodeTests(SyncVerificationCase):
         for video_slug, text_slug in pairs:
             with self.subTest(video=video_slug, text_from=text_slug):
                 wrong_subs = load_subs(fixture_paths(self.fixtures[text_slug])[1])
-                row, _final, _shim = self._run(video_slug, wrong_subs)
+                row, final, _shim = self._run(video_slug, wrong_subs)
                 self.assertEqual(row["correctness_flag"], "SUSPECT", row["note"])
+                # Re-timing text that isn't this episode's is meaningless, and writing it
+                # destroys the original (backup_originals can be off). alass DOES produce a
+                # confident-looking fit here -- it only fits rhythm, it cannot see that the
+                # words are wrong -- so the content check is the only thing standing between a
+                # wrong subtitle and an overwritten file. See _resolve_ambiguous_sync's
+                # no-content-match branch, and the real C_S02E15 case that motivated it (its
+                # on-disk subtitle is the NEXT episode's text; the pipeline used to "fix" it by
+                # 30.4s on the strength of a 0.09 score).
+                starts_before = [e.start for e in wrong_subs.events]
+                starts_after = [e.start for e in final.events]
+                self.assertEqual(starts_after, starts_before,
+                                 f"{video_slug}: a wrong-episode subtitle was re-timed instead "
+                                 f"of being left alone ({row['sync_status']})")
 
 
 class LineOrderTests(SyncVerificationCase):
@@ -255,6 +459,29 @@ class LineOrderTests(SyncVerificationCase):
                 noticed = (row.get("line_order_fixed") or 0) > 0 or row["correctness_flag"] == "SUSPECT"
                 self.assertTrue(noticed, f"{slug}: swapped lines at {targets} went unnoticed: {row}")
         self.assertTrue(found_any, "no eligible 2-line events found to swap in any healthy fixture")
+
+
+class CoveredPositionsTests(unittest.TestCase):
+    """_covered_positions drops VAD silence-skip (None) slots. Found when every
+    sampled-mode gap run crashed collect_samples with "TypeError: '<=' not
+    supported between float and NoneType": a primed clip cache gives a speech
+    timeline, a silent region becomes a None slot, and the extra-target-range
+    comparison ordered that None against float bounds. A silent slot sampled
+    no audio, so it must count as covering nothing (the block then correctly
+    gets its extra targeted sample)."""
+
+    def test_none_slots_cover_nothing(self):
+        from verifyarr.line_order import _covered_positions
+        slots = [("heuristic", {"clip_start": 10.0, "clip_end": 20.0,
+                                "items": []}, None),
+                 ("filler", 100.0, (90.0, 200.0)),
+                 ("filler", None, (200.0, 300.0))]
+        self.assertEqual(_covered_positions(slots), [10.0, 100.0])
+
+    def test_range_comparison_survives_silence(self):
+        from verifyarr.line_order import _covered_positions
+        covered = _covered_positions([("filler", None, (0.0, 100.0))])
+        self.assertFalse(any(0.0 <= pos < 100.0 for pos in covered))
 
 
 class KnownEdgeCaseTests(SyncVerificationCase):
@@ -326,7 +553,15 @@ class RealWorldFixTests(SyncVerificationCase):
     doesn't silently call it fine" -- and the anchor-residual escalation (Config.
     anchor_check_enabled) is exactly the safety net for that: a confident anchor still showing a
     real mismatch after the fix escalates the whole file to SUSPECT even though the majority-
-    vote average passed, handing it to Bazarr/a human instead of quietly leaving it wrong."""
+    vote average passed, handing it to Bazarr/a human instead of quietly leaving it wrong.
+
+    NOTE: that "not cleanly auto-correctable" premise is now only true of THIS test's
+    configuration. These cases run in the default sampled mode, where three samples can't produce
+    the three agreeing anchors per region an anchor resync needs. In whisper_mode="full" the same
+    file IS corrected -- pipeline._try_anchor_resync plans three regions from its dense anchors and
+    takes it from 53.3s out at its worst point to 2.5s, measured against an independent
+    large-v3-turbo reference. The assertions below still hold either way: they check that the
+    drift is present in the FIXTURE, not that the app fails to fix it."""
 
     @classmethod
     def setUpClass(cls):
@@ -334,6 +569,7 @@ class RealWorldFixTests(SyncVerificationCase):
         cls.conn = db.connect(SCRATCH_DIR / "scratch_e21.db")
         cls.cfg = _test_config(cls.conn)
         cls.fixtures = {"S02E21": load_fixture("S02E21")}
+        _prime_full_cache(cls.conn, cls.cfg, cls.fixtures)
         cls.ground_truths = {"S02E21": build_ground_truth(cls.fixtures["S02E21"])}
 
     def test_real_pre_existing_drift_is_detected(self):

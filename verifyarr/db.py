@@ -986,6 +986,12 @@ def extra_slot_index(start_sec: float) -> int:
 
 
 def _video_signature(video_path: Path) -> tuple[Optional[float], Optional[int]]:
+    """A video file's identity for cache-validity checks: (mtime, size). A different
+    cut/release at the same path is a different video, and any cached audio/ transcript
+    for the old bytes is worthless for it. The single definition behind both the
+    clip-transcript cache and the full-transcript cache below (they previously had
+    byte-identical private copies of this). Path() re-wrapping keeps str paths working
+    too, not just Path objects."""
     try:
         st = Path(video_path).stat()
         return st.st_mtime, st.st_size
@@ -1093,14 +1099,6 @@ def save_transcript_cache(conn: sqlite3.Connection, video_path: Path, region_ind
     conn.commit()
 
 
-def _video_stat(video_path: Path) -> tuple[Optional[float], Optional[int]]:
-    try:
-        st = video_path.stat()
-        return st.st_mtime, st.st_size
-    except OSError:
-        return None, None
-
-
 def get_full_transcript_cache(conn: sqlite3.Connection, video_path: Path,
                                stt_provider: Optional[str] = None,
                                stt_model: Optional[str] = None) -> Optional[dict]:
@@ -1126,7 +1124,7 @@ def get_full_transcript_cache(conn: sqlite3.Connection, video_path: Path,
         return None
     if stt_model is not None and row["stt_model"] and row["stt_model"] != stt_model:
         return None
-    mtime, size = _video_stat(video_path)
+    mtime, size = _video_signature(video_path)
     # A row written before these columns existed has NULL for both -- there is nothing to
     # compare it against, so it stays usable rather than being thrown away for having been
     # cached by an older version.
@@ -1141,7 +1139,7 @@ def get_full_transcript_cache(conn: sqlite3.Connection, video_path: Path,
 def save_full_transcript_cache(conn: sqlite3.Connection, video_path: Path, spoken_lang: Optional[str],
                                 segments: list[dict], stt_provider: Optional[str] = None,
                                 stt_model: Optional[str] = None) -> None:
-    mtime, size = _video_stat(video_path)
+    mtime, size = _video_signature(video_path)
     conn.execute(
         "INSERT INTO video_full_transcript_cache (video_path, spoken_lang, segments_json, stt_provider, "
         "stt_model, video_mtime, video_size, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?) "
@@ -1194,24 +1192,30 @@ def count_generated_videos_since(conn: sqlite3.Connection, since: str) -> int:
     return row[0] if row else 0
 
 
+def _prune_older_than(conn: sqlite3.Connection, table: str, column: str,
+                      max_age_days: int) -> int:
+    """Delete rows whose ISO-timestamp `column` is older than `max_age_days` -- the single
+    implementation behind all three prune_* functions below, which differ only in table,
+    column, and retention (the table/column are fixed per caller, never user input, so
+    inline interpolation is safe here). Returns the number of rows removed."""
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=max_age_days)).isoformat()
+    cur = conn.execute(f"DELETE FROM {table} WHERE {column} < ?", (cutoff,))
+    conn.commit()
+    return cur.rowcount
+
+
 def prune_generate_attempts(conn: sqlite3.Connection, max_age_days: int = 30) -> int:
     """Drops attempt records older than max_age_days -- long past both the retry cooldown and
     the 24-hour cap window, so they only take up space. Same age-based approach as the two
     transcript caches (see prune_transcript_cache)."""
-    cutoff = (datetime.now(timezone.utc) - timedelta(days=max_age_days)).isoformat()
-    cur = conn.execute("DELETE FROM generate_attempts WHERE attempted_at < ?", (cutoff,))
-    conn.commit()
-    return cur.rowcount
+    return _prune_older_than(conn, "generate_attempts", "attempted_at", max_age_days)
 
 
 def prune_full_transcript_cache(conn: sqlite3.Connection, max_age_days: int = 90) -> int:
     """Same idea as prune_transcript_cache, but a much longer default retention -- a full-track
     transcript is far more expensive to regenerate (a whole movie's worth of Whisper calls, not
     one 30s clip), so there's more to lose by pruning it aggressively."""
-    cutoff = (datetime.now(timezone.utc) - timedelta(days=max_age_days)).isoformat()
-    cur = conn.execute("DELETE FROM video_full_transcript_cache WHERE created_at < ?", (cutoff,))
-    conn.commit()
-    return cur.rowcount
+    return _prune_older_than(conn, "video_full_transcript_cache", "created_at", max_age_days)
 
 
 def bump_run_generated(conn: sqlite3.Connection, run_id: int, count: int = 1) -> None:
@@ -1230,10 +1234,7 @@ def prune_transcript_cache(conn: sqlite3.Connection, max_age_days: int = 30) -> 
     size, so simple staleness is the more meaningful limit than a fixed row count (see
     reports.MAX_REPORTS for the row-count approach used elsewhere, which fits a different
     growth pattern)."""
-    cutoff = (datetime.now(timezone.utc) - timedelta(days=max_age_days)).isoformat()
-    cur = conn.execute("DELETE FROM video_transcript_cache WHERE created_at < ?", (cutoff,))
-    conn.commit()
-    return cur.rowcount
+    return _prune_older_than(conn, "video_transcript_cache", "created_at", max_age_days)
 
 
 def list_library_videos(conn: sqlite3.Connection, kind: Optional[str] = None):

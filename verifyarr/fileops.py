@@ -66,27 +66,46 @@ def write_new_subtitle(subs: "pysubs2.SSAFile", video_path: Path, lang: str) -> 
     return dest
 
 
-def backup_subtitle(subtitle_path: Path, backup_dir: Path, media_root: Path) -> None:
+def _relative_to_root(path: Path, root: Path) -> Path:
+    """Path relative to the media root, or just the bare filename when it isn't under
+    the root at all (e.g. an absolute path from a different mount) — archiving must
+    never fail on the location math, only mirror structure when it can."""
     try:
-        rel = subtitle_path.relative_to(media_root)
+        return path.relative_to(root)
     except ValueError:
-        rel = Path(subtitle_path.name)
-    ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-    dest = backup_dir / rel.parent / f"{subtitle_path.stem}.{ts}.orig{subtitle_path.suffix}"
+        return Path(path.name)
+
+
+def _utc_timestamp() -> str:
+    """Compact UTC timestamp used in archived filenames (also the shape _original_name
+    reverses on restore). One format string for every writer, so the regexes above
+    always match what the writers produce."""
+    return datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+
+
+def _store_archived(subtitle_path: Path, archive_dir: Path, media_root: Path,
+                    infix: str, move: bool) -> Path:
+    """Copy (backup) or move (quarantine) a subtitle into the archive tree, preserving
+    its relative location and stamping the filename — the single implementation behind
+    backup_subtitle and quarantine_subtitle, which differ only in infix and copy/move."""
+    rel = _relative_to_root(subtitle_path, media_root)
+    dest = archive_dir / rel.parent / f"{subtitle_path.stem}.{_utc_timestamp()}{infix}{subtitle_path.suffix}"
     dest.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copyfile(subtitle_path, dest)
+    if move:
+        shutil.move(str(subtitle_path), str(dest))
+    else:
+        shutil.copyfile(subtitle_path, dest)
+    return dest
+
+
+def backup_subtitle(subtitle_path: Path, backup_dir: Path, media_root: Path) -> None:
+    # Return value deliberately discarded — this has always returned None, and callers
+    # (and tests) may rely on that; only quarantine_subtitle hands the dest back.
+    _store_archived(subtitle_path, backup_dir, media_root, ".orig", move=False)
 
 
 def quarantine_subtitle(subtitle_path: Path, quarantine_dir: Path, media_root: Path) -> Path:
-    try:
-        rel = subtitle_path.relative_to(media_root)
-    except ValueError:
-        rel = Path(subtitle_path.name)
-    ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-    dest = quarantine_dir / rel.parent / f"{subtitle_path.stem}.{ts}{subtitle_path.suffix}"
-    dest.parent.mkdir(parents=True, exist_ok=True)
-    shutil.move(str(subtitle_path), str(dest))
-    return dest
+    return _store_archived(subtitle_path, quarantine_dir, media_root, "", move=True)
 
 
 def _original_name(stem: str, suffix: str, is_backup: bool) -> str:
@@ -117,17 +136,28 @@ def list_archived(root_dir: Path, is_backup: bool) -> list[dict]:
     return items
 
 
+def _restore_target(archive_dir: Path, rel_path: str, media_root: Path,
+                     is_backup: bool, archive_label: str) -> tuple[Path, Path]:
+    """Locate an archived file and compute where it restores to. Missing source and
+    occupied destination are both hard errors, so a restore can never silently lose a
+    newer file. Used by quarantine restore; backup restore resolves its own target
+    instead because an occupied destination means "back up first", not "refuse"."""
+    src = archive_dir / rel_path
+    if not src.is_file():
+        raise FileNotFoundError(f"not found in {archive_label}: {rel_path}")
+    target = media_root / Path(rel_path).parent / _original_name(src.stem, src.suffix, is_backup)
+    if target.exists():
+        raise FileExistsError(f"a file already exists at the destination: {target}")
+    target.parent.mkdir(parents=True, exist_ok=True)
+    return src, target
+
+
 def restore_from_quarantine(rel_path: str, quarantine_dir: Path, media_root: Path) -> Path:
     """Moves a quarantined file back to its original relative location under media_root.
     Refuses to overwrite a file already there — remove it first, so a newer file is never
     silently lost."""
-    src = quarantine_dir / rel_path
-    if not src.is_file():
-        raise FileNotFoundError(f"not found in quarantine: {rel_path}")
-    target = media_root / Path(rel_path).parent / _original_name(src.stem, src.suffix, is_backup=False)
-    if target.exists():
-        raise FileExistsError(f"a file already exists at the destination: {target}")
-    target.parent.mkdir(parents=True, exist_ok=True)
+    src, target = _restore_target(quarantine_dir, rel_path, media_root,
+                                  is_backup=False, archive_label="quarantine")
     shutil.move(str(src), str(target))
     return target
 
@@ -136,6 +166,9 @@ def restore_from_backup(rel_path: str, backup_dir: Path, media_root: Path) -> Pa
     """Copies a backup (the ORIGINAL, pre-sync version) back over the current file at its
     original location. The current file is backed up first if it exists, so undoing is
     never itself irreversible."""
+    # Note: unlike quarantine restore, an occupied destination is NOT an error here — the
+    # current file is backed up first (see below), which is exactly why _restore_target's
+    # exists-check can't be shared and this resolves its own target instead.
     src = backup_dir / rel_path
     if not src.is_file():
         raise FileNotFoundError(f"not found in backups: {rel_path}")

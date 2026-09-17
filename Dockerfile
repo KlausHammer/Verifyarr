@@ -23,7 +23,7 @@ RUN git clone --branch ${WHISPER_CPP_VERSION} --depth 1 \
 # Only if that build fails (headers too old) do we fetch fresh Vulkan-Headers and retry.
 RUN set -e; \
     CMK="cmake -S /tmp/whisper.cpp -B /tmp/whisper.cpp/build -GNinja -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF -DGGML_VULKAN=1"; \
-    if ! ( $CMK && ninja -C /tmp/whisper.cpp/build -j"$(nproc)" whisper-cli ); then \
+    if ! ( $CMK && ninja -C /tmp/whisper.cpp/build -j"$(nproc)" whisper-cli whisper-vad-speech-segments ); then \
         echo "Debian's Vulkan headers were too old -- fetching fresh ones"; \
         rm -rf /tmp/whisper.cpp/build; \
         git clone --depth 1 https://github.com/KhronosGroup/Vulkan-Headers.git /tmp/vk-headers; \
@@ -31,12 +31,18 @@ RUN set -e; \
         ninja -C /tmp/vk-headers/build install; \
         rm -rf /tmp/vk-headers; \
         $CMK -DVulkan_INCLUDE_DIR=/usr/local/include; \
-        ninja -C /tmp/whisper.cpp/build -j"$(nproc)" whisper-cli; \
+        ninja -C /tmp/whisper.cpp/build -j"$(nproc)" whisper-cli whisper-vad-speech-segments; \
     fi; \
     install -m755 /tmp/whisper.cpp/build/bin/whisper-cli /usr/local/bin/whisper-cli
+# VAD timeline binary (verifyarr/vad.py). Silero model isn't baked in (no stable URL) --
+# mount at sync.vad_model or leave sync.vad_binary empty to stay on cached segments.
+RUN if [ -f /tmp/whisper.cpp/build/bin/whisper-vad-speech-segments ]; then \
+        install -m755 /tmp/whisper.cpp/build/bin/whisper-vad-speech-segments /usr/local/bin/whisper-vad-speech-segments; \
+    fi
 
-# small.en, quantized: good speed/accuracy for short clips on weak hardware. Switch to a
-# non-".en" size for non-English audio (update the model path in Settings too).
+# Must match settings.py's WHISPER_MODEL default -- keeps the stock build pre-baked with
+# what the app expects. A different WHISPER_MODEL is fetched at runtime instead (see
+# correctness._download_local_whisper_model); this arg only sets what ships in the image.
 ARG WHISPER_MODEL=small.en-q5_1
 RUN mkdir -p /app/models \
     && bash /tmp/whisper.cpp/models/download-ggml-model.sh ${WHISPER_MODEL} /app/models \

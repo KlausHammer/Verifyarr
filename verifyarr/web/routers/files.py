@@ -3,7 +3,6 @@ discovery.discover_missing/db.mark_missing)."""
 
 from __future__ import annotations
 
-import dataclasses
 from pathlib import Path
 from typing import Optional
 
@@ -13,13 +12,9 @@ from verifyarr import db, jobs
 from verifyarr.bazarr import bazarr_build_history_index, bazarr_map_path
 from verifyarr.pipeline import handle_suspect
 from verifyarr.settings import Config
-from verifyarr.web.deps import get_conn, require_auth
+from verifyarr.web.deps import get_conn, require_auth, serialize_row
 
 router = APIRouter(prefix="/api/files", tags=["files"])
-
-
-def _serialize(row) -> dict:
-    return dict(row)
 
 
 @router.get("")
@@ -29,7 +24,7 @@ def list_files(q: Optional[str] = None, flag: Optional[str] = None, status: Opti
                user=Depends(require_auth), conn=Depends(get_conn)):
     rows, total = db.list_files(conn, q=q, flag=flag, status=status, lang=lang, sort=sort,
                                  page=page, page_size=page_size)
-    return {"items": [_serialize(r) for r in rows], "total": total, "page": page, "page_size": page_size}
+    return {"items": [serialize_row(r) for r in rows], "total": total, "page": page, "page_size": page_size}
 
 
 @router.get("/{file_id}")
@@ -41,7 +36,7 @@ def get_file(file_id: int, user=Depends(require_auth), conn=Depends(get_conn)):
         "SELECT * FROM correctness_history WHERE subtitle_path = ? ORDER BY checked_at DESC LIMIT 20",
         (row["subtitle_path"],),
     ).fetchall() if row["subtitle_path"] else []
-    return {"file": _serialize(row), "correctness_history": [_serialize(r) for r in history]}
+    return {"file": serialize_row(row), "correctness_history": [serialize_row(r) for r in history]}
 
 
 @router.post("/{file_id}/run-single")
@@ -112,7 +107,7 @@ def _apply_action(conn, file_id: int, action: str) -> dict:
         raise HTTPException(status_code=409, detail="a job is already running — wait for it to finish")
 
     cfg = Config.from_db(conn)
-    cfg = dataclasses.replace(cfg, dry_run=False)
+    cfg = cfg.with_dry_run(False)
     subtitle_path, video_path = Path(row["subtitle_path"]), Path(row["video_path"])
     media_root = cfg.media_root_for(subtitle_path)
 

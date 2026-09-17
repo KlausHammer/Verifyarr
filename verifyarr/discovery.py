@@ -170,25 +170,58 @@ def find_subtitles_for_video(video_path: Path, sibling_videos: list[Path]) -> li
     return results
 
 
-def discover_pairs(cfg: Config, roots: Optional[list[Path]] = None) -> list[tuple[Path, Path, Optional[str]]]:
-    """roots: walk just these folders instead of cfg.media_roots -- used to scope a Scan to one
-    title/season (see jobs._run_sweep) without touching the rest of the library at all."""
-    pairs = []
+def _is_managed_dir(dirpath: Path, cfg: Config) -> bool:
+    """Whether a walked directory is one of the app's own managed trees (backups, quarantine)
+    rather than library media — those must never be descended into, or the app would
+    discover (and process) its own quarantined/backed-up copies as if they were library
+    files. Compared as real directory prefixes, so a library folder merely SHARING a name
+    prefix (e.g. "/data/backups2") is not falsely excluded the way a plain startswith check
+    on the string form would."""
+    return any(
+        dirpath == managed or managed in dirpath.parents
+        for managed in (cfg.backup_dir, cfg.quarantine_dir)
+    )
+
+
+def _iter_video_dirs(cfg: Config, roots: Optional[list[Path]] = None):
+    """Yield (directory, videos-in-it) for every directory under the root folders, skipping
+    the app's managed trees (backups, quarantine).
+
+    The single place owning the walk + skip + video-filter rules, so discover_pairs and
+    discover_all_videos below cannot drift apart (they previously duplicated this loop
+    body, including its backup/quarantine guard, line for line). Per-directory grouping
+    is preserved because find_subtitles_for_video needs a video's siblings (see
+    discover_pairs). roots: walk just these folders instead of cfg.media_roots — used to
+    scope a Scan to one title/season (see jobs._run_sweep) without touching the rest of
+    the library at all."""
     for root in (roots if roots is not None else cfg.media_roots):
         if not root.exists():
-            log.warning("Root Folder does not exist: %s", root)
             continue
         for dirpath, dirnames, filenames in os.walk(root):
             dirpath_p = Path(dirpath)
-            if str(dirpath_p).startswith(str(cfg.backup_dir)) or str(dirpath_p).startswith(str(cfg.quarantine_dir)):
+            if _is_managed_dir(dirpath_p, cfg):
                 dirnames[:] = []
                 continue
-            videos = [dirpath_p / n for n in filenames if Path(n).suffix.lower() in cfg.video_exts]
-            for video in videos:
-                for sub_path, lang in find_subtitles_for_video(video, videos):
-                    if cfg.subtitle_langs and lang and lang not in cfg.subtitle_langs:
-                        continue
-                    pairs.append((video, sub_path, lang))
+            yield dirpath_p, [dirpath_p / n for n in filenames
+                              if Path(n).suffix.lower() in cfg.video_exts]
+
+
+def discover_pairs(cfg: Config, roots: Optional[list[Path]] = None) -> list[tuple[Path, Path, Optional[str]]]:
+    """(video, subtitle, lang) for every video with a discoverable subtitle file.
+
+    roots: see _iter_video_dirs."""
+    for root in (roots if roots is not None else cfg.media_roots):
+        if not root.exists():
+            # discover_all_videos stays silent here (as before) — only the pairing pass
+            # warns, so a missing root is logged exactly once per sweep, not twice.
+            log.warning("Root Folder does not exist: %s", root)
+    pairs = []
+    for _dirpath, videos in _iter_video_dirs(cfg, roots):
+        for video in videos:
+            for sub_path, lang in find_subtitles_for_video(video, videos):
+                if cfg.subtitle_langs and lang and lang not in cfg.subtitle_langs:
+                    continue
+                pairs.append((video, sub_path, lang))
     return pairs
 
 
@@ -200,17 +233,7 @@ def discover_all_videos(cfg: Config, roots: Optional[list[Path]] = None) -> list
     simple; the cost of an extra os.walk is negligible for a private media library.
 
     roots: see discover_pairs."""
-    videos = []
-    for root in (roots if roots is not None else cfg.media_roots):
-        if not root.exists():
-            continue
-        for dirpath, dirnames, filenames in os.walk(root):
-            dirpath_p = Path(dirpath)
-            if str(dirpath_p).startswith(str(cfg.backup_dir)) or str(dirpath_p).startswith(str(cfg.quarantine_dir)):
-                dirnames[:] = []
-                continue
-            videos.extend(dirpath_p / n for n in filenames if Path(n).suffix.lower() in cfg.video_exts)
-    return videos
+    return [video for _dirpath, videos in _iter_video_dirs(cfg, roots) for video in videos]
 
 
 def videos_needing_embedded_check(cfg: Config, pairs: list[tuple[Path, Path, Optional[str]]],

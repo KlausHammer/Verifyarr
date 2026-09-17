@@ -15,10 +15,11 @@ import requests
 
 from verifyarr import log
 from verifyarr import db
+from verifyarr import vad
 from verifyarr.procprio import wrap_low_priority
 from verifyarr.settings import Config, VOCABULARY_HINT_MAX_CHARS
 from verifyarr.subtitles import (
-    pick_dialogue_dense_time, subs_text_in_window, tokenize,
+    pick_dialogue_dense_time, subs_text_in_window, tokenize, is_nonspeech_annotation,
     clip_anchor_shift, anchors_applicable, ANCHOR_SUSPECT_THRESHOLD_S,
 )
 
@@ -34,21 +35,42 @@ LANG3_TO_LANG2 = {
 }
 
 
-def detect_audio_language_ffprobe(video_path: Path) -> Optional[str]:
-    cmd = ["ffprobe", "-v", "error", "-select_streams", "a:0",
-           "-show_entries", "stream_tags=language", "-of", "json", str(video_path)]
+# Stream language tags that carry no usable information — ffprobe reports these when a
+# track's language was never set, and treating them as a real language would poison every
+# comparison built on them (see _map_lang_tag).
+_UNKNOWN_LANG_TAGS = ("und", "unk", "undefined")
+
+
+def _ffprobe_json(video_path: Path, *extra_args: str, timeout: int) -> dict:
+    """Run ffprobe with JSON output, returning {} on ANY failure (missing binary, timeout,
+    unparseable output) — every caller here treats "no ffprobe answer" as "unknown", never
+    as an error, so there is exactly one place handling the failure modes instead of three
+    near-identical try/except blocks."""
+    cmd = ["ffprobe", "-v", "error", *extra_args, "-of", "json", str(video_path)]
     try:
-        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
-        data = json.loads(proc.stdout or "{}")
-        streams = data.get("streams", [])
-        if not streams:
-            return None
-        tag = (streams[0].get("tags", {}) or {}).get("language", "").lower()
-        if not tag or tag in ("und", "unk", "undefined"):
-            return None
-        return LANG3_TO_LANG2.get(tag, tag if LANG_CODE_RE.match(tag) else None)
+        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+        return json.loads(proc.stdout or "{}")
     except Exception:
+        return {}
+
+
+def _map_lang_tag(tag: str) -> Optional[str]:
+    """A raw ffprobe language tag -> ISO 639-1 code, or None when unusable. ffprobe tags
+    are ISO 639-2 ("dan") while the app works in 639-1 ("da") — LANG3_TO_LANG2 covers the
+    common ones and anything already shaped like a 639-1/639-2 code passes through."""
+    tag = (tag or "").lower()
+    if not tag or tag in _UNKNOWN_LANG_TAGS:
         return None
+    return LANG3_TO_LANG2.get(tag, tag if LANG_CODE_RE.match(tag) else None)
+
+
+def detect_audio_language_ffprobe(video_path: Path) -> Optional[str]:
+    data = _ffprobe_json(video_path, "-select_streams", "a:0",
+                         "-show_entries", "stream_tags=language", timeout=30)
+    streams = data.get("streams", [])
+    if not streams:
+        return None
+    return _map_lang_tag((streams[0].get("tags", {}) or {}).get("language", ""))
 
 
 def detect_embedded_subtitle_langs(video_path: Path) -> set[str]:
@@ -57,33 +79,22 @@ def detect_embedded_subtitle_langs(video_path: Path) -> set[str]:
     subtitle FILE for it -- Bazarr already considers an embedded track as satisfying that
     language and won't download a separate one either, and this tool has no way to
     sync/verify an embedded track (only external files), so there's nothing to do for it."""
-    cmd = ["ffprobe", "-v", "error", "-select_streams", "s",
-           "-show_entries", "stream_tags=language", "-of", "json", str(video_path)]
-    try:
-        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
-        data = json.loads(proc.stdout or "{}")
-    except Exception:
-        return set()
+    data = _ffprobe_json(video_path, "-select_streams", "s",
+                         "-show_entries", "stream_tags=language", timeout=30)
     langs = set()
     for stream in data.get("streams", []):
-        tag = (stream.get("tags", {}) or {}).get("language", "").lower()
-        if not tag or tag in ("und", "unk", "undefined"):
-            continue
-        mapped = LANG3_TO_LANG2.get(tag, tag if LANG_CODE_RE.match(tag) else None)
+        mapped = _map_lang_tag((stream.get("tags", {}) or {}).get("language", ""))
         if mapped:
             langs.add(mapped)
     return langs
 
 
 def get_duration_seconds(video_path: Path) -> Optional[float]:
-    cmd = ["ffprobe", "-v", "error", "-show_entries", "format=duration",
-           "-of", "json", str(video_path)]
+    data = _ffprobe_json(video_path, "-show_entries", "format=duration", timeout=60)
+    dur = data.get("format", {}).get("duration")
     try:
-        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
-        data = json.loads(proc.stdout or "{}")
-        dur = data.get("format", {}).get("duration")
         return float(dur) if dur else None
-    except Exception:
+    except (TypeError, ValueError):
         return None
 
 
@@ -310,26 +321,89 @@ def _log_local_whisper_backend_info(stderr: str) -> None:
             log.info("local Whisper backend: %s", line.strip())
 
 
+# whisper.cpp's own models -- any file the app's own download-ggml-model.sh accepts, e.g.
+# "small", "small.en-q5_1", "medium", "large-v3-turbo-q5_0". Only the FILENAME matters here (the
+# path's directory is whatever Settings -> Correctness -> "Model file path" says); this just
+# guards against firing a request for something that obviously isn't a ggml model filename.
+_GGML_MODEL_FILENAME_RE = re.compile(r"^ggml-[\w.\-]+\.bin$")
+_WHISPER_MODEL_DOWNLOAD_URL = "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/{name}"
+_whisper_model_download_failed: set[str] = set()
+
+
+def _download_local_whisper_model(model_path: Path) -> bool:
+    """Fetches a missing ggml Whisper model from Hugging Face by filename -- so Settings ->
+    Correctness -> "Model file path" (or its default, WHISPER_MODEL in docker-compose) can name
+    ANY whisper.cpp model without a Docker rebuild, not just whatever got baked in at build time.
+    Tried once per path per process (see _whisper_model_download_failed) -- a real network/name
+    failure shouldn't retry on every single clip."""
+    key = str(model_path)
+    if key in _whisper_model_download_failed:
+        return False
+    if not _GGML_MODEL_FILENAME_RE.match(model_path.name):
+        log.warning("local Whisper model path %r doesn't look like a ggml model filename "
+                    "(expected e.g. ggml-small.bin) -- not attempting a download", model_path.name)
+        _whisper_model_download_failed.add(key)
+        return False
+
+    url = _WHISPER_MODEL_DOWNLOAD_URL.format(name=model_path.name)
+    log.info("local Whisper model %s not found -- downloading from %s (one-time, can take a "
+             "while)", model_path.name, url)
+    tmp_path = model_path.with_name(model_path.name + ".part")
+    try:
+        model_path.parent.mkdir(parents=True, exist_ok=True)
+        with requests.get(url, stream=True, timeout=60) as resp:
+            if resp.status_code != 200:
+                raise RuntimeError(f"HTTP {resp.status_code}")
+            with open(tmp_path, "wb") as f:
+                for chunk in resp.iter_content(chunk_size=1024 * 1024):
+                    f.write(chunk)
+        tmp_path.rename(model_path)
+    except Exception as e:
+        log.warning("Could not download local Whisper model %s: %s", model_path.name, e)
+        tmp_path.unlink(missing_ok=True)
+        _whisper_model_download_failed.add(key)
+        return False
+    log.info("local Whisper model %s downloaded (%.0f MB)", model_path.name,
+             model_path.stat().st_size / 1_000_000)
+    return True
+
+
 def _run_local_whisper(cfg: Config, audio_path: Path, language: Optional[str],
-                        cancel_event=None) -> dict:
+                        cancel_event=None, timeout: Optional[float] = None) -> dict:
     """Runs the local whisper.cpp build instead of a cloud STT call (Settings -> Correctness ->
-    "Use local Whisper"). No API key, no rate limit, no fallback model."""
+    "Use local Whisper"). No API key, no rate limit, no fallback model. timeout: bump this for a
+    long (full-track) clip -- omitted, it scales with sync.clip_seconds so raising that setting
+    can't silently start timing clips out on a slow CPU-only box."""
+    timeout = timeout if timeout is not None else max(300.0, cfg.clip_seconds * 10.0)
     binary, model = cfg.local_whisper_binary, cfg.local_whisper_model
     if not binary or not Path(binary).is_file():
         raise RuntimeError(f"local Whisper binary not found: {binary!r} (see Settings -> Correctness)")
+    if model and not Path(model).is_file():
+        _download_local_whisper_model(Path(model))
     if not model or not Path(model).is_file():
         raise RuntimeError(f"local Whisper model not found: {model!r} (see Settings -> Correctness)")
 
     with tempfile.TemporaryDirectory(prefix="local-whisper-") as td:
         out_stem = Path(td) / "out"
+        # An .en model has no language-detection head at all, so "auto" there silently means
+        # "assume English" -- make that explicit rather than letting a Danish track come back
+        # tagged "en" and pass the require_audio_lang gate on a guess.
+        lang = language or ("en" if ".en" in Path(model).name else "auto")
         # No -nt: that disables whisper's own timestamp decoding, not just console output.
+        # -mc 0 (carry no text context between windows) prevents a severe decoder repetition
+        # loop -- measured on v1.9.4, the version the Dockerfile pins, on a 10-minute chunk:
+        # without it, 164 consecutive copies of one lyric covering 109-321s; with it, one.
+        # Costs a little on a build that doesn't have the loop (~2% of segments in a short
+        # repeat on one Windows/GPU build), which is far the cheaper side of that trade --
+        # the loop otherwise silently deletes minutes of dialogue from the evidence.
+        # generate._drop_repetition_loops still catches whatever gets through.
         cmd = [binary, "-m", model, "-f", str(audio_path), "-oj", "-of", str(out_stem),
-               "-t", str(max(1, cfg.local_whisper_threads)), "-l", language or "auto"]
+               "-t", str(max(1, cfg.local_whisper_threads)), "-l", lang, "-mc", "0"]
         if not cfg.local_whisper_use_gpu:
             cmd.append("-ng")
         log.debug("local Whisper: model=%s lang=%s clip=%s", Path(model).name, language or "auto",
                   audio_path.name)
-        returncode, _stdout, stderr = _run_cancellable(wrap_low_priority(cmd), timeout=300,
+        returncode, _stdout, stderr = _run_cancellable(wrap_low_priority(cmd), timeout=timeout,
                                                         cancel_event=cancel_event)
         if returncode != 0:
             raise RuntimeError(f"local Whisper failed (exit {returncode}): {stderr[-500:]}")
@@ -542,8 +616,16 @@ def _aggregate_correctness(samples: list[dict], cfg: Config) -> tuple[Optional[f
     return avg, ("ok" if passing * 2 >= len(valid) else "SUSPECT")
 
 
+# How many samples must show a significant residual before the file is escalated. One or two is
+# not evidence: measured over 52 real episodes, every false escalation (5 files) had 1-2 flagged
+# samples and every true one (9 files) had 3-14, so this separates them exactly. Magnitude does
+# not -- a real 3.4s residual and a false 4.8s one both occur.
+ANCHOR_SUSPECT_MIN_SAMPLES = 3
+
+
 def significant_anchor_residuals(samples: list[dict],
-                                 threshold: float = ANCHOR_SUSPECT_THRESHOLD_S) -> list[dict]:
+                                 threshold: float = ANCHOR_SUSPECT_THRESHOLD_S,
+                                 min_samples: int = ANCHOR_SUSPECT_MIN_SAMPLES) -> list[dict]:
     """Samples whose Whisper-anchor shift (subtitles.clip_anchor_shift — a content-VERIFIED
     point estimate of the real timing offset at that exact instant, not the bag-of-words window
     score) exceeds `threshold` seconds (default subtitles.ANCHOR_SUSPECT_THRESHOLD_S -- see
@@ -551,8 +633,11 @@ def significant_anchor_residuals(samples: list[dict],
     median/MAD agreement check) showing a real residual mismatch is independent evidence of a
     problem AT THAT SPECIFIC POINT even when the whole-file average/majority-vote already
     passed — see Config.anchor_check_enabled for the motivating case (a subtitle that's only
-    right for part of the episode)."""
-    return [s for s in samples if s.get("anchor") and abs(s["anchor"]["shift"]) > threshold]
+    right for part of the episode).
+
+    Fewer than min_samples of them is not evidence -- see ANCHOR_SUSPECT_MIN_SAMPLES."""
+    bad = [s for s in samples if s.get("anchor") and abs(s["anchor"]["shift"]) > threshold]
+    return bad if len(bad) >= min_samples else []
 
 
 def evaluate_against_cached_transcripts(conn, video_path: Path, subs: "pysubs2.SSAFile",
@@ -598,7 +683,9 @@ def evaluate_against_cached_transcripts(conn, video_path: Path, subs: "pysubs2.S
         window_after = (r.get("clip_seconds") or cfg.clip_seconds) + cfg.window_minutes * 60
         anchor = None
         if use_anchors and r.get("segments"):
-            anchor = clip_anchor_shift(r["segments"], start, subs, start - window_before, start + window_after)
+            # defensive: rows saved before the nonspeech-annotation filter may still carry them
+            clean = [s for s in r["segments"] if not is_nonspeech_annotation(s.get("text", ""))]
+            anchor = clip_anchor_shift(clean, start, subs, start - window_before, start + window_after)
         sample = {"start": start, "anchor": anchor}
         if score:
             window_text = subs_text_in_window(subs, start, window_before, window_after)
@@ -606,6 +693,81 @@ def evaluate_against_cached_transcripts(conn, video_path: Path, subs: "pysubs2.S
                                                      transcript_lang, cancel_event=cancel_event)
             sample.update(compare)
         samples.append(sample)
+    if not score:
+        return {"avg_score": None, "flag": None, "samples": samples}
+    scorable = [s for s in samples if "error" not in s]
+    if not scorable:
+        return None
+    avg, flag = _aggregate_correctness(scorable, cfg)
+    return {"avg_score": avg, "flag": flag, "samples": scorable}
+
+
+# Fixed interval for evaluate_against_full_transcript's ANCHOR-only pass (score=False) -- free
+# (no LLM/API call, same-language token overlap only, see subtitles.clip_anchor_shift), so it
+# stays at this interval regardless of file length rather than being diluted on a long movie --
+# matches line_order.FULL_MODE_ANCHOR_INTERVAL_S.
+ANCHOR_PASS_INTERVAL_S = 60.0
+# Cap on how many windows the SCORED pass (score=True) slices out -- each one can cost an LLM
+# translation call for a foreign-language subtitle (see _compare_transcript_to_window), so THIS
+# pass bounds a long movie's worst case rather than sampling every clip_seconds all the way through.
+MAX_FULL_ANCHOR_WINDOWS = 60
+
+
+# Anchor interval for the RESYNC planner specifically (pipeline._try_anchor_resync), finer than
+# ANCHOR_PASS_INTERVAL_S. Anchors cost no API call at all -- just token overlap against a
+# transcript already in hand -- so when the question changes from "is this file wrong" to "by how
+# much, where", it is worth paying CPU for three times the resolution. Measured on the real
+# multi-block files: at 60s C_S03E05's four offset changes are backed by 1-2 anchors each and the
+# file has to be refused; at 20s the same file resolves into five regions of 3-13 anchors.
+ANCHOR_RESYNC_INTERVAL_S = 20.0
+
+
+def evaluate_against_full_transcript(conn, video_path: Path, subs: "pysubs2.SSAFile",
+                                     sub_lang: Optional[str], transcript_lang: Optional[str],
+                                     cfg: Config, *, score: bool = True,
+                                     anchor_interval: Optional[float] = None,
+                                     cancel_event=None) -> Optional[dict]:
+    """sync.whisper_mode == "full" counterpart to evaluate_against_cached_transcripts -- sourced
+    from the full-track transcript cache (video_full_transcript_cache, see
+    generate.full_transcript_for_check) instead of the per-clip cache, so a sync candidate is
+    judged against the WHOLE file's dialogue rather than a handful of clips. No new Whisper
+    calls: by the time pipeline._resolve_ambiguous_sync calls this, line_order.
+    collect_samples_full has already populated (or reused) this cache entry earlier in the same
+    run. Returns None if nothing is cached yet for this (video, provider, model)."""
+    provider = "local" if cfg.use_local_whisper else cfg.stt_provider
+    model = (Path(cfg.local_whisper_model).name if cfg.use_local_whisper
+             else (cfg.openrouter_stt_model if cfg.stt_provider == "openrouter" else cfg.groq_model))
+    cached = db.get_full_transcript_cache(conn, video_path, stt_provider=provider, stt_model=model)
+    if cached is None or not cached["segments"]:
+        return None
+    segments = cached["segments"]
+
+    window_before = cfg.window_minutes * 60
+    window_after = cfg.clip_seconds + cfg.window_minutes * 60
+    use_anchors = anchors_applicable(sub_lang, transcript_lang)
+    duration = max((s["end"] for s in segments), default=0.0)
+    # score=False (the free first pass) can afford the dense fixed interval; score=True (only run
+    # for candidates the free pass didn't already confirm) bounds LLM-translation cost instead.
+    step = (anchor_interval or ANCHOR_PASS_INTERVAL_S) if not score else max(
+        float(cfg.clip_seconds), duration / MAX_FULL_ANCHOR_WINDOWS if duration else 30.0)
+
+    samples = []
+    t = 0.0
+    while t < duration:
+        clip_segs = [s for s in segments if t <= s["start"] < t + cfg.clip_seconds]
+        if clip_segs:
+            anchor = clip_anchor_shift(clip_segs, 0.0, subs, t - window_before, t + window_after) \
+                if use_anchors else None
+            sample = {"start": round(t, 1), "anchor": anchor}
+            if score:
+                window_text = subs_text_in_window(subs, t, window_before, window_after)
+                transcript = " ".join(s.get("text", "") for s in clip_segs)
+                compare = _compare_transcript_to_window(cfg, transcript, window_text, sub_lang,
+                                                         transcript_lang, cancel_event=cancel_event)
+                sample.update(compare)
+            samples.append(sample)
+        t += step
+
     if not score:
         return {"avg_score": None, "flag": None, "samples": samples}
     scorable = [s for s in samples if "error" not in s]
@@ -635,6 +797,11 @@ def correctness_check(video_path: Path, subs: "pysubs2.SSAFile", sub_lang: Optio
     if not duration:
         return {"skipped": True, "reason": "could not read duration (ffprobe)"}
 
+    if cfg.use_local_whisper:
+        log.info("Whisper: local (whisper.cpp, %s)", Path(cfg.local_whisper_model).name)
+    else:
+        log.info("Whisper: %s (cloud)", cfg.stt_provider)
+
     audio_lang = detect_audio_language_ffprobe(video_path)
     if cfg.require_audio_lang and audio_lang and audio_lang != cfg.require_audio_lang:
         # ffprobe's language tag alone is enough to decide this — skip sampling entirely.
@@ -650,6 +817,10 @@ def correctness_check(video_path: Path, subs: "pysubs2.SSAFile", sub_lang: Optio
     regions = [(duration * i / n, duration * (i + 1) / n) for i in range(n)]
     transcript_lang = audio_lang or cfg.require_audio_lang
 
+    # Speech timeline for VAD-guided placement (free when a prior check of this video --
+    # any subtitle -- cached segments, else an optional Silero run, else None). None keeps
+    # today's dialogue-density behavior bit-for-bit (see vad.pick_sample_time).
+    timeline = vad.timeline_for_video(conn, video_path, cfg)
     built = []
     for idx, (region_start, region_end) in enumerate(regions):
         # The audio at a given point in this video doesn't depend on which subtitle is being
@@ -661,12 +832,22 @@ def correctness_check(video_path: Path, subs: "pysubs2.SSAFile", sub_lang: Optio
         if cached is not None:
             start = cached["start"]
             transcript = cached["transcript"]
-            segments = cached.get("segments") or []
+            # filter again in case this row predates the nonspeech-annotation filter below
+            segments = [s for s in (cached.get("segments") or []) if not is_nonspeech_annotation(s.get("text", ""))]
             if audio_lang is None:
                 audio_lang = cached["audio_lang"]
                 transcript_lang = audio_lang or cfg.require_audio_lang
         else:
-            start = pick_dialogue_dense_time(subs, region_start, region_end, cfg.clip_seconds)
+            base = pick_dialogue_dense_time(subs, region_start, region_end, cfg.clip_seconds)
+            start = vad.pick_sample_time(subs, timeline, region_start, region_end,
+                                         cfg.clip_seconds, base, cfg.vad_min_speech_seconds)
+            if start is None:
+                # Proven silence: record non-evidence, spend no STT call (same {"start",
+                # "error"} shape extraction failures already produce -- flows through below
+                # and carries no anchor, i.e. no timing evidence either way).
+                built.append({"start": round(base, 1),
+                              "error": f"VAD silence-skip (<{cfg.vad_min_speech_seconds:g}s speech in window)"})
+                continue
             clip_path = tmp_dir / f"clip_{int(start)}.wav"
             if not extract_clip(video_path, start, cfg.clip_seconds, clip_path):
                 built.append({"start": round(start, 1), "error": "audio extraction failed"})
@@ -688,6 +869,11 @@ def correctness_check(video_path: Path, subs: "pysubs2.SSAFile", sub_lang: Optio
             if audio_lang is None and known is None:
                 audio_lang = result.get("language")
                 transcript_lang = audio_lang
+            # Sound-effect/audio-condition tags ("[screaming]", "(music)") tokenize as ordinary
+            # words and can spuriously match real dialogue -- strip before caching, so every
+            # later reader of this cache (this loop next time, get_cached_transcripts_for_video)
+            # sees a clean evidence set too. `transcript` (the LLM check's own text) keeps them.
+            segments = [s for s in segments if not is_nonspeech_annotation(s.get("text", ""))]
             if conn is not None:
                 db.save_transcript_cache(conn, video_path, idx, start, audio_lang, transcript, segments=segments,
                                          clip_seconds=cfg.clip_seconds)

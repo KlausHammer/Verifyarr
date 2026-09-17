@@ -208,34 +208,16 @@ class WhisperShim:
                 "text": " ".join(s["text"] for s in segs), "segments": segs}
 
 
-def _shim_llm_confirm_swaps(candidates, cfg, cancel_event=None):
-    """Stands in for line_order._llm_confirm_swaps (the ONE call in this whole call graph that
-    is an LLM chat completion, not an STT transcription -- a real key would be needed for it,
-    which this test suite deliberately never requires). Returns "inconclusive" (None) for every
-    candidate -- an honest "no real LLM opinion available" rather than fabricating a confident
-    vote in either direction, which would silently bias whatever it's used to decide.
-    Deliberately NOT "always agrees with Whisper": that was tried first and produced a false
-    SUSPECT on an UNMODIFIED file, because Whisper's own audio judge has a real, non-zero rate
-    of individually-inconclusive-but-still-flagged candidates even on clean input (ordinary
-    noise, not a bug -- see _judge_order's own SWAP_MARGIN), and rubber-stamping every one of
-    those with the fake LLM tipped it over _meets_swap_threshold. Safe for this suite's own
-    swap-detection scenario regardless: per-LINE auto-fix (finalize_line_order's line_issues)
-    is built from Whisper's verdicts alone and never touches the LLM path at all -- only the
-    file-wide "swap_severity" escalation needs it, and with every candidate here abstaining,
-    _meets_swap_threshold's own checked==0 guard means that escalation simply never fires,
-    which is the correct behavior for an unavailable second opinion."""
-    return {i: None for i, _l1, _l2 in candidates}
-
-
 @contextlib.contextmanager
 def patch_whisper(fixture: dict):
-    """Monkey-patches the app's real Whisper AND line-order-LLM entry points for the duration of
-    the `with` block: line_order._extract_and_transcribe (used by collect_samples for every slot
-    kind), correctness.extract_clip + correctness.transcribe_verbose (used by correctness_check
-    and, via delegation, detect_language_and_transcribe), and line_order._llm_confirm_swaps (see
-    _shim_llm_confirm_swaps). Nothing else in the sync/correctness/line-order call graph makes a
-    network call -- see evaluate_against_cached_transcripts and score_against_cached_transcripts,
-    which only ever read the DB cache.
+    """Monkey-patches the app's real Whisper entry points for the duration of the `with` block:
+    line_order._extract_and_transcribe (used by collect_samples for every slot kind),
+    correctness.extract_clip + correctness.transcribe_verbose (used by correctness_check and, via
+    delegation, detect_language_and_transcribe). Nothing else in the sync/correctness/line-order
+    call graph makes a network call -- see evaluate_against_cached_transcripts and
+    score_against_cached_transcripts, which only ever read the DB cache (line-order's widespread-
+    swap note is Whisper's own verdict alone, no LLM confirmation call to shim -- see line_order.py's
+    module docstring for why).
 
     Yields the WhisperShim so a test can inspect shim.calls afterward. Restores the real
     functions on exit even if the block raises."""
@@ -243,10 +225,9 @@ def patch_whisper(fixture: dict):
     real_extract_and_transcribe = line_order_mod._extract_and_transcribe
     real_extract_clip = correctness_mod.extract_clip
     real_transcribe_verbose = correctness_mod.transcribe_verbose
-    real_llm_confirm_swaps = line_order_mod._llm_confirm_swaps
 
-    def fake_extract_and_transcribe(video_path, start_sec, duration_sec, cfg, api_key, model,
-                                    fallback, audio_lang, tmp_dir, cancel_event=None):
+    def fake_extract_and_transcribe(video_path, start_sec, duration_sec, cfg, audio_lang,
+                                    tmp_dir, cancel_event=None):
         return shim.slice(start_sec, duration_sec, language=audio_lang)
 
     def fake_extract_clip(video_path, start_sec, duration_sec, out_path) -> bool:
@@ -268,11 +249,9 @@ def patch_whisper(fixture: dict):
     line_order_mod._extract_and_transcribe = fake_extract_and_transcribe
     correctness_mod.extract_clip = fake_extract_clip
     correctness_mod.transcribe_verbose = fake_transcribe_verbose
-    line_order_mod._llm_confirm_swaps = _shim_llm_confirm_swaps
     try:
         yield shim
     finally:
         line_order_mod._extract_and_transcribe = real_extract_and_transcribe
         correctness_mod.extract_clip = real_extract_clip
         correctness_mod.transcribe_verbose = real_transcribe_verbose
-        line_order_mod._llm_confirm_swaps = real_llm_confirm_swaps

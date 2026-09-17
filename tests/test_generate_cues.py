@@ -129,5 +129,37 @@ class BuildSrt(unittest.TestCase):
             self.assertLessEqual(current.end, following.start)
 
 
+
+class DropRepetitionLoops(unittest.TestCase):
+    """whisper.cpp can lock onto one line and repeat it for minutes (seen: a 189-segment run
+    covering 110-386s of one episode, from an unpinned master build). Those segments carry
+    fabricated timestamps, so they poison anchors and line-order evidence, not just the text."""
+
+    @staticmethod
+    def _segs(texts):
+        return [{"start": float(i), "end": i + 1.0, "text": t} for i, t in enumerate(texts)]
+
+    def test_a_long_run_collapses_to_one_instance(self):
+        out = g._drop_repetition_loops(self._segs(["a"] + ["loop"] * 9 + ["b"]))
+        self.assertEqual([s["text"] for s in out], ["a", "loop", "b"])
+
+    def test_the_kept_instance_is_the_first_so_its_timestamp_is_the_real_one(self):
+        out = g._drop_repetition_loops(self._segs(["x"] * 6))
+        self.assertEqual(out[0]["start"], 0.0)
+
+    def test_a_short_run_is_left_alone(self):
+        texts = ["Yeah."] * (g._LOOP_RUN_MIN - 1)
+        self.assertEqual(len(g._drop_repetition_loops(self._segs(texts))), len(texts))
+
+    def test_repeats_that_are_not_consecutive_are_kept(self):
+        # a recurring line (a theme song's refrain) is real, a consecutive run is not
+        out = g._drop_repetition_loops(self._segs(["r", "x", "r", "y", "r", "z", "r"]))
+        self.assertEqual(len(out), 7)
+
+    def test_comparison_ignores_case_and_surrounding_space(self):
+        out = g._drop_repetition_loops(self._segs([" Loop ", "loop", "LOOP", "loop", " loop"]))
+        self.assertEqual(len(out), 1)
+
+
 if __name__ == "__main__":
     unittest.main()

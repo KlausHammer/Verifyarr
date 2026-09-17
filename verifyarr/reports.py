@@ -28,30 +28,45 @@ def _prune_old_reports(report_dir: Path, keep: int = MAX_REPORTS) -> None:
             log.warning("Could not remove old report %s: %s", old, e)
 
 
+# Suspect-note preview length in the run summary — the full note lives in the JSONL
+# report itself; the log line just needs enough to tell the two WHY shapes apart.
+NOTE_PREVIEW_CHARS = 150
+
+
+def _suspect_note_preview(row: dict) -> str:
+    """The WHY behind a SUSPECT flag, shortened for one log line: "Whisper heard: ..."
+    (subtitle doesn't match this episode's audio) vs "Line order: ..." (widespread
+    swapped lines instead) — same score/flag shape, different problem, so it's worth
+    showing even truncated."""
+    why = (row.get("note") or "").strip()
+    if not why:
+        return ""
+    return f" [{why[:NOTE_PREVIEW_CHARS]}{'…' if len(why) > NOTE_PREVIEW_CHARS else ''}]"
+
+
 def write_report(rows: list[dict], report_dir: Path) -> Path:
     report_dir.mkdir(parents=True, exist_ok=True)
     ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     out_path = report_dir / f"report-{ts}.jsonl"
     with out_path.open("w", encoding="utf-8") as f:
-        for r in rows:
-            f.write(json.dumps(r, ensure_ascii=False) + "\n")
+        for row in rows:
+            f.write(json.dumps(row, ensure_ascii=False) + "\n")
     _prune_old_reports(report_dir)
 
-    suspects = [r for r in rows if r["correctness_flag"] == "SUSPECT"]
-    changed = [r for r in rows if r["sync_status"].startswith("fixed")]
-    errors = [r for r in rows if "error" in r["sync_status"]]
+    suspects = [row for row in rows if row["correctness_flag"] == "SUSPECT"]
+    changed = [row for row in rows if row["sync_status"].startswith("fixed")]
+    errors = [row for row in rows if "error" in row["sync_status"]]
 
     log.info("=== Run finished: %d files processed ===", len(rows))
     log.info("Sync fixed: %d | Already fine: %d | Errors: %d",
-              len(changed), sum(1 for r in rows if r["sync_status"].startswith("already in sync")), len(errors))
+             len(changed),
+             sum(1 for row in rows if row["sync_status"].startswith("already in sync")),
+             len(errors))
     if suspects:
         log.warning("--- %d SUSPECT file(s) ---", len(suspects))
-        for r in suspects:
-            # note says WHY: "Whisper heard: ..." (subtitle doesn't match this episode's audio)
-            # vs "Line order: ..." (widespread swapped lines instead) -- same score/flag shape,
-            # different problem, so it's worth showing even truncated.
-            why = (r.get("note") or "").strip()
-            why = f" [{why[:150]}{'…' if len(why) > 150 else ''}]" if why else ""
-            log.warning("  %s  (score=%s) -> %s%s", r["subtitle"], r["correctness_avg_score"], r["auto_action"], why)
+        for row in suspects:
+            log.warning("  %s  (score=%s) -> %s%s", row["subtitle"],
+                        row["correctness_avg_score"], row["auto_action"],
+                        _suspect_note_preview(row))
     log.info("Full report: %s", out_path)
     return out_path

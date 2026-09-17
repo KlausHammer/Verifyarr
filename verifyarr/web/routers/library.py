@@ -24,72 +24,105 @@ from verifyarr.web.deps import get_conn, require_auth
 
 router = APIRouter(prefix="/api/library", tags=["library"])
 
+# season_episode is e.g. "S03E02" — the first 3 chars ("S03") identify the season.
+SEASON_PREFIX_LENGTH = 3
 
-def _new_bucket(**extra) -> dict:
+# Placeholder season shown when a video has no parseable season_episode at all.
+UNKNOWN_SEASON_LABEL = "Unknown"
+
+
+def new_group_bucket(**extra) -> dict:
+    """A fresh per-title (or per-season) counter dict — every count starts at zero so
+    accumulation below can blindly += without checking for missing keys first."""
     return {
         "video_count": 0, "subtitle_detected_count": 0, "processed_count": 0,
         "ok_count": 0, "suspect_count": 0, "missing_count": 0, "last_processed": None,
-        "bazarr_matched": False,  # see _bump -- True as soon as ANY video in the bucket matched
+        "bazarr_matched": False,  # True as soon as ANY video in the bucket matched
         **extra,
     }
 
 
-def _bump(bucket: dict, v, video_rows: list) -> None:
+def _track_latest_timestamp(bucket: dict, timestamp) -> None:
+    """Keep the newest last_processed seen so far — the group's "last activity" shown
+    in the UI. None means nothing in the bucket has ever been processed."""
+    if timestamp and (bucket["last_processed"] is None or timestamp > bucket["last_processed"]):
+        bucket["last_processed"] = timestamp
+
+
+def accumulate_video_into_bucket(bucket: dict, video: dict, file_rows: list) -> None:
+    """Fold one library video (plus its files-table rows) into a title or season bucket."""
     bucket["video_count"] += 1
-    if v["has_subtitle"]:
+    if video["has_subtitle"]:
         bucket["subtitle_detected_count"] += 1
-    if v["bazarr_matched"]:
+    if video["bazarr_matched"]:
         bucket["bazarr_matched"] = True
-    if any(r["last_processed"] for r in video_rows):
+    if any(row["last_processed"] for row in file_rows):
         bucket["processed_count"] += 1
-    for r in video_rows:
-        if r["correctness_flag"] == "SUSPECT":
+    for row in file_rows:
+        if row["correctness_flag"] == "SUSPECT":
             bucket["suspect_count"] += 1
-        elif r["correctness_flag"] == "ok":
+        elif row["correctness_flag"] == "ok":
             bucket["ok_count"] += 1
-        if r["sync_status"] == "missing":
+        if row["sync_status"] == "missing":
             bucket["missing_count"] += 1
-        if r["last_processed"] and (bucket["last_processed"] is None or r["last_processed"] > bucket["last_processed"]):
-            bucket["last_processed"] = r["last_processed"]
+        _track_latest_timestamp(bucket, row["last_processed"])
 
 
-def _grouped_response(conn, kind: Optional[str]) -> dict:
+def load_file_rows_by_video(conn) -> dict:
+    """All files-table rows grouped by video_path — one query for the whole response,
+    so grouping N videos costs one round trip instead of one query per video."""
     rows_by_video: dict = {}
     for row in conn.execute(
         "SELECT video_path, sync_status, correctness_flag, last_processed FROM files"
     ).fetchall():
         rows_by_video.setdefault(row["video_path"], []).append(row)
+    return rows_by_video
+
+
+def season_of(video: dict) -> str:
+    """The "S03" season key for a series video, or a placeholder when unparseable."""
+    return (video["season_episode"] or "")[:SEASON_PREFIX_LENGTH] or UNKNOWN_SEASON_LABEL
+
+
+def sorted_groups(groups: dict, kind: Optional[str]) -> list:
+    """Groups alphabetically by title (case-insensitive), with each series group's
+    seasons sorted chronologically — the order the sidebar renders."""
+    items = sorted(groups.values(), key=lambda group: group["title"].lower())
+    if kind == "series":
+        for group in items:
+            group["seasons"] = sorted(group["seasons"].values(), key=lambda season: season["season"])
+    return items
+
+
+def grouped_response(conn, kind: Optional[str]) -> dict:
+    rows_by_video = load_file_rows_by_video(conn)
 
     groups: dict = {}
-    for v in db.list_library_videos(conn, kind=kind):
-        g = groups.setdefault(v["title"], _new_bucket(
-            title=v["title"], seasons={} if kind == "series" else None,
+    for video in db.list_library_videos(conn, kind=kind):
+        group = groups.setdefault(video["title"], new_group_bucket(
+            title=video["title"], seasons={} if kind == "series" else None,
         ))
-        video_rows = rows_by_video.get(v["video_path"], [])
-        _bump(g, v, video_rows)
+        video_rows = rows_by_video.get(video["video_path"], [])
+        accumulate_video_into_bucket(group, video, video_rows)
 
-        # Season breakdown (series only, see Series page's expand/collapse + per-season Scan) —
-        # season_episode is e.g. "S03E02", first 3 chars ("S03") is the season.
+        # Season breakdown (series only, see Series page's expand/collapse + per-season Scan).
         if kind == "series":
-            season = (v["season_episode"] or "")[:3] or "Unknown"
-            sg = g["seasons"].setdefault(season, _new_bucket(season=season))
-            _bump(sg, v, video_rows)
+            season_key = season_of(video)
+            season_bucket = group["seasons"].setdefault(
+                season_key, new_group_bucket(season=season_key))
+            accumulate_video_into_bucket(season_bucket, video, video_rows)
 
-    items = sorted(groups.values(), key=lambda g: g["title"].lower())
-    for g in items:
-        if g["seasons"] is not None:
-            g["seasons"] = sorted(g["seasons"].values(), key=lambda s: s["season"])
     return {
-        "items": items,
-        "total": len(items),
+        "items": sorted_groups(groups, kind),
+        "total": len(groups),
         "last_scanned_at": db.get_setting_raw(conn, "library.last_scanned_at"),
     }
 
 
 @router.get("")
 def list_library(kind: Optional[str] = Query(None, pattern="^(movie|series)$"),
-                  user=Depends(require_auth), conn=Depends(get_conn)):
-    return _grouped_response(conn, kind)
+                 user=Depends(require_auth), conn=Depends(get_conn)):
+    return grouped_response(conn, kind)
 
 
 @router.get("/rescan/status")
@@ -112,7 +145,7 @@ def cancel_rescan(user=Depends(require_auth)):
 
 @router.post("/rescan")
 def rescan_library(kind: Optional[str] = Query(None, pattern="^(movie|series)$"),
-                    user=Depends(require_auth), conn=Depends(get_conn)):
+                   user=Depends(require_auth), conn=Depends(get_conn)):
     """Fast on-demand cache refresh — discovery only (folder walk), NO sync/correctness
     processing, so it's fine to click right after adding new files without waiting for/
     triggering a full sweep. This is the "Detect now" button in Settings -> General. Always
@@ -121,7 +154,7 @@ def rescan_library(kind: Optional[str] = Query(None, pattern="^(movie|series)$")
     its own filter, and in effect refresh each other's cache too as a bonus."""
     cfg = Config.from_db(conn)
     result = refresh_library_cache(conn, cfg)
-    response = _grouped_response(conn, kind)
+    response = grouped_response(conn, kind)
     response["cancelled"] = result.get("cancelled", False)
     if not response["cancelled"]:
         response["pairs_found"] = result["pairs"]

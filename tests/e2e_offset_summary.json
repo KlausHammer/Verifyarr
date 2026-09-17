@@ -1,0 +1,32 @@
+{
+ "slugs": [
+  "C_S02E01",
+  "C_S02E05",
+  "C_S02E09",
+  "C_S02E12",
+  "C_S03E04",
+  "C_S03E09",
+  "C_S03E16",
+  "SH_S01E02"
+ ],
+ "summary": {
+  "piecewise": {
+   "runs": 8,
+   "errors": 0,
+   "mean_p50": 0.396,
+   "mean_frac_le_1s": 0.794
+  },
+  "drift": {
+   "runs": 8,
+   "errors": 0,
+   "mean_p50": 1.064,
+   "mean_frac_le_1s": 0.473
+  },
+  "gap": {
+   "runs": 8,
+   "errors": 0,
+   "mean_p50": 0.137,
+   "mean_frac_le_1s": 1.0
+  }
+ }
+}

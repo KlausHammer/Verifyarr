@@ -7,17 +7,13 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, Query
 
 from verifyarr import db
-from verifyarr.web.deps import get_conn, require_auth
+from verifyarr.web.deps import get_conn, require_auth, serialize_row
 
 router = APIRouter(prefix="/api/logs", tags=["logs"])
-
-
-def _serialize(row) -> dict:
-    return dict(row)
 
 
 @router.get("")
 def list_logs(after_id: int = Query(0, ge=0), limit: int = Query(500, ge=1, le=5000),
               user=Depends(require_auth), conn=Depends(get_conn)):
     rows = db.list_app_log_lines(conn, after_id=after_id, limit=limit)
-    return {"items": [_serialize(r) for r in rows]}
+    return {"items": [serialize_row(r) for r in rows]}

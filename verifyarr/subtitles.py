@@ -3,6 +3,7 @@ correctness check."""
 
 from __future__ import annotations
 
+import bisect
 import hashlib
 import re
 import statistics
@@ -38,6 +39,19 @@ STOPWORDS = {
     "things", "people", "guys", "they", "them", "their", "theirs", "what", "which", "were", "have",
     "with", "would", "could", "also", "even", "much", "many", "you're", "you've", "you'll", "you'd",
     "she's", "hers", "herself", "himself", "itself", "themselves", "whom",
+    # As common and content-free as "you're"/"she's" above, just missing from the original list --
+    # found via real false positives where one of these, as a line's ONLY surviving token, was
+    # enough on its own to flip a swap verdict (line_order.py: Slow Horses S01E02 #260, S01E03
+    # #318). Two OTHER cases this same pattern caused (S01E02 #164, #196) turned out to be
+    # dynamically catchable instead -- _judge_order discounts a word repeated on both sides of the
+    # audio split, or shared between L1's and L2's own displayed text, before scoring -- so those
+    # two needed no entry here at all. This static list is only the residual: a word that's
+    # common-and-empty enough to be worthless evidence on its OWN, single, unrepeated appearance,
+    # which no dynamic rule can catch. Deliberately NOT extended to every other contraction on
+    # principle (tried that, "who's" cost a real detection -- S02E15 #50, "someone who's been
+    # calling me a lesbian" -- its only surviving token, but a real, non-recurring one): only add
+    # one of these when a real false positive actually traces back to it.
+    "it's", "he's",
 }
 
 
@@ -76,6 +90,20 @@ def max_shift_stats(old: "pysubs2.SSAFile", new: "pysubs2.SSAFile"):
 
 def tokenize(text: str) -> set[str]:
     return {w.lower() for w in WORD_RE.findall(text or "")} - STOPWORDS
+
+
+# A whisper segment whose ENTIRE text is a bracketed/parenthetical sound-effect or audio-condition
+# tag -- "[screaming]", "(dramatic music)", "[BLANK_AUDIO]" -- rather than spoken dialogue. Real
+# in production: seen up to 79 times in a single episode. These tokenize as ordinary words
+# ("screaming", "music", "phone") and can spuriously match real subtitle lines that happen to share
+# one. A leading "-" (dash-speaker marker) is stripped before checking, so "-(screams)" still
+# counts. Text with a bracket ASIDE inside real dialogue ("Free tickets to (coughs) see...") does
+# NOT match, since it isn't the whole segment.
+_NONSPEECH_RE = re.compile(r"^-?\s*(?:[\[(][^\[\]()]*[\])]\s*)+$")
+
+
+def is_nonspeech_annotation(text: str) -> bool:
+    return bool(_NONSPEECH_RE.match((text or "").strip()))
 
 
 def subs_text_in_window(subs: "pysubs2.SSAFile", center_sec: float, before_sec: float, after_sec: float) -> str:
@@ -132,16 +160,33 @@ def pick_dialogue_dense_time(subs: "pysubs2.SSAFile", region_start: float, regio
     happened to be the region's structural midpoint. Candidate start times are every subtitle
     event's own start within the region (checking every possible offset isn't worth it — dialogue
     density only meaningfully changes at event boundaries). Falls back to the region's midpoint
-    when there's no dialogue anywhere in the region at all (nothing better to do there)."""
+    when there's no dialogue anywhere in the region at all (nothing better to do there).
+
+    Window sums run over a prefix-sum array with binary search (O(n log n) total) instead of
+    re-scanning every event per candidate (O(n²)) — this runs once per correctness sample,
+    so the old shape dominated sampling cost on dialogue-heavy files. Candidates are still
+    visited in subtitle order with a strict greater-than comparison, so tie-breaking is
+    exactly as before (earliest candidate in file order wins)."""
     lo_ms, hi_ms = region_start * 1000, region_end * 1000
     in_region = [e for e in subs.events if lo_ms <= e.start <= hi_ms]
     if not in_region:
         return (region_start + region_end) / 2
+    # Events ordered by start (stable, so equal starts keep file order) plus a prefix sum
+    # of their character counts — one O(n log n) setup replacing the per-candidate scan.
+    ordered = sorted(subs.events, key=lambda event: event.start)
+    ordered_starts = [event.start for event in ordered]
+    char_prefix = [0]
+    for event in ordered:
+        char_prefix.append(char_prefix[-1] + len(event.plaintext))
     best_start, best_score = None, -1
-    for e in in_region:
-        start = e.start / 1000.0
-        window_hi_ms = (start + window_sec) * 1000
-        score = sum(len(ev.plaintext) for ev in subs.events if start * 1000 <= ev.start < window_hi_ms)
+    for event in in_region:
+        start = event.start / 1000.0
+        # Same float expressions as the original scan (start * 1000, not event.start) so
+        # window membership — including float-rounding edge cases — is bit-for-bit identical.
+        window_lo_ms, window_hi_ms = start * 1000, (start + window_sec) * 1000
+        lo_idx = bisect.bisect_left(ordered_starts, window_lo_ms)
+        hi_idx = bisect.bisect_left(ordered_starts, window_hi_ms)
+        score = char_prefix[hi_idx] - char_prefix[lo_idx]
         if score > best_score:
             best_score, best_start = score, start
     return best_start
@@ -313,3 +358,182 @@ def summarize_anchor_samples(samples: list[dict]) -> Optional[dict]:
         return None
     return {"regions": regions, "anchor_count": count,
             "mean_abs_shift": round(sum(abs(v) for v in regions.values()) / len(regions), 2)}
+
+
+# --- anchor-based resync -----------------------------------------------------------------------
+# Anchors don't only say "this file is mis-timed" (correctness.significant_anchor_residuals) --
+# each one is a measured offset at a known instant, so a run of agreeing anchors IS the correction
+# for that stretch. These turn a list of anchored samples into an actual per-region shift plan.
+#
+# Two offsets belong to the same region if they agree within this much. Deliberately the same
+# number as ANCHOR_SUSPECT_THRESHOLD_S: below it we would not have called the file mis-synced in
+# the first place, so it cannot be worth splitting a region over.
+ANCHOR_REGION_TOLERANCE_S = ANCHOR_SUSPECT_THRESHOLD_S
+
+# A region has to be backed by at least this many agreeing anchors before its shift is applied --
+# the same evidence bar significant_anchor_residuals uses to believe a mismatch at all. This is
+# what refuses a file that DRIFTS continuously rather than shifting in blocks: measured on a real
+# one (C_S02E19: +37, +22, +15, +6, +2, -1, -3, -12, -31, -39, -36 across the episode), no run of
+# three consecutive anchors ever agrees, so no region qualifies and the file is left alone.
+ANCHOR_REGION_MIN_ANCHORS = 3
+
+# Below this there is nothing worth rewriting the file for -- same noise floor the comparison in
+# pipeline._resolve_ambiguous_sync uses.
+ANCHOR_RESYNC_MIN_SHIFT_S = ANCHOR_PREFER_MARGIN_S
+
+# How far apart two sampled probes' measured offsets may sit before the file is treated as
+# needing better evidence than a handful of clips can give. 5s, not ANCHOR_SUSPECT_THRESHOLD_S:
+# this is a spread BETWEEN probes (a hop somewhere between them), not one probe's own residual.
+# Measured over 52 episodes: a 4-probe screen at this threshold flags 9/9 files that genuinely
+# need re-timing, with 1 false alarm in 43 -- independently reproduced by a separate
+# implementation on the same library (16/16 flagged, 0/36 false).
+ANCHOR_SCREEN_SPREAD_S = 5.0
+
+
+def anchor_spread(samples: list[dict]) -> Optional[float]:
+    """Widest disagreement between a file's confident anchors, or None with fewer than two."""
+    vals = [s["anchor"]["shift"] for s in samples if s.get("anchor")]
+    return (max(vals) - min(vals)) if len(vals) >= 2 else None
+
+
+def anchor_points(samples: list[dict]) -> list[tuple[float, float]]:
+    """[(clip_start_sec, shift_sec)] for every sample with a confident anchor, in time order."""
+    pts = [(float(s["start"]), float(s["anchor"]["shift"]))
+           for s in samples if s.get("anchor") and s.get("start") is not None]
+    return sorted(pts)
+
+
+def anchor_regions(points: list[tuple[float, float]],
+                   tolerance: float = ANCHOR_REGION_TOLERANCE_S,
+                   min_anchors: int = ANCHOR_REGION_MIN_ANCHORS) -> Optional[list[dict]]:
+    """Groups anchors into consecutive runs that agree on one offset.
+
+    Returns [{"lo", "hi", "shift", "n"}, ...] in time order, or None when ANY run is thinner than
+    min_anchors -- "part of this file has an offset I can't verify" has to fail the whole plan,
+    not be quietly skipped or averaged into its neighbour. A sparse run is exactly what a drifting
+    file looks like, and also what a single mis-matched anchor looks like; neither is safe to act
+    on, and both are better handled by the existing SUSPECT path. The one exception is a thin run
+    whose median sits strictly BETWEEN its two disagreeing neighbours: that is the signature of a
+    clip window straddling a region boundary (its median covers two offsets at once -- the same
+    reason _resync_verified ignores cut-straddling anchors), so the anchor is dropped instead of
+    vetoing the plan. Dropping is safe because the plan is still re-measured densely afterwards
+    and discarded if it doesn't verify; the known blind spot is a miscorrection confined to less
+    than ~2x clip_seconds around a cut (its anchors are cut-adjacent and excluded), bounded to
+    the boundary neighbourhood instead of leaving minutes of the file broken.
+
+    Grouping is greedy against the run's running median rather than against the previous point, so
+    one noisy anchor inside an otherwise tight run doesn't split it in two."""
+    if not points:
+        return None
+    runs: list[list[tuple[float, float]]] = [[points[0]]]
+    for pos, shift in points[1:]:
+        current = [s for _p, s in runs[-1]]
+        if abs(shift - statistics.median(current)) <= tolerance:
+            runs[-1].append((pos, shift))
+        else:
+            runs.append([(pos, shift)])
+    # A run can end up within tolerance of its neighbour once both have their final medians
+    # (the greedy pass only ever compared against the run as it stood at the time).
+    merged: list[list[tuple[float, float]]] = [runs[0]]
+    for run in runs[1:]:
+        a = statistics.median([s for _p, s in merged[-1]])
+        b = statistics.median([s for _p, s in run])
+        if abs(a - b) <= tolerance:
+            merged[-1] = merged[-1] + run
+        else:
+            merged.append(run)
+    # A thin run BETWEEN two runs that agree with each other is one noisy anchor, not a region --
+    # real on C_S03E11, where a single -6.6s reading at 680s sits in an otherwise flat stretch and
+    # would otherwise veto correcting the whole file. Absorbed into its neighbours. A thin run
+    # between two DIFFERENT offsets whose median sits strictly between them is a clip window
+    # straddling the boundary -- real on C_S02E09 piecewise (6 clean runs of 8-9 anchors, one
+    # straddling anchor per boundary), where it used to veto the whole plan. Dropped, not
+    # absorbed: averaging it into either side would smear that side's shift. A thin run between
+    # disagreeing neighbours whose value is NOT between them is genuinely undecidable (noise or
+    # a third offset with no evidence) and still fails the plan below.
+    def _median(run):
+        return statistics.median([s for _p, s in run])
+
+    prospect: list[list[tuple[float, float]]] = []
+    for i, run in enumerate(merged):
+        if 0 < i < len(merged) - 1 and len(run) < min_anchors:
+            a, m, b = _median(merged[i - 1]), _median(run), _median(merged[i + 1])
+            if abs(a - b) > tolerance and ((a < m < b) or (b < m < a)):
+                continue
+        prospect.append(run)
+    cleaned: list[list[tuple[float, float]]] = []
+    i = 0
+    while i < len(prospect):
+        run = prospect[i]
+        neighbours_agree = (
+            0 < i < len(prospect) - 1
+            and abs(_median(prospect[i - 1]) - _median(prospect[i + 1])) <= tolerance)
+        if len(run) < min_anchors and neighbours_agree:
+            cleaned[-1] = cleaned[-1] + run + prospect[i + 1]
+            i += 2
+            continue
+        cleaned.append(run)
+        i += 1
+    if any(len(run) < min_anchors for run in cleaned):
+        return None
+    return [{"lo": run[0][0], "hi": run[-1][0], "n": len(run),
+             "shift": round(statistics.median([s for _p, s in run]), 2)} for run in cleaned]
+
+
+def _cut_point(subs: "pysubs2.SSAFile", after_sec: float, before_sec: float) -> float:
+    """Where to split two regions: the middle of the biggest gap between cues in
+    (after_sec, before_sec). A real cut/insert sits in a pause, not mid-scene, and cutting in the
+    widest pause is also what keeps the two differently-shifted halves from colliding. Falls back
+    to the midpoint when there is no dialogue between the two anchors at all."""
+    events = sorted((e for e in subs.events if after_sec * 1000 <= e.start <= before_sec * 1000),
+                    key=lambda e: e.start)
+    best, best_gap = None, -1.0
+    for prev, nxt in zip(events, events[1:]):
+        gap = (nxt.start - prev.end) / 1000.0
+        if gap > best_gap:
+            best, best_gap = (prev.end + nxt.start) / 2000.0, gap
+    return best if best is not None else (after_sec + before_sec) / 2.0
+
+
+def plan_anchor_resync(subs: "pysubs2.SSAFile", samples: list[dict]) -> Optional[list[dict]]:
+    """The shift to apply to each stretch of `subs`, from its anchored samples -- or None when the
+    evidence doesn't support correcting this file at all (see anchor_regions).
+
+    Returns [{"lo_ms", "hi_ms", "shift"}, ...] covering the whole file end to end. Also None when
+    every region is already inside the noise floor: nothing to fix."""
+    regions = anchor_regions(anchor_points(samples))
+    if not regions or all(abs(r["shift"]) < ANCHOR_RESYNC_MIN_SHIFT_S for r in regions):
+        return None
+    # The cut is applied to SUBTITLE times, but an anchor's position is an AUDIO time -- the two
+    # differ by exactly that region's own shift. Searching the audio-time interval put the cut
+    # before some cues that still needed the first region's shift (measured on C_S03E01: cut at
+    # 191.6s instead of ~220s, leaving two anchors still 19s out afterwards).
+    cuts = [_cut_point(subs, a["hi"] - a["shift"], b["lo"] - b["shift"])
+            for a, b in zip(regions, regions[1:])]
+    bounds = [float("-inf")] + [c * 1000.0 for c in cuts] + [float("inf")]
+    return [{"lo_ms": bounds[i], "hi_ms": bounds[i + 1], "shift": r["shift"], "n": r["n"],
+             # where this region's cut sits in AUDIO time, for callers re-measuring the result:
+             # an anchor window straddling one of these covers two different offsets at once.
+             "cut_audio_s": (cuts[i] + r["shift"]) if i < len(cuts) else None}
+            for i, r in enumerate(regions)]
+
+
+def apply_anchor_resync(subs: "pysubs2.SSAFile", plan: list[dict]) -> "pysubs2.SSAFile":
+    """`subs` with each region's own shift applied, as a new file. Cues are re-sorted and
+    de-overlapped afterwards for the same reason build_srt_from_segments does it: two regions
+    moving by different amounts can push one cue past its neighbour, and two cues live at once
+    renders as a doubled caption in most players."""
+    import copy as _copy
+    out = _copy.deepcopy(subs)
+    for e in out.events:
+        for region in plan:
+            if region["lo_ms"] <= e.start < region["hi_ms"]:
+                delta = round(region["shift"] * 1000)
+                e.start = max(0, e.start + delta)
+                e.end = max(e.start, e.end + delta)
+                break
+    out.sort()
+    for current, following in zip(out.events, out.events[1:]):
+        if current.end > following.start > current.start:
+            current.end = following.start
+    return out

@@ -195,12 +195,13 @@ export interface SyncSettings {
   window_minutes: number
   overlap_threshold: number
   block_spread_suspect_threshold_s: number
+  whisper_mode: 'sampled' | 'full'
   anchor_check_enabled: boolean
+  anchor_resync_enabled: boolean
   line_order_enabled: boolean
   line_order_audio_confirm: boolean
   line_order_swap_threshold_pct: number
   line_order_swap_threshold_min: number
-  line_order_auto_action: 'off' | 'quarantine' | 'blacklist' | 'remediate'
 }
 
 export interface CorrectnessSettings {

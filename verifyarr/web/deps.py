@@ -21,6 +21,13 @@ def get_conn():
         conn.close()
 
 
+def serialize_row(row) -> dict:
+    """A sqlite3.Row (or anything dict-like) as a plain JSON-serializable dict — the one
+    place every router's list/detail response converts rows, so a future need (datetime
+    handling, key filtering) lands here instead of in N per-router copies."""
+    return dict(row)
+
+
 def get_cfg(conn=Depends(get_conn)) -> Config:
     return Config.from_db(conn)
 

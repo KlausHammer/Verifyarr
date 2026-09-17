@@ -1,5 +1,5 @@
 # Runtime data — database, backups, quarantine, reports, logs. Never commit real user data.
-data/
+/data/
 
 # Python
 __pycache__/
@@ -24,3 +24,11 @@ frontend/.vite/
 .DS_Store
 .vscode/
 .idea/
+
+# Testmatricens arbejdsfiler — korrumperede undertekstkopier, shard-logs og
+# shard-resultater. Kun de merged resultater og tests/data/ hører i repoet.
+tests/e2e_work_*/
+tests/e2e_work_*.log
+tests/e2e_matrix_[0-9]*.jsonl
+tests/e2e_matrix_summary_[0-9]*.json
+tests/e2e_valid_*[0-9].jsonl

@@ -18,15 +18,19 @@ from verifyarr import log
 from verifyarr.settings import Config
 from verifyarr.subtitles import (
     load_subs, max_shift_stats, summarize_anchor_samples, ANCHOR_PREFER_MARGIN_S,
-    ANCHOR_SUSPECT_THRESHOLD_S,
+    ANCHOR_SUSPECT_THRESHOLD_S, plan_anchor_resync, apply_anchor_resync,
+    anchor_spread, ANCHOR_SCREEN_SPREAD_S,
 )
 from verifyarr.sync_engine import (
     resolve_alass_bin, resolve_alass_reference, run_alass, parse_alass_shift_blocks,
     parse_alass_shift_blocks_with_counts,
 )
-from verifyarr.line_order import heuristic_candidates, collect_samples, finalize_line_order, cache_key_for, apply_line_swap
+from verifyarr.line_order import (
+    heuristic_candidates, collect_samples, collect_samples_full, finalize_line_order, cache_key_for, apply_line_swap,
+)
 from verifyarr.correctness import (
-    evaluate_against_cached_transcripts, significant_anchor_residuals, JobCancelled,
+    evaluate_against_cached_transcripts, evaluate_against_full_transcript, significant_anchor_residuals, JobCancelled,
+    ANCHOR_RESYNC_INTERVAL_S,
 )
 from verifyarr.fileops import backup_subtitle, quarantine_subtitle
 from verifyarr.bazarr import (
@@ -37,15 +41,27 @@ from verifyarr import db
 from verifyarr.db import update_state
 
 
+def _try_quarantine(subtitle_path: Path, cfg: Config, media_root: Path):
+    """Quarantine move that never raises: (dest, None) on success, (None, error text) on
+    failure. The three handle_suspect branches below share this so the move-vs-report
+    shape exists once — each branch keeps its own message and logging, since those
+    deliberately differ ("quarantine failed" vs "blacklist failed, and could not
+    quarantine either")."""
+    try:
+        return quarantine_subtitle(subtitle_path, cfg.quarantine_dir, media_root), None
+    except Exception as e:
+        return None, str(e)
+
+
 def handle_suspect(subtitle_path: Path, video_path: Path, cfg: Config, media_root: Path,
                     lang: Optional[str], bazarr_meta: Optional[dict],
                     history_index: Optional[dict], auto_action: str,
                     conn: Optional[sqlite3.Connection] = None,
                     run_id: Optional[int] = None, cancel_event=None) -> str:
-    """auto_action: off | quarantine | blacklist | remediate — the CALLER decides which (see
-    process_pair below): correctness_auto_action for a plain correctness SUSPECT,
-    line_order_auto_action for a widespread line-order swap. Two independent settings, since the
-    two checks can warrant different amounts of trust in their own SUSPECT verdict.
+    """auto_action: off | quarantine | blacklist | remediate — passed in by the caller, which in
+    practice always means correctness_auto_action. Line-order deliberately has no equivalent: a
+    confirmed swap is a safe mechanical per-line fix, so it is never on its own a reason to throw
+    the file away and fetch another release.
 
     blacklist/remediate hand the file to Bazarr's own blacklist endpoint rather than moving it
     out first: Bazarr deletes the file itself as part of blacklisting it, and -- ONLY if that
@@ -60,11 +76,10 @@ def handle_suspect(subtitle_path: Path, video_path: Path, cfg: Config, media_roo
         return f"would {auto_action} [dry-run]"
 
     if auto_action == "quarantine":
-        try:
-            dest = quarantine_subtitle(subtitle_path, cfg.quarantine_dir, media_root)
-        except Exception as e:
-            log.warning("Could not quarantine %s: %s", subtitle_path, e)
-            return f"quarantine failed: {e}"
+        dest, error = _try_quarantine(subtitle_path, cfg, media_root)
+        if error is not None:
+            log.warning("Could not quarantine %s: %s", subtitle_path, error)
+            return f"quarantine failed: {error}"
         return f"quarantined -> {dest}"
 
     meta = dict(bazarr_meta) if bazarr_meta else None
@@ -80,11 +95,10 @@ def handle_suspect(subtitle_path: Path, video_path: Path, cfg: Config, media_roo
         # current subtitle came bundled with the original release rather than through Bazarr at
         # all, or its own history entry is already blacklisted from an earlier run (excluded
         # from the lookup on purpose -- see bazarr_build_history_index).
-        try:
-            dest = quarantine_subtitle(subtitle_path, cfg.quarantine_dir, media_root)
-        except Exception as e:
-            log.warning("Could not quarantine %s: %s", subtitle_path, e)
-            return f"quarantine failed: {e}"
+        dest, error = _try_quarantine(subtitle_path, cfg, media_root)
+        if error is not None:
+            log.warning("Could not quarantine %s: %s", subtitle_path, error)
+            return f"quarantine failed: {error}"
         msg = f"quarantined -> {dest}; blacklist skipped (no Bazarr match)"
         if conn is not None and auto_action in ("remediate", "blacklist"):
             ids = db.get_bazarr_ids_for_video(conn, video_path)
@@ -112,10 +126,9 @@ def handle_suspect(subtitle_path: Path, video_path: Path, cfg: Config, media_roo
     if not ok:
         # Bazarr didn't remove it (couldn't reach it, etc.) -- fall back to moving it out of
         # the library ourselves rather than leaving a known-bad file in place doing nothing.
-        try:
-            dest = quarantine_subtitle(subtitle_path, cfg.quarantine_dir, media_root)
-        except Exception as e:
-            return f"blacklist failed, and could not quarantine either: {e}"
+        dest, error = _try_quarantine(subtitle_path, cfg, media_root)
+        if error is not None:
+            return f"blacklist failed, and could not quarantine either: {error}"
         result = f"blacklist failed; quarantined -> {dest} instead"
         if auto_action == "blacklist" and meta.get("kind") != "movie" and meta.get("series_id") and meta.get("episode_id"):
             result += "; " + request_replacement_fire_and_forget(cfg, meta["series_id"], meta["episode_id"], lang)
@@ -236,12 +249,23 @@ def _block_time_ranges(subs, blocks_detailed: list[tuple[int, float]]) -> list[t
     return ranges
 
 
+def _backup_best_effort(subtitle_path: Path, cfg: Config, media_root: Path) -> None:
+    """Backs the original up when configured, but never lets a failed backup block the fix
+    itself -- an unwritable backup_dir would otherwise silently stop every sync/line-order write
+    (found when backup_originals became the default). Same policy handle_suspect already uses."""
+    if not cfg.backup_originals:
+        return
+    try:
+        backup_subtitle(subtitle_path, cfg.backup_dir, media_root)
+    except Exception as e:
+        log.warning("Could not back up %s (continuing without a backup): %s", subtitle_path, e)
+
+
 def _write_fix(subtitle_path: Path, cfg: Config, media_root: Path, source) -> None:
     """Puts a sync result on disk, backing the original up first when configured. `source` is
     either alass's own output file (a temp Path, copied verbatim) or an already-parsed
     pysubs2 file (saved via pysubs2)."""
-    if cfg.backup_originals:
-        backup_subtitle(subtitle_path, cfg.backup_dir, media_root)
+    _backup_best_effort(subtitle_path, cfg, media_root)
     if isinstance(source, Path):
         shutil.copyfile(source, subtitle_path)
     else:
@@ -422,6 +446,11 @@ def sync_pair(video_path: Path, subtitle_path: Path, lang: Optional[str], cfg: C
             blocks_note += " (alass's --no-split alternative failed, so this multi-block fit was applied unverified.)"
 
         _write_fix(subtitle_path, cfg, media_root, tmp_primary)
+        # Kept for _try_anchor_resync: when alass's own fit turns out to be wrong, the anchors can
+        # often still plan a correct one -- but only from the UNTOUCHED original, since planning
+        # on top of a bad fit inherits its damage. Popped in correctness_and_finish; never
+        # persisted (same handling as _ambiguous_sync).
+        row["_pre_sync_subs"] = old_subs
         row["sync_status"] = f"fixed (Δ{max_shift:.1f}s)"
         row["note"] += blocks_note + structural_note
     return row, current_subs
@@ -503,10 +532,15 @@ def _resolve_ambiguous_sync(conn: sqlite3.Connection, video_path: Path, subtitle
     subs_by_key = {"new": new_subs, "blocks": blocks_subs, "old": old_subs}
     subs_by_key = {k: v for k, v in subs_by_key.items() if v is not None}
 
+    # whisper_mode == "full" -- collect_samples_full has already populated the full-track cache
+    # earlier in this same run, so this is still free (no new Whisper calls) and gives dense,
+    # whole-file evidence instead of a handful of cached clips.
+    _evaluate = evaluate_against_full_transcript if cfg.whisper_mode == "full" else evaluate_against_cached_transcripts
+
     # 1. Timing evidence -- free.
     timing: dict[str, Optional[dict]] = {}
     for key, subs in subs_by_key.items():
-        ev = evaluate_against_cached_transcripts(conn, video_path, subs, lang, transcript_lang, cfg, score=False)
+        ev = _evaluate(conn, video_path, subs, lang, transcript_lang, cfg, score=False)
         timing[key] = summarize_anchor_samples(ev["samples"]) if ev else None
 
     def residuals_on_common(a: str, b: str) -> Optional[tuple[float, float]]:
@@ -608,6 +642,7 @@ def _resolve_ambiguous_sync(conn: sqlite3.Connection, video_path: Path, subtitle
     # 2. Content evidence -- only when timing alone didn't confirm the default.
     scored: dict[str, dict] = {"new": {"avg_score": result.get("avg_score"), "flag": result.get("flag"),
                                        "samples": result.get("samples") or []}}
+    content_matched = True
     new_confirmed = _confirmed_in_every_block("new") if any_anchor_evidence else True
     if result.get("flag") == "ok" and pick(subs_by_key) == "new" and new_confirmed:
         winner = "new"
@@ -615,12 +650,20 @@ def _resolve_ambiguous_sync(conn: sqlite3.Connection, video_path: Path, subtitle
         for key, subs in subs_by_key.items():
             if key == "new":
                 continue
-            ev = evaluate_against_cached_transcripts(conn, video_path, subs, lang, transcript_lang, cfg,
-                                                     score=True, cancel_event=cancel_event)
+            ev = _evaluate(conn, video_path, subs, lang, transcript_lang, cfg,
+                           score=True, cancel_event=cancel_event)
             if ev is not None:
                 scored[key] = ev
         content_ok = [k for k, v in scored.items() if v.get("flag") == "ok" and v.get("avg_score") is not None]
-        if content_ok:
+        if not content_ok:
+            # NOTHING matched the audio's content -- not alass's two fits, not the original. That
+            # is a wrong-subtitle verdict, not a sync problem, and re-timing text that isn't this
+            # episode's is meaningless. Leave the file exactly as it is and let the caller flag it
+            # SUSPECT: picking a "best" fit here overwrote the original on the strength of scores
+            # like 0.07 -- see C_S02E15, whose subtitle turned out to be the NEXT episode's text
+            # entirely, and which the pipeline "fixed" by 30.4s before this branch existed.
+            winner, content_matched = "old", False
+        else:
             # CONTENT decides first among candidates that passed it -- it's the evidence this
             # branch just paid for, and a real gap between two "ok" scores is exactly what it
             # exists to catch (see CONTENT_SCORE_TIE_MARGIN). Anchors/preference (pick()) only
@@ -629,11 +672,6 @@ def _resolve_ambiguous_sync(conn: sqlite3.Connection, video_path: Path, subtitle
             best = max(scored[k]["avg_score"] for k in content_ok)
             near_best = [k for k in content_ok if scored[k]["avg_score"] >= best - CONTENT_SCORE_TIE_MARGIN]
             winner = _reject_unproven_old(pick(near_best), near_best)
-        else:
-            scorable = [k for k, v in scored.items() if v.get("avg_score") is not None]
-            winner = (max(scorable, key=lambda k: (scored[k]["avg_score"], -_CANDIDATE_PREFERENCE[k]))
-                      if scorable else "new")
-            winner = _reject_unproven_old(winner, scorable)
 
     def _describe(key: str) -> str:
         parts = []
@@ -652,7 +690,10 @@ def _resolve_ambiguous_sync(conn: sqlite3.Connection, video_path: Path, subtitle
     structural_note = " line count changed significantly — check the file manually." if ambiguous.get("structural") else ""
 
     def _synthetic(key: str) -> dict:
-        s = scored[key]
+        # Falls back to "new"'s own evaluation for a candidate that was never scored -- the
+        # no-content-match branch above can pick 'old' without having anything cached to score it
+        # against, and the caller still has to see a real (failing) flag rather than None.
+        s = scored.get(key) or scored["new"]
         return {"avg_score": s.get("avg_score"), "flag": s.get("flag"), "samples": s.get("samples") or [],
                 "audio_lang": transcript_lang, "swap_severity": None}
 
@@ -683,13 +724,185 @@ def _resolve_ambiguous_sync(conn: sqlite3.Connection, video_path: Path, subtitle
     # sync_max_shift_s deliberately keeps the offset alass measured: it's the one fact worth
     # seeing in the UI about a file whose re-sync was rejected.
     shift_txt = f"{max_shift_new:.1f}s" if max_shift_new is not None else "?"
-    row["sync_status"] = f"already in sync (alass suggested Δ{shift_txt}, rejected — didn't verify better than the original)"
+    row["sync_status"] = (
+        f"left unchanged (alass suggested Δ{shift_txt}; no candidate matched the audio's content)"
+        if not content_matched else
+        f"already in sync (alass suggested Δ{shift_txt}, rejected — didn't verify better than the original)")
     row["sync_split_blocks"] = None
     row["sync_block_spread_s"] = None
     row["note"] += note_suffix
     row["line_order_fixed"] = None
     row["line_order_flagged"] = None
     return old_subs, _synthetic("old"), None, winner
+
+
+
+def _try_anchor_resync(conn: sqlite3.Connection, video_path: Path, subtitle_path: Path,
+                        lang: Optional[str], cfg: Config, media_root: Path, subs,
+                        transcript_lang: Optional[str], fallback_subs=None,
+                        cancel_event=None) -> Optional[tuple]:
+    """Corrects a file the anchors have just proved mis-timed, instead of only flagging it.
+
+    An anchor is already a MEASURED offset at a known instant (subtitles.clip_anchor_shift), so a
+    run of agreeing anchors is the correction for that stretch -- the information to fix these
+    files was always there, it just wasn't being used: every one of them was reported SUSPECT with
+    the right number sitting in its own note. Handles the multi-block case too (a real one:
+    -3.3s, then -17.5s, then 0, then -23.3s, then 0 across five stretches of one episode), because
+    a single global offset cannot fix a file like that and picking the average would make every
+    region wrong.
+
+    Only ever called from the anchor-escalation branch, i.e. only for a file whose CONTENT already
+    checked out -- re-timing a subtitle that isn't this episode's text is the mistake
+    _resolve_ambiguous_sync's no-content-match branch exists to prevent, and this must not
+    reintroduce it from the other side.
+
+    Nothing is written until the correction has been re-measured against the same evidence
+    (see below): the plan is applied to a COPY, fresh anchors are computed for it, and the file on
+    disk is only replaced if those anchors actually came back clean. A correction that doesn't
+    verify is discarded and the caller falls back to flagging SUSPECT -- a wrong auto-correction
+    is worse than an unfixed file, since nothing downstream would ever look at it again.
+
+    Returns (new_subs, note, plan) or None to fall back."""
+    evaluate = evaluate_against_full_transcript if cfg.whisper_mode == "full" else evaluate_against_cached_transcripts
+
+    def anchors_for(candidate):
+        kwargs = {"anchor_interval": ANCHOR_RESYNC_INTERVAL_S} if cfg.whisper_mode == "full" else {}
+        ev = evaluate(conn, video_path, candidate, lang, transcript_lang, cfg, score=False, **kwargs)
+        return (ev or {}).get("samples") or []
+
+    # alass runs before any of this, so `subs` may already carry a WRONG fit -- and a bad fit is
+    # harder to plan from than the untouched file (measured: 4 of 9 real mis-synced files could
+    # not be planned after alass had moved them, 2 of those plan cleanly from the original).
+    # Both are tried; the validation below is what decides, so a worse candidate simply fails.
+    # Both candidates are planned and verified, and the BEST verified one wins -- not the first.
+    # Measured against an independent reference: planning on top of alass's fit passes
+    # verification but lands further out than planning from the untouched file (C_S03E05 worst
+    # twelfth 14.8s vs 1.0s, C_S03E20 6.5s vs 1.3s). Ties keep alass's fit, the conservative side.
+    best = None
+    for candidate in [c for c in (subs, fallback_subs) if c is not None]:
+        plan = plan_anchor_resync(candidate, anchors_for(candidate))
+        if not plan:
+            continue
+        fixed = apply_anchor_resync(candidate, plan)
+        residual = _resync_verified(plan, anchors_for(fixed), cfg, subtitle_path)
+        if residual is not None and (best is None or residual < best[0]):
+            best = (residual, fixed, plan)
+    if best is None:
+        return None
+    _residual, fixed, plan = best
+    _write_fix(subtitle_path, cfg, media_root, fixed)
+    shifts = ", ".join(f"{r['shift']:+.1f}s x{r['n']}" for r in plan)
+    note = (f" Re-synced from {sum(r['n'] for r in plan)} Whisper anchor(s) in "
+            f"{len(plan)} region(s) [{shifts}] and re-verified against the audio afterwards.")
+    return fixed, note, plan
+
+
+def _resync_verified(plan, after, cfg: Config, subtitle_path: Path) -> Optional[float]:
+    """The corrected file's mean remaining |residual| if its own fresh anchors come back clean,
+    else None. A number rather than a bool so two candidates can be compared, not just accepted."""
+    # An anchor whose own window straddles a region cut covers two different offsets at once, so
+    # its median sits between them and means nothing -- the same reason _judge_order discounts a
+    # word heard on both sides of its split. Judging the correction on those would reject a
+    # perfectly good multi-region fix for the one thing it cannot get right by construction.
+    cuts = [r["cut_audio_s"] for r in plan if r.get("cut_audio_s") is not None]
+    span = float(cfg.clip_seconds)
+    # Samples with no confident anchor carry no timing evidence either way (normal and
+    # common -- a silent/music stretch simply anchors nothing), so they are excluded up
+    # front like the cut-straddlers: without this the mean below crashes on None.
+    clean = [s for s in after
+             if s.get("anchor") is not None
+             and not any(s["start"] - span <= c <= s["start"] + span for c in cuts)]
+    # The correction has to hold up on the SAME measurement that condemned the file, densely
+    # sampled -- not merely "better on average", which a half-right fix also manages.
+    still_bad = significant_anchor_residuals(clean, ANCHOR_SUSPECT_THRESHOLD_S)
+    if still_bad or not clean:
+        log.info("Anchor resync for %s discarded: %d region(s) planned, but %d of %d anchor(s) "
+                 "still mismatched afterwards", subtitle_path.name, len(plan), len(still_bad), len(clean))
+        return None
+    return sum(abs(s["anchor"]["shift"]) for s in clean) / len(clean)
+
+
+
+
+
+def _screen_says_needs_full(collected: dict, cfg: Config) -> bool:
+    """Whether a sampled run has seen enough to justify paying for the whole transcript.
+
+    The cheap clips are a SCREEN: they answer "does this file's timing look wrong somewhere"
+    well (measured over 52 episodes: a 4-probe screen flags 9/9 files that genuinely need
+    re-timing, 1 false alarm in 43), but they cannot answer "wrong where, by how much" -- a
+    region needs 3 agreeing anchors to plan from, and a handful of probes can't cover several
+    regions. Measured: escalating with more probes plans correctly on 4 of 9 real files;
+    escalating to the full transcript reaches 8 of 9. So the ladder skips the middle rung.
+
+    Either signal is enough: probes disagreeing with EACH OTHER (a hop between them), or ANY
+    single probe with a real residual. Deliberately a lower bar than the SUSPECT escalation's
+    "3 agreeing residuals" -- that rule guards a VERDICT about the file, this one only decides
+    whether to go and look properly, so one probe is reason enough. Measured over 52 episodes:
+    the strict rule catches 5 of 10 bad files, this one 9 of 10, at the cost of 2 unnecessary
+    transcriptions in 42 healthy files."""
+    if cfg.whisper_mode != "sampled" or not cfg.escalate_sampled_to_full:
+        return False
+    samples = collected.get("samples") or []
+    spread = anchor_spread(samples)
+    if spread is not None and spread > ANCHOR_SCREEN_SPREAD_S:
+        return True
+    return bool(significant_anchor_residuals(samples, ANCHOR_SUSPECT_THRESHOLD_S, min_samples=1))
+
+
+def _recheck_after_resync(video_path: Path, corrected_subs, lang: Optional[str], cfg: Config,
+                           conn: sqlite3.Connection, previous_collected: dict, previous_result: dict,
+                           cancel_event=None) -> tuple:
+    """Re-runs the correctness/line-order evidence pass against a subtitle _try_anchor_resync just
+    re-timed. Falls back to the previous pass's results if the fresh one can't be produced -- a
+    failure here must not undo a correction that already verified."""
+    try:
+        with tempfile.TemporaryDirectory() as td:
+            if cfg.whisper_mode == "full":
+                collected = collect_samples_full(video_path, corrected_subs, lang, cfg, Path(td),
+                                                  conn, cancel_event=cancel_event)
+            else:
+                collected = collect_samples(video_path, corrected_subs, lang, cfg, Path(td),
+                                             conn=conn, cancel_event=cancel_event)
+    except JobCancelled:
+        raise
+    except Exception as e:
+        log.warning("Post-resync re-check failed for %s: %s", video_path.name, e)
+        return previous_collected, previous_result, previous_result.get("swap_severity")
+    if collected.get("skipped"):
+        return previous_collected, previous_result, previous_result.get("swap_severity")
+    act = cfg.line_order_enabled and cfg.line_order_audio_confirm
+    result = finalize_line_order(collected, cfg, cancel_event=cancel_event, run_llm_confirm=act)
+    return collected, result, result.get("swap_severity")
+
+
+def _apply_line_order(row: dict, result: dict, swap_severity, current_subs, subtitle_path: Path,
+                       cfg: Config, media_root: Path) -> None:
+    """Auto-fixes the swaps Whisper confirmed, and records the counts. Split out so the
+    post-resync path can reuse it -- see correctness_and_finish."""
+    issues = result.get("line_issues") or []
+    flagged = result.get("line_flagged") or []
+    row["line_order_fixed"] = len(issues)
+    row["line_order_flagged"] = len(flagged)
+    if issues:
+        # Content otherwise checks out -- even a widespread, dual-confirmed swap pattern
+        # (swap_severity) is just a mechanical per-line fix here, not a reason to redownload;
+        # noted for visibility either way.
+        widespread_note = ""
+        if swap_severity:
+            widespread_note = (f" (widespread: {swap_severity['whisper_confirmed']}/"
+                               f"{swap_severity['whisper_checked']} tested candidates confirmed)")
+        if cfg.dry_run:
+            row["note"] += f" Line order: would auto-fix {len(issues)} block(s){widespread_note} [dry-run]."
+        else:
+            _backup_best_effort(subtitle_path, cfg, media_root)
+            for item in issues:
+                apply_line_swap(current_subs, item["index"])
+            current_subs.save(str(subtitle_path))
+            row["note"] += f" Line order: auto-fixed {len(issues)} block(s){widespread_note}."
+    if flagged:
+        row["note"] += (f" Line order: {len(flagged)} block(s) flagged for manual "
+                         f"review (not auto-fixed, unconfirmed).")
 
 
 def correctness_and_finish(video_path: Path, subtitle_path: Path, lang: Optional[str],
@@ -703,6 +916,9 @@ def correctness_and_finish(video_path: Path, subtitle_path: Path, lang: Optional
     even though the sync stage runs in a thread pool — Groq's rate-limit pacing and this app's
     single-job cancellation both also expect one file at a time here)."""
     media_root = cfg.media_root_for(subtitle_path)
+    # Popped immediately: it's a pysubs2 object sync_pair left for _try_anchor_resync, and nothing
+    # that gets persisted or serialized may still be carrying it (see apply_pending_sync).
+    pre_sync_subs = row.pop("_pre_sync_subs", None)
     if current_subs is None:
         # sync_pair couldn't parse the original subtitle at all -- nothing to correctness-check.
         update_state(conn, video_path, subtitle_path, row)
@@ -733,6 +949,16 @@ def correctness_and_finish(video_path: Path, subtitle_path: Path, lang: Optional
                 collected["whisper_verdicts"] = {int(k): v for k, v in collected["whisper_verdicts"].items()}
                 collected["tested_items"] = [tuple(t) for t in collected["tested_items"]]
                 collected["candidates"] = [tuple(c) for c in collected["candidates"]]
+                # Older cache rows predate heuristic_indices -- absent means "no filtering" to
+                # finalize_line_order, which is what those rows' (heuristic-only) candidates
+                # already were anyway.
+            elif cfg.whisper_mode == "full":
+                # Dense, whole-file coverage already -- no need for sync_pair's targeted extra
+                # samples around alass's block boundaries (collect_samples' extra_target_ranges);
+                # a full transcript already covers every block on its own.
+                with tempfile.TemporaryDirectory() as td2:
+                    collected = collect_samples_full(video_path, current_subs, lang, cfg, Path(td2),
+                                                      conn, cancel_event=cancel_event)
             else:
                 # Peeked, not popped -- the actual resolution (which candidate wins) happens
                 # further down, after this Whisper pass; this only needs the block time-ranges
@@ -743,6 +969,19 @@ def correctness_and_finish(video_path: Path, subtitle_path: Path, lang: Optional
                     collected = collect_samples(video_path, current_subs, lang, cfg, Path(td2),
                                                  conn=conn, cancel_event=cancel_event,
                                                  extra_target_ranges=extra_target_ranges)
+            # Checked even on a reused cache hit, not just a freshly-sampled one -- cache_key_for
+            # doesn't vary with escalate_sampled_to_full, so a file screened negative before that
+            # setting was turned on (or a borderline one) would otherwise never get re-screened
+            # until its subtitle content itself changes. _screen_says_needs_full is a no-op
+            # (returns False) outside sampled mode, so this is safe to call unconditionally.
+            if _screen_says_needs_full(collected, cfg):
+                log.info("%s: sampled clips disagree about the timing -- re-checking against "
+                         "a full transcript", subtitle_path.name)
+                with tempfile.TemporaryDirectory() as td2:
+                    full = collect_samples_full(video_path, current_subs, lang, cfg, Path(td2),
+                                                 conn, cancel_event=cancel_event)
+                if not full.get("skipped"):
+                    collected = full
         except JobCancelled:
             raise  # a cancelled job is not a "skipped" check -- let jobs.py end the run cleanly
         except Exception as e:
@@ -762,6 +1001,7 @@ def correctness_and_finish(video_path: Path, subtitle_path: Path, lang: Optional
                     "samples": collected["samples"], "audio_lang": collected["audio_lang"],
                     "whisper_verdicts": collected["whisper_verdicts"],
                     "tested_items": collected["tested_items"], "candidates": collected["candidates"],
+                    "heuristic_indices": collected.get("heuristic_indices"),
                 })
 
             act_on_line_order = cfg.line_order_enabled and cfg.line_order_audio_confirm
@@ -779,6 +1019,11 @@ def correctness_and_finish(video_path: Path, subtitle_path: Path, lang: Optional
             # `result` currently describes), so nothing downstream should judge/act on "new"
             # until this has had a chance to replace it.
             ambiguous = row.pop("_ambiguous_sync", None)
+            # The deferred path keeps the untouched original here instead of in _pre_sync_subs
+            # (sync_pair returns before it gets that far) -- either way it is what
+            # _try_anchor_resync falls back to when alass's own fit can't be planned from.
+            if ambiguous is not None and pre_sync_subs is None:
+                pre_sync_subs = ambiguous.get("old_subs")
             resolved_winner = None
             if ambiguous is not None:
                 current_subs, result, swap_severity, resolved_winner = _resolve_ambiguous_sync(
@@ -788,21 +1033,7 @@ def correctness_and_finish(video_path: Path, subtitle_path: Path, lang: Optional
                 row["correctness_audio_lang"] = result.get("audio_lang")
                 row["correctness_samples"] = result.get("samples")
 
-            if swap_severity is not None:
-                # Whisper AND an independent LLM pass both confirmed a large share of the TESTED
-                # heuristic candidates are genuinely swapped — not a per-line fix, treat the whole
-                # file as SUSPECT and let Bazarr find a better release instead.
-                row["correctness_avg_score"] = swap_severity["whisper_rate"]
-                row["correctness_flag"] = "SUSPECT"
-                row["note"] = (row["note"] + " Line order: widespread swaps confirmed by both "
-                                f"Whisper ({swap_severity['whisper_confirmed']}/{swap_severity['whisper_checked']}) "
-                                f"and the LLM ({swap_severity['llm_confirmed']}/{swap_severity['llm_checked']}) on "
-                                f"{swap_severity['sample_size']} tested candidate(s) — treating as SUSPECT instead "
-                                "of auto-fixing individual lines.").strip()
-                row["auto_action"] = handle_suspect(subtitle_path, video_path, cfg, media_root, lang,
-                                                     bazarr_meta, history_index, cfg.line_order_auto_action,
-                                                     conn=conn, run_id=run_id, cancel_event=cancel_event)
-            elif result["flag"] == "SUSPECT":
+            if result["flag"] == "SUSPECT":
                 row["correctness_flag"] = "SUSPECT"
                 excerpts = " || ".join(
                     f"{s['start']}s: \"{s.get('transcript_excerpt', s.get('error', ''))}\""
@@ -851,39 +1082,80 @@ def correctness_and_finish(video_path: Path, subtitle_path: Path, lang: Optional
                 # specific point (see Config.anchor_check_enabled).
                 worst = max(abs(s["anchor"]["shift"]) for s in bad)
                 where = ", ".join(f"{s['start']}s (Δ{s['anchor']['shift']:.1f}s)" for s in bad)
-                row["correctness_flag"] = "SUSPECT"
-                row["note"] = (row["note"] +
-                                f" Escalated to SUSPECT: {len(bad)} Whisper anchor(s) show a confirmed "
-                                f"timing mismatch of up to {worst:.1f}s at [{where}], even though "
-                                "the overall average passed.").strip()
-                row["auto_action"] = handle_suspect(subtitle_path, video_path, cfg, media_root, lang,
-                                                     bazarr_meta, history_index, cfg.correctness_auto_action,
-                                                     conn=conn, run_id=run_id, cancel_event=cancel_event)
+                # The anchors just measured the error. Try to CORRECT it before giving up on the
+                # file -- see _try_anchor_resync. Only reachable with result["flag"] == "ok", i.e.
+                # the text is this episode's; a wrong-episode file never gets here.
+                resynced = None
+                if cfg.anchor_resync_enabled and result["flag"] == "ok" and not cfg.dry_run:
+                    resynced = _try_anchor_resync(conn, video_path, subtitle_path, lang, cfg,
+                                                   media_root, current_subs, result.get("audio_lang"),
+                                                   fallback_subs=pre_sync_subs,
+                                                   cancel_event=cancel_event)
+                if resynced is not None:
+                    current_subs, resync_note, plan = resynced
+                    row["correctness_flag"] = "ok"
+                    row["sync_status"] = (f"fixed (Δ{max(abs(r['shift']) for r in plan):.1f}s, "
+                                          f"{len(plan)} anchor region(s))")
+                    row["sync_max_shift_s"] = round(max(abs(r["shift"]) for r in plan), 2)
+                    row["note"] = (row["note"] + resync_note).strip()
+                    # The line-order evidence above was gathered against the cue times this
+                    # resync just changed, so it describes a file that no longer exists -- it
+                    # searched the transcript at timestamps up to 54s from where the speech
+                    # actually is. Re-gather against the corrected file before acting on it
+                    # (measured: 92 -> 111 decidable candidates on C_S03E01, 37 -> 57 on
+                    # C_S02E21). Free in full mode: the transcript is already cached, this is
+                    # token overlap, not a new Whisper call.
+                    pre_recheck_collected = collected
+                    collected, result, swap_severity = _recheck_after_resync(
+                        video_path, current_subs, lang, cfg, conn, collected, result,
+                        cancel_event=cancel_event)
+                    if act_on_line_order:
+                        _apply_line_order(row, result, swap_severity, current_subs,
+                                           subtitle_path, cfg, media_root)
+                    # Cache under the CORRECTED subtitle's own fingerprint, so the next run
+                    # reuses this pass rather than the stale pre-resync one -- but only when the
+                    # recheck actually re-gathered evidence. On failure/skip it falls back to
+                    # returning the SAME object it was passed (`is`, not equality), still
+                    # timestamped against the pre-resync cues; caching that under the corrected
+                    # subtitle's fingerprint would make the next run treat stale evidence as
+                    # valid forever, since nothing else invalidates it once cached. Leaving no
+                    # cache entry means the next run just re-collects properly instead.
+                    if collected is not pre_recheck_collected:
+                        row["line_order_cache_key"] = cache_key_for(current_subs, cfg)
+                        row["line_order_cache_json"] = json.dumps({
+                            "samples": collected["samples"], "audio_lang": collected["audio_lang"],
+                            "whisper_verdicts": collected["whisper_verdicts"],
+                            "tested_items": collected["tested_items"], "candidates": collected["candidates"],
+                            "heuristic_indices": collected.get("heuristic_indices"),
+                        })
+                else:
+                    row["correctness_flag"] = "SUSPECT"
+                    row["note"] = (row["note"] +
+                                    f" Escalated to SUSPECT: {len(bad)} Whisper anchor(s) show a confirmed "
+                                    f"timing mismatch of up to {worst:.1f}s at [{where}], even though "
+                                    "the overall average passed.").strip()
+                    row["auto_action"] = handle_suspect(subtitle_path, video_path, cfg, media_root, lang,
+                                                         bazarr_meta, history_index, cfg.correctness_auto_action,
+                                                         conn=conn, run_id=run_id, cancel_event=cancel_event)
+            elif result["flag"] != "ok":
+                # _aggregate_correctness couldn't score a single sample ("unknown (no valid
+                # samples)") -- every window failed, typically a foreign-language subtitle whose
+                # LLM translation never came back. That is "nothing was verified", and it used to
+                # fall through to the "ok" branch below and be recorded as a passed check.
+                row["correctness_flag"] = "unknown"
+                row["note"] = (row["note"] + f" Correctness could not be determined: {result['flag']}.").strip()
             else:
                 row["correctness_flag"] = "ok"
                 if act_on_line_order:
-                    issues = result.get("line_issues") or []
-                    flagged = result.get("line_flagged") or []
-                    row["line_order_fixed"] = len(issues)
-                    row["line_order_flagged"] = len(flagged)
-                    if issues:
-                        if cfg.dry_run:
-                            row["note"] += f" Line order: would auto-fix {len(issues)} block(s) [dry-run]."
-                        else:
-                            if cfg.backup_originals:
-                                backup_subtitle(subtitle_path, cfg.backup_dir, media_root)
-                            for item in issues:
-                                apply_line_swap(current_subs, item["index"])
-                            current_subs.save(str(subtitle_path))
-                            row["note"] += f" Line order: auto-fixed {len(issues)} block(s)."
-                    if flagged:
-                        row["note"] += (f" Line order: {len(flagged)} block(s) flagged for manual "
-                                         f"review (not auto-fixed, unconfirmed).")
+                    _apply_line_order(row, result, swap_severity, current_subs, subtitle_path,
+                                       cfg, media_root)
                 elif cfg.line_order_enabled:
-                    # audio_confirm off — heuristic-only reporting, never auto-fixed, same low-
-                    # confidence handling as before, just sourced from the candidates already
-                    # collected above instead of a separate pass.
-                    issues = collected["candidates"]
+                    # audio_confirm off — heuristic-only reporting, never auto-fixed. candidates
+                    # is every 2-line event in full mode (see collect_samples_full) -- use
+                    # heuristic_indices here instead, same free-heuristic-only count as before.
+                    issues = collected.get("heuristic_indices")
+                    if issues is None:
+                        issues = collected["candidates"]
                     row["line_order_fixed"] = 0
                     row["line_order_flagged"] = len(issues)
                     if issues:

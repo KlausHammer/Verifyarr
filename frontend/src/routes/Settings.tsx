@@ -310,11 +310,8 @@ function WhatRunsTable({ general, sync, correctness, generate }: ReturnType<type
               />
             </td>
             <td className={styles.actionCell}>
-              <AutoActionSelect
-                value={s.line_order_auto_action}
-                onChange={(v) => sync.setData({ ...s, line_order_auto_action: v as SyncSettings['line_order_auto_action'] })}
-              />
-              <Tip text={`${AUTO_ACTION_TIP} Only for a widespread pattern -- a single swap is just fixed in place.`} />
+              <span className="text-dim">fixed in place</span>
+              <Tip text="A confirmed swap is just swapped back -- it is never a reason to throw the file away and fetch another release. A real content problem is caught by the correctness check instead, which has its own action." />
             </td>
           </tr>
           <tr>
@@ -500,7 +497,7 @@ function GeneralTab() {
             />
             <label htmlFor="backup_originals">
               Back up subtitles before overwriting them
-              <Tip text="Off by default. When on, a copy is saved before any automatic edit overwrites a subtitle." />
+              <Tip text="On by default. A copy is saved before any automatic edit overwrites a subtitle — the sync fix, a line-order swap, or a pre-blacklist removal. Worth keeping on: the line-order auto-fix runs at about 98% precision, so a small share of its swaps are wrong and this is the only way back. A failed backup never blocks the fix itself." />
             </label>
           </div>
           <SaveBar busy={busy} saved={saved} error={error} />
@@ -520,12 +517,11 @@ function SyncTab() {
       className={`card ${styles.formCard}`}
       onSubmit={(e) => {
         e.preventDefault()
-        // Everything except enabled/line_order_enabled/line_order_auto_action -- those three are
-        // owned by Settings -> Automation's "What runs" table (its own separate fetch/save of
-        // this same group); sending this form's possibly-stale copy of them would silently undo
-        // a change just made there.
-        const { enabled: _enabled, line_order_enabled: _lineOrderEnabled,
-          line_order_auto_action: _lineOrderAutoAction, ...rest } = data
+        // Everything except enabled/line_order_enabled -- those two are owned by Settings ->
+        // Automation's "What runs" table (its own separate fetch/save of this same group);
+        // sending this form's possibly-stale copy of them would silently undo a change just
+        // made there.
+        const { enabled: _enabled, line_order_enabled: _lineOrderEnabled, ...rest } = data
         save(rest as unknown as Record<string, unknown>)
       }}
     >
@@ -545,14 +541,23 @@ function SyncTab() {
           onChange={(e) => setData({ ...data, min_change_seconds: Number(e.target.value) })}
         />
       </Field>
-      <Field label="Whisper samples per file" tip="How many audio clips to sample per file when checking correctness. Spread evenly, each picked from nearby dialogue.">
+      <Field
+        label="Whisper mode"
+        tip="Sampled: a handful of short clips (fast, cheap). Full transcript: transcribes the whole episode/movie once, then checks sync, correctness, and line order against ALL of it -- far more thorough, but far more Whisper work per file (local Whisper: mostly time; cloud: real API cost/quota)."
+      >
+        <select value={data.whisper_mode} onChange={(e) => setData({ ...data, whisper_mode: e.target.value as SyncSettings['whisper_mode'] })}>
+          <option value="sampled">Sampled clips</option>
+          <option value="full">Full episode/movie transcript</option>
+        </select>
+      </Field>
+      <Field label="Whisper samples per file" tip="How many audio clips to sample per file when checking correctness. Spread evenly, each picked from nearby dialogue. In Full transcript mode, this is only used as a base density multiplier -- see that mode's own tip.">
         <input
           type="number"
           value={data.sample_count}
           onChange={(e) => setData({ ...data, sample_count: Number(e.target.value) })}
         />
       </Field>
-      <Field label="Clip length (s)" tip="Length of each sampled audio clip sent for transcription.">
+      <Field label="Clip length (s)" tip="Length of each sampled audio clip sent for transcription. 60s is the default for a reason: the timing check needs at least 3 matched lines inside ONE clip, which a 30s clip rarely has — dropping to 30 makes desync detection much weaker while saving very little.">
         <input
           type="number"
           value={data.clip_seconds}
@@ -594,8 +599,22 @@ function SyncTab() {
           onChange={(e) => setData({ ...data, anchor_check_enabled: e.target.checked })}
         />
         <label htmlFor="anchor_check_enabled">
-          Whisper anchor escalation (experimental)
-          <Tip text="Flag SUSPECT when a Whisper-verified line shows a timing mismatch of more than ~2.5s at that exact point, even though the overall average passed. Only works for subtitles in the spoken language (an English audio track gives Danish subtitles no anchors). Thresholds are still provisional -- expect some false alarms." />
+          Whisper anchor escalation
+          <Tip text="Flag SUSPECT when at least 3 Whisper-verified lines show a timing mismatch of more than ~2.5s, even though the overall average passed. Validated on 52 real episodes: found 9 genuinely misaligned files that alass had called 'already in sync', with no false alarms. Only works for subtitles in the spoken language (an English audio track gives Danish subtitles no anchors)." />
+        </label>
+      </div>
+
+      <div className={styles.checkRow}>
+        <input
+          id="anchor_resync_enabled"
+          type="checkbox"
+          checked={data.anchor_resync_enabled}
+          disabled={!data.anchor_check_enabled}
+          onChange={(e) => setData({ ...data, anchor_resync_enabled: e.target.checked })}
+        />
+        <label htmlFor="anchor_resync_enabled">
+          Re-sync from the anchors instead of only flagging
+          <Tip text="When the anchors prove a file is mis-timed, they have also measured BY HOW MUCH — so the file gets corrected rather than just reported. Handles a file that needs different offsets in different stretches, not only one global shift. The correction is re-measured against the audio before anything is written, and a file whose timing drifts continuously (rather than shifting in blocks) is left alone for the ordinary SUSPECT handling. Needs the anchor escalation above." />
         </label>
       </div>
 
@@ -620,7 +639,7 @@ function SyncTab() {
       <div className={styles.row}>
         <Field
           label="Widespread-swap threshold (%)"
-          tip="Share of tested candidates that must be confirmed swapped (by Whisper AND an LLM check) before the file is treated as SUSPECT."
+          tip="Share of tested candidates that must be confirmed swapped by Whisper before it's noted as a widespread pattern -- every individually confirmed line still gets auto-fixed either way."
         >
           <input
             type="number" step="1" min="1" max="100"
@@ -682,7 +701,7 @@ function CorrectnessTab() {
 
       <Field
         label="Use local Whisper for transcription"
-        tip="Runs the per-clip Whisper calls on this box's own CPU/GPU via whisper.cpp instead of the cloud provider above — no API key or network needed for them. Translation and the line-order LLM confirm still use the provider above regardless of this."
+        tip="Runs the per-clip Whisper calls on this box's own CPU/GPU via whisper.cpp instead of the cloud provider above — no API key or network needed for them. Translation still uses the provider above regardless of this."
       >
         <label style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
           <input
@@ -706,7 +725,7 @@ function CorrectnessTab() {
                 onChange={(e) => setData({ ...data, local_whisper_binary: e.target.value })}
               />
             </Field>
-            <Field label="Model file path" tip="A ggml/GGUF model file, e.g. ggml-small.bin — see the Dockerfile's whisper-builder stage.">
+            <Field label="Model file path" tip="A ggml model file, e.g. ggml-small.bin. Defaults to docker-compose's WHISPER_MODEL env var — downloaded automatically on first use if it isn't already baked into the image.">
               <input
                 type="text"
                 value={data.local_whisper_model}
@@ -1210,7 +1229,7 @@ function AutomationTab() {
           },
         }),
         api.put('/settings/sync', {
-          values: { enabled: s.enabled, line_order_enabled: s.line_order_enabled, line_order_auto_action: s.line_order_auto_action },
+          values: { enabled: s.enabled, line_order_enabled: s.line_order_enabled },
         }),
         api.put('/settings/correctness', { values: { enabled: c.enabled, auto_action: c.auto_action } }),
         api.put('/settings/generate', { values: { enabled: gen.enabled } }),

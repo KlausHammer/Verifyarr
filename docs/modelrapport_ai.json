@@ -1,0 +1,364 @@
+{
+ "calibration_basis": {
+  "episodes_measured": 52,
+  "languages": [
+   "en"
+  ],
+  "note": "Alle taerskler er kalibreret paa engelsk. Dansk mangler kalibrering."
+ },
+ "classification": {
+  "classes": {
+   "drift": "rigtige ord, vandrende offsets, lav aftale overalt (E08: offsets -62/-74/-82, aftale <=0.58)",
+   "hop": "rent indhold, rent hop mellem blokke (E21: +40s; S03E02: +18/-15s; S03E05: -24s; S03E07: +22/+35s)",
+   "ok": "aftale >=0.80 ved offset <=1s (36/52 afsnit, spredning 0.844-0.956)",
+   "shift_const": "aftale >=0.65 ved konstant offset >1s",
+   "wrong_content": "aftale <0.65 ved alle offsets i alle kvartaler (E14/E15/E16/E17/E20/E22/E23, E18/E19-backups)"
+  },
+  "detection_rule": "file_best < 0.65 ELLER probe_spredning > 5s",
+  "measured_performance": {
+   "bad_flagged": "16/16",
+   "ok_false_alarms": "0/36"
+  }
+ },
+ "cost_notes": "GPU- og CPU-arbejder koerte samtidig under sweepet: tider er rangering, ikke benchmarks. N100-tal mangler.",
+ "data_provenance": {
+  "commit": "1da4dc82fa7996d4edda05890dca65aeceaafd6d",
+  "model_main": "ggml-large-v3-turbo.bin",
+  "models_from": "huggingface.co/ggerganov/whisper.cpp",
+  "toolchains": {
+   "linux_cpu": "g++ Release, /tmp/whisper-build (midlertidig)",
+   "windows_gpu": "MSYS2 UCRT64, Vulkan, AMD RX 6750 XT"
+  }
+ },
+ "detection_examples": {
+  "E18_dl_inneholdt_E19": "byte-identisk tekst, ~0.1s kortere sluttider",
+  "E19_wrong_er_E20": "aabningen 'Don't forget, Greendale' = E20-whisper ordret; aftale vs E19 kun 0.057",
+  "E20_fil_er_E21": "aabner med E21-diorama-talen",
+  "S03E20_korrekt_vs_ORIGINAL": {
+   "corrected_test": "0.918 @ 0.0s",
+   "original": "0.508 @ -26.5s"
+  }
+ },
+ "generated": "2026-09-15",
+ "metric": {
+  "agreement": "andel af undertekstord fundet i transcript inden for +/-2s (tidsenig)",
+  "best_offset": "soeges i +/-60s (screen) / +/-120s (analyse), trin 0.5s",
+  "reference": "whisper.cpp large-v3-turbo ordtider (DTW, 10ms) som facit"
+ },
+ "models": {
+  "base.en-cpu": {
+   "agree_E02_E04": [
+    0.871,
+    0.897,
+    0.844
+   ],
+   "sek_per_ep": [
+    134,
+    113,
+    103
+   ]
+  },
+  "base.en-greedy-cpu": {
+   "agree_E02_E04": [
+    0.881,
+    0.902,
+    0.837
+   ],
+   "sek_per_ep": [
+    101,
+    104,
+    94
+   ]
+  },
+  "base.en-q5_1-cpu": {
+   "agree_E02_E04": [
+    0.867,
+    0.895,
+    0.85
+   ],
+   "sek_per_ep": [
+    125,
+    118,
+    125
+   ]
+  },
+  "medium.en": {
+   "agree_E02_E04": [
+    0.878,
+    0.939,
+    0.883
+   ],
+   "sek_per_ep": [
+    120,
+    112,
+    97
+   ]
+  },
+  "medium.en-greedy": {
+   "agree_E02_E04": [
+    0.896,
+    0.944,
+    0.883
+   ],
+   "sek_per_ep": [
+    61,
+    63,
+    58
+   ]
+  },
+  "medium.en-q5_0": {
+   "agree_E02_E04": [
+    0.91,
+    0.924,
+    0.869
+   ],
+   "sek_per_ep": [
+    102,
+    97,
+    83
+   ]
+  },
+  "recommendation": {
+   "cpu_N100": "tiny.en-q5_1 eller base.en-greedy (skal maales paa N100)",
+   "gpu": "small.en-greedy (bedste fart/kvalitet)"
+  },
+  "small.en": {
+   "agree_E02_E04": [
+    0.907,
+    0.928,
+    0.857
+   ],
+   "sek_per_ep": [
+    56,
+    58,
+    50
+   ]
+  },
+  "small.en-greedy": {
+   "agree_E02_E04": [
+    0.893,
+    0.93,
+    0.868
+   ],
+   "sek_per_ep": [
+    31,
+    31,
+    28
+   ]
+  },
+  "small.en-q5_1": {
+   "agree_E02_E04": [
+    0.901,
+    0.922,
+    0.871
+   ],
+   "sek_per_ep": [
+    58,
+    54,
+    56
+   ]
+  },
+  "small.en-q5_1-nomc": {
+   "agree_E02_E04": [
+    0.903,
+    null,
+    0.832
+   ],
+   "note": "kun E02+E04 koert; -mc 0 ligegyldig her"
+  },
+  "tiny.en-cpu": {
+   "agree_E02_E04": [
+    0.819,
+    0.874,
+    0.803
+   ],
+   "sek_per_ep": [
+    82,
+    78,
+    69
+   ]
+  },
+  "tiny.en-greedy-cpu": {
+   "agree_E02_E04": [
+    0.826,
+    0.861,
+    0.805
+   ],
+   "sek_per_ep": [
+    65,
+    71,
+    57
+   ]
+  },
+  "tiny.en-q5_1-cpu": {
+   "agree_E02_E04": [
+    0.819,
+    0.869,
+    0.801
+   ],
+   "sek_per_ep": [
+    75,
+    84,
+    72
+   ]
+  },
+  "turbo-q5_0": {
+   "agree_E02_E04": [
+    0.908,
+    0.929,
+    0.88
+   ],
+   "sek_per_ep": [
+    43,
+    42,
+    43
+   ]
+  },
+  "turbo-q8_0": {
+   "agree_E02_E04": [
+    0.916,
+    0.936,
+    0.883
+   ],
+   "sek_per_ep": [
+    43,
+    43,
+    43
+   ]
+  },
+  "turbo_reference": {
+   "E02": "0.907 @ +0.25s",
+   "E03": "0.941 @ +0.25s"
+  }
+ },
+ "report": "whisper sync/detection evaluering (52 afsnit + 14 sweep-konfigurationer)",
+ "scope": {
+  "episodes": "Community S02+S03, Slow Horses S01 (52), Stormester S03 (4/8 transskriberet)",
+  "sweep": "14 konfigurationer x C_S02E02/E03/E04",
+  "turbo_reference": "alle 52 afsnit, large-v3-turbo, -nfa -dtw -mc 0"
+ },
+ "sparse_samples": {
+  "E02_cheap_models": "alle prober korrekte inkl. tiny (tiny: flere nodata-afvisninger ved k=1)",
+  "hit_rate": {
+   "k1_per_10min": "82/86 = 0.953",
+   "k2_per_10min": "178/179 = 0.994",
+   "k3_per_10min": "260/265 = 0.981"
+  },
+  "probe_guards": [
+   "mindst 40 transcript-ord i [pt-2, pt+32]",
+   "mindst 20 cues i [pt-90, pt+120]",
+   "afvis kantvaerdier (|off| >= range-0.1)"
+  ],
+  "recommendation": "k=2 (2x30s pr. 10 min); k=3-fejl klumper ved diskontinuiteter (informative)",
+  "transcript_source": "turbo-ord (oevre graense; small-afvigelse lille per sweep)"
+ },
+ "adaptive_escalation": {
+  "design": "uenige nabo-prober (>5s) -> ekstra probe midt imellem, max dybde 3, max 8 ekstra klip; derefter segmenter med median-offset",
+  "ladder": [
+   "k=2 screen",
+   "eskalering ved hop",
+   "full kun ved flag",
+   "sekvens-match kun ved swap-mistanke"
+  ],
+  "status": "tested 2026-09-15 paa S02E21 (6 ekstra prober -> segmenter -0.5/+53/+41)"
+ },
+ "line_swap": {
+  "artifacts": [
+   "__pycache__/swap_eval.cpython-311.pyc"
+  ],
+  "design_from_pyc": "syntetiske byttede to-linjers cues; sekvens-matching efter median-metode gav 40% falske positiver",
+  "measured": false,
+  "needed": "ordtider over mistankte cues + sekvens-match; passer som L3 i stigen"
+ },
+ "status": "measured_en_complete__da_partial__swap_unmeasured__escalation_untested",
+ "sync_methods_E21": {
+  "alass_video_ref": "0.353/0.367/0.404/0.524 (5 forvirrede blokke, max shift 47.5s)",
+  "alass_whisper_ref": "0.940/0.940/0.899/0.947 ved ~0s (3 fornuftige blokke: -0.1/+53.9/+41.9s)",
+  "direct_3block": "0.939/0.630/0.792/0.946",
+  "original": "0.938/-0.75, 0.584, 0.797/+40.75, 0.942/+40.25"
+ },
+ "thresholds": {
+  "FILE_SUSPECT_BELOW": 0.65,
+  "MIN_PROBE_WORDS": 40,
+  "OFF_RANGE": 60.0,
+  "OFF_STEP": 0.5,
+  "OK_OFFSET_ABS": 1.0,
+  "SPREAD_JUMP_ABOVE": 5.0,
+  "VERIFY_KEEP": 0.65,
+  "WIN_SECONDS": 2.0
+ },
+ "units": {
+  ".lang.json": "sprog + sandsynlighed",
+  ".vad.tsv": "sekunder (tale/stilhed, ASR-uafhaengig)",
+  ".words.json_start_end": "sekunder",
+  "offsets.from_to": "millisekunder (heuristik, altid udfyldt)",
+  "segment_offsets": "millisekunder",
+  "timestamps_text": "TT:MM:SS,mmm",
+  "tokens_t_dtw": "centisekunder (1/100 s), -1 = ugyldig (~10% tokens, brug offsets.from)"
+ },
+ "vad_result": {
+  "med_vad_E02": "0.099 @ -6.5s (token-tider oedelagt)",
+  "med_vad_E03": "0.091 @ -6.5s",
+  "speech_share_E02": "10.5/21.1 min",
+  "uden_vad_E02": "0.907 @ +0.25s",
+  "uden_vad_E03": "0.941 @ +0.25s"
+ },
+ "nonuniform_offsets": {
+  "measured": "2026-09-15",
+  "code": "P0+VAD patches 0001-0003",
+  "method": "8 raske afsnit x piecewise(6 blokke +-5..15s, seed offset-v1) / drift(2% progressiv) / gap(5min midterstykke slettet); korruption paa SRT, fixture-transcript-shim, ingen ny whisper; 8 parallelle workers",
+  "gap": {
+   "runs": 8,
+   "flags_ok": 8,
+   "surviving_le_1s": 1.0,
+   "p50_max_s": 0.3
+  },
+  "drift": {
+   "runs": 8,
+   "flags_ok": 8,
+   "mean_p50_s": 1.064,
+   "mean_frac_le_1s": 0.473,
+   "note": "rettes groft, bliver ~1s for loes"
+  },
+  "piecewise": {
+   "runs": 8,
+   "before_fix": {
+    "recovered_5_of_8": {
+     "p50_s": "0.1-0.6",
+     "frac_le_1s": "0.74-0.92",
+     "flag": "ok"
+    },
+    "failed_3_of_8": {
+     "slugs": [
+      "C_S02E09",
+      "C_S03E09",
+      "C_S03E16"
+     ],
+     "p50_s": "~7",
+     "frac_le_1s": "<=0.11",
+     "flag": "SUSPECT (alle 3, ingen tavse fejl)"
+    }
+   },
+   "root_cause": "et grenstraeddaende anker pr. blokgraense (klip der daekker graensen maaler median af to offsets) udloeste tynd-region-veto af hele planen; 55 rene ankre kasseret",
+   "fix": "patch 0004: straddlere (vaerdi strengt mellem uenige naboer) droppes; vildtaeg udenfor begge droppes ikke; taet genmaaling foer skrivning uendraet",
+   "after_fix": {
+    "recovered_7_of_8": {
+     "p50_s": "<=0.5",
+     "frac_le_1s": "0.79-0.92",
+     "flag": "ok"
+    },
+    "partial_1_of_8": {
+     "slug": "C_S03E09",
+     "p50_s": "7.1->1.5",
+     "frac_le_1s": "0.11->0.35",
+     "flag": "ok",
+     "cause": "taette blokke (+8.1/+5.3s) oversegmenteres i 8 regioner; verificering blind ved ~1-2s"
+    },
+    "no_regression": "oevrige 21 koersler byte-identiske"
+   },
+   "before_data": "verifyarr_handoff/e2e_offset_before_fix.jsonl",
+   "pattern": "anker-region-resync virker; veto-reglen var fejlen, ikke mangel paa transskription"
+  },
+  "details": "verifyarr_handoff/e2e_offset.jsonl (+e2e_offset.py, e2e_offset_parallel.py)"
+ }
+}

@@ -58,10 +58,6 @@ class _RunLogHandler(logging.Handler):
             pass
 
 
-def _apply_dry_run(cfg: Config, dry_run: bool) -> Config:
-    return cfg if cfg.dry_run == dry_run else dataclasses.replace(cfg, dry_run=dry_run)
-
-
 def _outcome_summary(row: dict) -> tuple[str, str]:
     """(outcome, short text) for Activity's per-file "done" log line, after a file's sync+
     correctness both run (see the batch loop below) -- the "[i/N] path" line before it only
@@ -88,6 +84,10 @@ def _outcome_summary(row: dict) -> tuple[str, str]:
         if action and action not in ("-", "none (action=off)"):
             text += f" ({action})"
         return "suspect", text
+
+    if flag == "unknown":
+        # Not a pass: every sample failed to score, so nothing was actually verified.
+        return "suspect", "Not verified — no usable Whisper sample"
 
     if synced:
         shift = row.get("sync_max_shift_s")
@@ -164,6 +164,24 @@ def execute_run(run_id: int, cfg: Config, conn: sqlite3.Connection, cancel_event
         db.finish_run(conn, run_id, status, error_message)
 
 
+def _scoped_pair_title(pair: tuple, cfg: Config, bazarr_titles: dict) -> str:
+    """A pair's title for Scan-scope filtering — Bazarr's matched title first, then the
+    inferred one, then the folder name. Must match what the Library page actually displays
+    and scoped this Scan to (see discovery.build_library_video_rows) — otherwise a title
+    Bazarr renamed would match zero pairs here even though the button that triggered this
+    used that exact name."""
+    video = pair[0]
+    _season_episode, inferred = infer_title_and_episode(video, cfg.media_root_for(video))
+    return bazarr_titles.get(video) or inferred or str(video.parent)
+
+
+def _scoped_pair_season(pair: tuple, cfg: Config) -> str:
+    """A pair's "S03"-style season key for Scan-scope filtering ("" when unparseable)."""
+    video = pair[0]
+    season_episode, _title = infer_title_and_episode(video, cfg.media_root_for(video))
+    return (season_episode or "")[:3]
+
+
 def _run_sweep(conn: sqlite3.Connection, run_id: int, cfg: Config, force: bool,
                 cancel_event: threading.Event, kind: Optional[str] = None,
                 title: Optional[str] = None, season: Optional[str] = None) -> None:
@@ -234,18 +252,10 @@ def _run_sweep(conn: sqlite3.Connection, run_id: int, cfg: Config, force: bool,
     if kind:
         scoped_pairs = [p for p in scoped_pairs if cfg.kind_for(p[0]) == kind]
     if title:
-        def _pair_title(p: tuple) -> str:
-            _se, t = infer_title_and_episode(p[0], cfg.media_root_for(p[0]))
-            # Must match what the Library page actually displays and scoped this Scan to (see
-            # build_library_video_rows below) -- otherwise a title Bazarr renamed would match
-            # zero pairs here even though the button that triggered this used that exact name.
-            return bazarr_titles.get(p[0]) or t or str(p[0].parent)
-        scoped_pairs = [p for p in scoped_pairs if _pair_title(p) == title]
+        scoped_pairs = [p for p in scoped_pairs
+                        if _scoped_pair_title(p, cfg, bazarr_titles) == title]
     if season:
-        def _pair_season(p: tuple) -> str:
-            se, _t = infer_title_and_episode(p[0], cfg.media_root_for(p[0]))
-            return (se or "")[:3]
-        scoped_pairs = [p for p in scoped_pairs if _pair_season(p) == season]
+        scoped_pairs = [p for p in scoped_pairs if _scoped_pair_season(p, cfg) == season]
     if kind or title or season:
         log.info("Scoped to %d/%d pairs (kind=%s, title=%s, season=%s)",
                   len(scoped_pairs), len(pairs), kind, title, season)
@@ -287,13 +297,11 @@ def _run_sweep(conn: sqlite3.Connection, run_id: int, cfg: Config, force: bool,
     # auto_action=remediate silently never remediated anything: history_index stayed None for the
     # whole run, so every SUSPECT file hit "no Bazarr match" regardless of whether Bazarr actually
     # had history for it (manual per-file Remediate from Files/FileDetail was unaffected — it
-    # builds its own history_index directly, see routers/files.py). Checked against EITHER
-    # per-check action (correctness_auto_action / line_order_auto_action, see pipeline.py) — a
-    # sweep can produce either kind of SUSPECT, so the history index has to be ready for both.
-    # LazyHistoryIndex defers the actual ~10s bulk fetch until (if) something's actually SUSPECT
-    # -- most runs, especially a scoped Scan, never need it at all.
-    history_index = LazyHistoryIndex(cfg) if cfg.correctness_auto_action in ("blacklist", "remediate") \
-        or cfg.line_order_auto_action in ("blacklist", "remediate") else None
+    # builds its own history_index directly, see routers/files.py). LazyHistoryIndex defers the
+    # actual ~10s bulk fetch until (if) something's actually SUSPECT -- most runs, especially a
+    # scoped Scan, never need it at all.
+    history_index = (LazyHistoryIndex(cfg)
+                     if cfg.correctness_auto_action in ("blacklist", "remediate") else None)
 
     rows = []
     # audio_cache: see verifyarr.cli — shares one audio decode per video across languages (for
@@ -515,7 +523,7 @@ class JobRunner:
             try:
                 cfg = Config.from_db(conn0)
                 dry_run = cfg.dry_run if dry_run_override is None else dry_run_override
-                cfg = _apply_dry_run(cfg, dry_run)
+                cfg = cfg.with_dry_run(dry_run)
                 # target_kind/target_title — what shows in Activity's Type/Target columns. For a
                 # sweep, that's whatever scope was requested (see routers/library.py); for a
                 # single-file run it's derived from the video path itself.

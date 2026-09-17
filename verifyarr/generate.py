@@ -51,7 +51,7 @@ from verifyarr import db
 from verifyarr import correctness
 from verifyarr import fileops
 from verifyarr.settings import Config
-from verifyarr.subtitles import build_srt_from_segments, load_subs
+from verifyarr.subtitles import build_srt_from_segments, is_nonspeech_annotation, load_subs
 
 # ISO 639-1 -> plain English name, for the translation prompt (correctness.translate_text takes
 # a language NAME, not a code). Only the languages this app's own LANG3_TO_LANG2 already
@@ -607,6 +607,47 @@ def _low_confidence_reason(seg: dict) -> Optional[str]:
     return None
 
 
+# A run of this many consecutive segments with identical text is a decoder repetition loop, not
+# dialogue -- nobody says the same sentence 5 times in a row with no other line between. Real and
+# severe: one whisper.cpp build produced a single 189-segment run covering 110-386s of one
+# episode, 9 of 52 test episodes affected, up to 41% of a transcript. Root cause never pinned
+# down -- source commit, model bytes, flags, thread count, audio and CPU feature flags were all
+# matched against a build that does NOT do it, leaving only the OS/compiler toolchain. So this
+# guard is deliberately in the app, where no build detail can route around it.
+#
+# The looped segments' timestamps are fabricated too, so this is not only about the text: leaving
+# them in poisons the anchors and line-order evidence derived from them. Only the first instance
+# is kept, so a genuinely repeated line survives once.
+_LOOP_RUN_MIN = 5
+
+
+def _drop_repetition_loops(segments: list[dict]) -> list[dict]:
+    out: list[dict] = []
+    dropped = longest = 0
+    i = 0
+    while i < len(segments):
+        j = i
+        text = (segments[i].get("text") or "").strip().lower()
+        while j + 1 < len(segments) and (segments[j + 1].get("text") or "").strip().lower() == text:
+            j += 1
+        run = j - i + 1
+        if run >= _LOOP_RUN_MIN:
+            out.append(segments[i])
+            dropped += run - 1
+            longest = max(longest, run)
+        else:
+            out.extend(segments[i:j + 1])
+        i = j + 1
+    if dropped:
+        # Loud, not silent: this means the local Whisper build is malfunctioning on this audio,
+        # and the transcript now has a real hole where the loop was.
+        log.warning("Dropped %d segment(s) from Whisper repetition loops (longest run %d "
+                    "identical segments) -- the transcript is missing whatever was actually said "
+                    "there; check the local Whisper build if this keeps happening",
+                    dropped, longest)
+    return out
+
+
 def _normalize_segment(raw: dict) -> dict:
     seg = {"start": float(raw["start"]), "end": float(raw["end"]),
            "text": (raw.get("text") or "").strip()}
@@ -762,25 +803,33 @@ def _active_stt_model(cfg: Config) -> str:
 
 # --- full-track transcription -------------------------------------------------------------------
 
-def transcribe_full_track(cfg: Config, video_path: Path, tmp_dir: Path, cancel_event=None) -> dict:
+def transcribe_full_track(cfg: Config, video_path: Path, tmp_dir: Path, cancel_event=None,
+                           adapter=None, chunk_seconds: Optional[int] = None,
+                           label: Optional[str] = None) -> dict:
     """Full-file transcription with absolute (whole-video) timestamps -- {"language", "segments"}.
-    Chunked per cfg.generate_chunk_seconds_for(provider), on silence boundaries where possible
-    (see plan_chunks); language is detected once (ffprobe's tag first, else whatever the first
-    chunk's STT call reports, else generate.assume_spoken_lang) and held fixed for every later
-    chunk -- the same "detect once, reuse" idiom as correctness.detect_language_and_transcribe."""
+    Chunked per chunk_seconds, on silence boundaries where possible (see plan_chunks); language is
+    detected once (ffprobe's tag first, else whatever the first chunk's STT call reports, else
+    generate.assume_spoken_lang) and held fixed for every later chunk -- the same "detect once,
+    reuse" idiom as correctness.detect_language_and_transcribe.
+
+    adapter/chunk_seconds/label: override the generate.* defaults below -- used by
+    full_transcript_for_check (sync.whisper_mode == "full"), which sources its own provider from
+    correctness.py's settings instead of generate.*'s separate ones. Omitted (the generate feature's
+    own callers) -> resolved from cfg.generate_stt_provider exactly as before."""
     duration = correctness.get_duration_seconds(video_path)
     if not duration:
         raise TranscriptionError(f"could not read duration (ffprobe): {video_path}")
 
-    provider = cfg.generate_stt_provider
-    adapter = _STT_ADAPTERS.get(provider)
     if adapter is None:
-        raise TranscriptionError(f"unknown generate.stt_provider: {provider}")
-    api_key = cfg.active_generate_stt_api_key
-    if provider != "cloudflare" and not api_key:
-        raise TranscriptionError(f"no API key configured for generate.stt_provider={provider}")
-
-    chunk_seconds = max(30, cfg.generate_chunk_seconds_for(provider))
+        provider = cfg.generate_stt_provider
+        adapter = _STT_ADAPTERS.get(provider)
+        if adapter is None:
+            raise TranscriptionError(f"unknown generate.stt_provider: {provider}")
+        api_key = cfg.active_generate_stt_api_key
+        if provider != "cloudflare" and not api_key:
+            raise TranscriptionError(f"no API key configured for generate.stt_provider={provider}")
+        label = label or provider
+    chunk_seconds = max(30, chunk_seconds or cfg.generate_chunk_seconds_for(cfg.generate_stt_provider))
     tag = _tmp_tag(video_path)
     full_audio_path = tmp_dir / f"{tag}.full.mp3"
     if not extract_full_audio(video_path, full_audio_path, cfg.generate_audio_bitrate_kbps,
@@ -794,7 +843,7 @@ def transcribe_full_track(cfg: Config, video_path: Path, tmp_dir: Path, cancel_e
         silences = _detect_long_silences(full_audio_path, audio_duration, cancel_event=cancel_event)
         chunks = plan_chunks(audio_duration, chunk_seconds, silences)
         log.info("Transcribing %s: %.0f min of audio in %d chunk(s) via %s",
-                  video_path.name, audio_duration / 60.0, len(chunks), provider)
+                  video_path.name, audio_duration / 60.0, len(chunks), label or "?")
 
         spoken_lang = normalize_lang(correctness.detect_audio_language_ffprobe(video_path))
         segments: list[dict] = []
@@ -838,6 +887,11 @@ def transcribe_full_track(cfg: Config, video_path: Path, tmp_dir: Path, cancel_e
         if spoken_lang is None:
             spoken_lang = normalize_lang(cfg.generate_assume_spoken_lang)
         segments.sort(key=lambda s: (s["start"], s["end"]))
+        # Repetition loops are stripped here too, not only in full_transcript_for_check: a
+        # GENERATED subtitle with the same line 189 times is broken output in its own right,
+        # and _low_confidence_reason can't catch it on the local path (whisper.cpp's -oj reports
+        # no compression_ratio). Idempotent, so applying it on read as well costs nothing.
+        segments = _drop_repetition_loops(segments)
         return {"language": spoken_lang, "segments": split_segments_into_cues(segments)}
     finally:
         full_audio_path.unlink(missing_ok=True)
@@ -860,12 +914,18 @@ def _generate_llm_model_and_fallback(cfg: Config) -> tuple[str, Optional[str]]:
     return cfg.generate_groq_llm_model, cfg.generate_groq_llm_model_fallback
 
 
-def _translate_one(cfg: Config, text: str, target_lang_name: str, cancel_event=None) -> Optional[str]:
+def _llm_call_kwargs(cfg: Config) -> dict:
+    """The provider/model/key resolution shared by both translation call shapes below —
+    one place deciding which LLM (and whose key) a translation uses."""
     provider = cfg.generate_llm_provider
     llm_model, llm_fallback = _generate_llm_model_and_fallback(cfg)
-    return correctness.translate_text(text, target_lang_name, provider=provider,
-                                       api_key=cfg.active_generate_llm_api_key, llm_model=llm_model,
-                                       llm_model_fallback=llm_fallback, cancel_event=cancel_event)
+    return {"provider": provider, "api_key": cfg.active_generate_llm_api_key,
+            "llm_model": llm_model, "llm_model_fallback": llm_fallback}
+
+
+def _translate_one(cfg: Config, text: str, target_lang_name: str, cancel_event=None) -> Optional[str]:
+    return correctness.translate_text(text, target_lang_name, cancel_event=cancel_event,
+                                       **_llm_call_kwargs(cfg))
 
 
 def _iter_batches(segments: list[dict], batch_size: int, max_chars: int) -> Iterator[list[dict]]:
@@ -926,12 +986,9 @@ def _translate_batch(cfg: Config, batch: list[dict], target_lang_name: str,
         "lines. Reply with exactly that many numbered lines, same numbers, same order, one line per "
         "number, formatted 'N. translated text'. Do not merge, split, drop, or add lines. No other text."
     )
-    provider = cfg.generate_llm_provider
-    llm_model, llm_fallback = _generate_llm_model_and_fallback(cfg)
-    raw = correctness.translate_text(numbered_in, target_lang_name, provider=provider,
-                                      api_key=cfg.active_generate_llm_api_key, llm_model=llm_model,
-                                      llm_model_fallback=llm_fallback, system_prompt=system_prompt,
-                                      max_chars=TRANSLATE_MAX_CHARS, cancel_event=cancel_event)
+    raw = correctness.translate_text(numbered_in, target_lang_name, system_prompt=system_prompt,
+                                      max_chars=TRANSLATE_MAX_CHARS, cancel_event=cancel_event,
+                                      **_llm_call_kwargs(cfg))
     parsed = _parse_numbered_reply(raw, len(batch))
     if parsed is not None:
         # A structurally valid reply can still carry an EMPTY translation for a line that had
@@ -990,11 +1047,18 @@ def translate_segments(cfg: Config, segments: list[dict], target_lang: str, canc
 # --- entry points ------------------------------------------------------------------------------
 
 def _transcribe_or_reuse(cfg: Config, video_path: Path, tmp_dir: Path, conn,
-                          cancel_event=None) -> tuple[Optional[str], list[dict]]:
+                          cancel_event=None, *, provider: Optional[str] = None,
+                          model: Optional[str] = None, adapter=None,
+                          chunk_seconds: Optional[int] = None,
+                          label: Optional[str] = None) -> tuple[Optional[str], list[dict]]:
     """(spoken_lang, segments) for this video -- from db.video_full_transcript_cache when the
     cached entry still matches the video AND the current STT provider/model, otherwise freshly
-    transcribed and cached."""
-    provider, model = cfg.generate_stt_provider, _active_stt_model(cfg)
+    transcribed and cached.
+
+    provider/model/adapter/chunk_seconds/label: see transcribe_full_track -- omitted (the
+    generate feature's own callers) resolves everything from cfg.generate_stt_provider as before."""
+    provider = provider or cfg.generate_stt_provider
+    model = model or _active_stt_model(cfg)
     cached = db.get_full_transcript_cache(conn, video_path, stt_provider=provider, stt_model=model)
     if cached is not None:
         log.info("Reusing the cached full transcript for %s (%d segments) — no Whisper calls needed",
@@ -1005,7 +1069,8 @@ def _transcribe_or_reuse(cfg: Config, video_path: Path, tmp_dir: Path, conn,
         spoken = normalize_lang(cached["spoken_lang"]) or normalize_lang(cfg.generate_assume_spoken_lang)
         return spoken, cached["segments"]
 
-    result = transcribe_full_track(cfg, video_path, tmp_dir, cancel_event=cancel_event)
+    result = transcribe_full_track(cfg, video_path, tmp_dir, cancel_event=cancel_event,
+                                    adapter=adapter, chunk_seconds=chunk_seconds, label=label)
     spoken_lang, segments = result["language"], result["segments"]
     if not segments:
         raise TranscriptionError(
@@ -1014,6 +1079,64 @@ def _transcribe_or_reuse(cfg: Config, video_path: Path, tmp_dir: Path, conn,
     db.save_full_transcript_cache(conn, video_path, spoken_lang, segments,
                                    stt_provider=provider, stt_model=model)
     return spoken_lang, segments
+
+
+# --- full-track transcription for the sync/correctness/line-order "full transcript" mode --------
+# (sync.whisper_mode == "full", see line_order.collect_samples_full). Uses correctness.py's OWN
+# stt settings (use_local_whisper / stt_provider), not generate.*'s separate provider choice --
+# but shares generate's per-video cache above, since the audio doesn't care which feature asked.
+
+LOCAL_FULLTRACK_CHUNK_SECONDS = 900  # no upload size limit locally -- just a sane per-call bound
+LOCAL_FULLTRACK_TIMEOUT_S = 3600  # generous -- a slow CPU-only fallback can be far from real-time
+CLOUD_FULLTRACK_CHUNK_SECONDS = 600
+
+
+def _adapter_local(cfg: Config, audio_path: Path, language: Optional[str], cancel_event=None) -> dict:
+    """Local whisper.cpp adapter -- no API key, no per-request size cap."""
+    result = correctness._run_local_whisper(cfg, audio_path, language, cancel_event=cancel_event,
+                                             timeout=LOCAL_FULLTRACK_TIMEOUT_S)
+    segments = [_normalize_segment(s) for s in (result.get("segments") or [])]
+    return {"language": result.get("language"), "segments": segments}
+
+
+def _adapter_groq_correctness(cfg: Config, audio_path: Path, language: Optional[str], cancel_event=None) -> dict:
+    return _transcribe_chunk_openai_compat("groq", audio_path, cfg.active_stt_api_key, cfg.groq_model,
+                                            cfg.groq_model_fallback or None, language, cancel_event=cancel_event)
+
+
+def _adapter_openrouter_correctness(cfg: Config, audio_path: Path, language: Optional[str], cancel_event=None) -> dict:
+    return _transcribe_chunk_openai_compat("openrouter", audio_path, cfg.active_stt_api_key,
+                                            cfg.openrouter_stt_model, cfg.openrouter_stt_model_fallback or None,
+                                            language, cancel_event=cancel_event)
+
+
+def _drop_nonspeech(segments: list[dict]) -> list[dict]:
+    """Sound-effect/audio-condition tags ("[screaming]", "(music)") tokenize as ordinary words and
+    can spuriously match real dialogue in line-order/correctness evidence. Applied only here, not
+    in transcribe_full_track itself -- generate's own subtitle-creation feature shares that
+    function's cache and may legitimately want those tags kept in a generated SRT."""
+    return [s for s in segments if not is_nonspeech_annotation(s.get("text", ""))]
+
+
+def full_transcript_for_check(cfg: Config, video_path: Path, tmp_dir: Path, conn,
+                               cancel_event=None) -> tuple[Optional[str], list[dict]]:
+    """Full-track transcript for sync.whisper_mode == "full" -- routes through local Whisper when
+    correctness.use_local_whisper is on, otherwise correctness.stt_provider's cloud API."""
+    if cfg.use_local_whisper:
+        spoken_lang, segments = _transcribe_or_reuse(
+            cfg, video_path, tmp_dir, conn, cancel_event=cancel_event,
+            provider="local", model=Path(cfg.local_whisper_model).name,
+            adapter=_adapter_local, chunk_seconds=LOCAL_FULLTRACK_CHUNK_SECONDS, label="local Whisper")
+        return spoken_lang, _drop_repetition_loops(_drop_nonspeech(segments))
+    if cfg.stt_provider == "openrouter":
+        adapter, model = _adapter_openrouter_correctness, cfg.openrouter_stt_model
+    else:
+        adapter, model = _adapter_groq_correctness, cfg.groq_model
+    spoken_lang, segments = _transcribe_or_reuse(
+        cfg, video_path, tmp_dir, conn, cancel_event=cancel_event,
+        provider=cfg.stt_provider, model=model, adapter=adapter,
+        chunk_seconds=CLOUD_FULLTRACK_CHUNK_SECONDS, label=cfg.stt_provider)
+    return spoken_lang, _drop_repetition_loops(_drop_nonspeech(segments))
 
 
 def _generate_one(cfg: Config, video_path: Path, lang: str, tmp_dir: Path, conn,

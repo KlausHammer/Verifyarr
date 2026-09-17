@@ -13,7 +13,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from verifyarr import db, jobs
-from verifyarr.web.deps import get_conn, require_auth
+from verifyarr.web.deps import get_conn, require_auth, serialize_row
 
 router = APIRouter(prefix="/api/runs", tags=["runs"])
 
@@ -31,15 +31,11 @@ class StartRunBody(BaseModel):
     season: Optional[str] = None  # e.g. "S03" — series only
 
 
-def _serialize(row) -> dict:
-    return dict(row)
-
-
 @router.get("")
 def list_runs(page: int = Query(1, ge=1), page_size: int = Query(30, ge=1, le=200),
               user=Depends(require_auth), conn=Depends(get_conn)):
     rows, total = db.list_runs(conn, page=page, page_size=page_size)
-    return {"items": [_serialize(r) for r in rows], "total": total, "page": page, "page_size": page_size,
+    return {"items": [serialize_row(r) for r in rows], "total": total, "page": page, "page_size": page_size,
             "current_run_id": jobs.runner.current_run_id()}
 
 
@@ -66,13 +62,13 @@ def get_run(run_id: int, user=Depends(require_auth), conn=Depends(get_conn)):
     row = db.get_run(conn, run_id)
     if row is None:
         raise HTTPException(status_code=404, detail="run not found")
-    return _serialize(row)
+    return serialize_row(row)
 
 
 @router.get("/{run_id}/log")
 def get_log(run_id: int, after_id: int = 0, user=Depends(require_auth), conn=Depends(get_conn)):
     lines = db.list_log_lines(conn, run_id, after_id=after_id)
-    return {"items": [_serialize(l) for l in lines]}
+    return {"items": [serialize_row(l) for l in lines]}
 
 
 @router.post("/{run_id}/cancel")

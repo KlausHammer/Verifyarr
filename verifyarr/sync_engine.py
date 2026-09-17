@@ -44,6 +44,14 @@ def extract_audio_wav(video_path: Path, out_path: Path, timeout: int = 180) -> b
     return proc.returncode == 0 and out_path.exists() and out_path.stat().st_size > 0
 
 
+def _shift_seconds(sign: str, magnitude: str) -> float:
+    """One alass "shifted block ... by [-]H:M:S" match -> signed seconds. Shared by both
+    parsers below so the sign/magnitude decoding can't drift apart between them."""
+    hours, minutes, seconds = magnitude.split(":")
+    total = int(hours) * 3600 + int(minutes) * 60 + float(seconds)
+    return -total if sign == "-" else total
+
+
 def parse_alass_shift_blocks(stderr_text: str) -> list[float]:
     """Extracts the signed shift (in seconds) for each block alass found necessary, from its
     stderr log. A free diagnostic signal — no extra call needed. An episode that's simply out
@@ -53,12 +61,8 @@ def parse_alass_shift_blocks(stderr_text: str) -> list[float]:
     own of a wrong subtitle (real cuts/scene changes also produce multiple blocks), but a
     useful extra signal in the report. See `correctness_check` for the primary (word-based)
     check."""
-    shifts = []
-    for sign, magnitude in SHIFT_BLOCK_RE.findall(stderr_text or ""):
-        h, m, s = magnitude.split(":")
-        seconds = int(h) * 3600 + int(m) * 60 + float(s)
-        shifts.append(-seconds if sign == "-" else seconds)
-    return shifts
+    return [_shift_seconds(sign, magnitude)
+            for sign, magnitude in SHIFT_BLOCK_RE.findall(stderr_text or "")]
 
 
 def parse_alass_shift_blocks_with_counts(stderr_text: str) -> list[tuple[int, float]]:
@@ -68,12 +72,8 @@ def parse_alass_shift_blocks_with_counts(stderr_text: str) -> list[tuple[int, fl
     RANGE by walking that many events at a time through the original subtitle (see
     pipeline.sync_pair's block-aware extra sampling) -- alass's own stderr never states a
     block's absolute start/end directly, only how many consecutive subtitles it covers."""
-    blocks = []
-    for count, sign, magnitude in SHIFT_BLOCK_COUNT_RE.findall(stderr_text or ""):
-        h, m, s = magnitude.split(":")
-        seconds = int(h) * 3600 + int(m) * 60 + float(s)
-        blocks.append((int(count), -seconds if sign == "-" else seconds))
-    return blocks
+    return [(int(count), _shift_seconds(sign, magnitude))
+            for count, sign, magnitude in SHIFT_BLOCK_COUNT_RE.findall(stderr_text or "")]
 
 
 def run_alass(alass_bin: str, reference_path: Path, subtitle_path: Path, out_path: Path,

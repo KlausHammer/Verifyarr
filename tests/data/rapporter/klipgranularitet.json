@@ -1,0 +1,5237 @@
+{
+ "meta": {
+  "opgave": "G: E/F-konklusioner ved produktionens 5 klip a 60 s",
+  "placering": "5 lige brede regioner over fixture-varighed (video-varighed); dialog=pick_dialogue_dense_time-replik; vad=pick_sample_time-replik (NUDGE 0,+10,-10,+20,-20,+30,-30; min_speech 2.0 s; cue-overlap kraevet). Heuristiske slots ikke emuleret (kun filler).",
+  "matchning_E": "E-replik af _match_segments_to_lines (+-10 s kandidater, >=0.5 overlap, >=2 faelles, streng > tidligste vinder, en anchor pr. linje); turbo out/<slug>.json; offset 0; korrekt=|resid|<=2.5 s",
+  "matchning_F": "samme, small.en fixture-segmenter",
+  "klipmedian": "median over klippets anchors; konfident ved >=3 anchors og MAD<=1.0 s; falsk positiv=|median|>1.0 s paa i-sync fil",
+  "validering": {
+   "E_anchors": 7352,
+   "E_forkerte": 266,
+   "E_tredjedel": [
+    89,
+    90
+   ],
+   "E_tredjedel_medabs": 0.189,
+   "F_anchors": 7470,
+   "F_forkerte": 289,
+   "F_segmusik": 41,
+   "F_linjemusik": 101,
+   "F_enten": 126,
+   "HI": 17,
+   "ikkeHI": 13,
+   "turbo_linjemusik": 100,
+   "turbo_linjemusik_fejlrate": 0.06
+  },
+  "serier": {
+   "C": 24,
+   "SH": 6
+  },
+  "scripts": "/tmp/klipg.py, /tmp/klipg_del1.py, /tmp/klipg_del2.py (scratch; out/sweep/wav uroert, intet committet)"
+ },
+ "placering": {
+  "pr_afsnit": {
+   "C_S02E01": {
+    "dur_s": 1269.9,
+    "series": "C",
+    "klip": [
+     {
+      "dialog": 121.7,
+      "vad": 151.7
+     },
+     {
+      "dialog": 288.2,
+      "vad": 318.2
+     },
+     {
+      "dialog": 629.7,
+      "vad": 629.7
+     },
+     {
+      "dialog": 842.0,
+      "vad": 862.0
+     },
+     {
+      "dialog": 1091.5,
+      "vad": 1101.5
+     }
+    ]
+   },
+   "C_S02E02": {
+    "dur_s": 1275.9,
+    "series": "C",
+    "klip": [
+     {
+      "dialog": 212.3,
+      "vad": 212.3
+     },
+     {
+      "dialog": 400.4,
+      "vad": 400.4
+     },
+     {
+      "dialog": 681.9,
+      "vad": 701.9
+     },
+     {
+      "dialog": 765.8,
+      "vad": 765.8
+     },
+     {
+      "dialog": 1108.6,
+      "vad": 1078.6
+     }
+    ]
+   },
+   "C_S02E03": {
+    "dur_s": 1278.0,
+    "series": "C",
+    "klip": [
+     {
+      "dialog": 190.5,
+      "vad": 220.5
+     },
+     {
+      "dialog": 378.8,
+      "vad": 378.8
+     },
+     {
+      "dialog": 667.8,
+      "vad": 667.8
+     },
+     {
+      "dialog": 919.1,
+      "vad": 919.1
+     },
+     {
+      "dialog": 1145.6,
+      "vad": 1155.6
+     }
+    ]
+   },
+   "C_S02E05": {
+    "dur_s": 1261.9,
+    "series": "C",
+    "klip": [
+     {
+      "dialog": 126.8,
+      "vad": 136.8
+     },
+     {
+      "dialog": 264.4,
+      "vad": 284.4
+     },
+     {
+      "dialog": 645.4,
+      "vad": 645.4
+     },
+     {
+      "dialog": 775.6,
+      "vad": 775.6
+     },
+     {
+      "dialog": 1153.4,
+      "vad": 1153.4
+     }
+    ]
+   },
+   "C_S02E07": {
+    "dur_s": 1274.6,
+    "series": "C",
+    "klip": [
+     {
+      "dialog": 22.2,
+      "vad": 22.2
+     },
+     {
+      "dialog": 437.9,
+      "vad": 437.9
+     },
+     {
+      "dialog": 641.3,
+      "vad": 641.3
+     },
+     {
+      "dialog": 815.8,
+      "vad": 815.8
+     },
+     {
+      "dialog": 1202.6,
+      "vad": 1202.6
+     }
+    ]
+   },
+   "C_S02E09": {
+    "dur_s": 1273.9,
+    "series": "C",
+    "klip": [
+     {
+      "dialog": 39.9,
+      "vad": 69.9
+     },
+     {
+      "dialog": 463.5,
+      "vad": 463.5
+     },
+     {
+      "dialog": 762.1,
+      "vad": 762.1
+     },
+     {
+      "dialog": 785.2,
+      "vad": 785.2
+     },
+     {
+      "dialog": 1054.5,
+      "vad": 1024.5
+     }
+    ]
+   },
+   "C_S02E10": {
+    "dur_s": 1242.0,
+    "series": "C",
+    "klip": [
+     {
+      "dialog": 205.7,
+      "vad": 175.7
+     },
+     {
+      "dialog": 307.6,
+      "vad": 307.6
+     },
+     {
+      "dialog": 719.2,
+      "vad": 719.2
+     },
+     {
+      "dialog": 747.7,
+      "vad": 757.7
+     },
+     {
+      "dialog": 1053.4,
+      "vad": 1053.4
+     }
+    ]
+   },
+   "C_S02E12": {
+    "dur_s": 1277.8,
+    "series": "C",
+    "klip": [
+     {
+      "dialog": 55.8,
+      "vad": 55.8
+     },
+     {
+      "dialog": 344.3,
+      "vad": 314.3
+     },
+     {
+      "dialog": 534.7,
+      "vad": 534.7
+     },
+     {
+      "dialog": 958.0,
+      "vad": 958.0
+     },
+     {
+      "dialog": 1201.8,
+      "vad": 1201.8
+     }
+    ]
+   },
+   "C_S02E13": {
+    "dur_s": 1243.6,
+    "series": "C",
+    "klip": [
+     {
+      "dialog": 27.7,
+      "vad": 37.7
+     },
+     {
+      "dialog": 325.5,
+      "vad": 325.5
+     },
+     {
+      "dialog": 509.1,
+      "vad": 497.4
+     },
+     {
+      "dialog": 913.2,
+      "vad": 943.2
+     },
+     {
+      "dialog": 1064.4,
+      "vad": 1064.4
+     }
+    ]
+   },
+   "C_S02E18": {
+    "dur_s": 1277.4,
+    "series": "C",
+    "klip": [
+     {
+      "dialog": 227.7,
+      "vad": 227.7
+     },
+     {
+      "dialog": 263.3,
+      "vad": 255.5
+     },
+     {
+      "dialog": 532.4,
+      "vad": 522.4
+     },
+     {
+      "dialog": 1009.1,
+      "vad": 1019.1
+     },
+     {
+      "dialog": 1049.3,
+      "vad": 1049.3
+     }
+    ]
+   },
+   "C_S02E24": {
+    "dur_s": 1226.8,
+    "series": "C",
+    "klip": [
+     {
+      "dialog": 132.8,
+      "vad": 122.8
+     },
+     {
+      "dialog": 394.2,
+      "vad": 414.2
+     },
+     {
+      "dialog": 530.7,
+      "vad": 500.7
+     },
+     {
+      "dialog": 978.7,
+      "vad": 981.4
+     },
+     {
+      "dialog": 1000.3,
+      "vad": 1030.3
+     }
+    ]
+   },
+   "C_S03E03": {
+    "dur_s": 1287.0,
+    "series": "C",
+    "klip": [
+     {
+      "dialog": 168.2,
+      "vad": 178.2
+     },
+     {
+      "dialog": 511.1,
+      "vad": 501.1
+     },
+     {
+      "dialog": 525.4,
+      "vad": 535.4
+     },
+     {
+      "dialog": 796.5,
+      "vad": 786.5
+     },
+     {
+      "dialog": 1032.8,
+      "vad": 1032.8
+     }
+    ]
+   },
+   "C_S03E06": {
+    "dur_s": 1283.9,
+    "series": "C",
+    "klip": [
+     {
+      "dialog": 213.0,
+      "vad": 223.0
+     },
+     {
+      "dialog": 421.3,
+      "vad": 441.3
+     },
+     {
+      "dialog": 538.5,
+      "vad": 558.5
+     },
+     {
+      "dialog": 831.5,
+      "vad": 811.5
+     },
+     {
+      "dialog": 1126.2,
+      "vad": 1126.2
+     }
+    ]
+   },
+   "C_S03E08": {
+    "dur_s": 1285.5,
+    "series": "C",
+    "klip": [
+     {
+      "dialog": 75.6,
+      "vad": 65.6
+     },
+     {
+      "dialog": 259.0,
+      "vad": 257.1
+     },
+     {
+      "dialog": 594.9,
+      "vad": 614.9
+     },
+     {
+      "dialog": 930.1,
+      "vad": 930.1
+     },
+     {
+      "dialog": 1132.3,
+      "vad": 1132.3
+     }
+    ]
+   },
+   "C_S03E09": {
+    "dur_s": 1281.8,
+    "series": "C",
+    "klip": [
+     {
+      "dialog": 39.9,
+      "vad": 9.9
+     },
+     {
+      "dialog": 437.5,
+      "vad": 437.5
+     },
+     {
+      "dialog": 528.9,
+      "vad": 528.9
+     },
+     {
+      "dialog": 777.6,
+      "vad": 769.1
+     },
+     {
+      "dialog": 1096.6,
+      "vad": 1096.6
+     }
+    ]
+   },
+   "C_S03E10": {
+    "dur_s": 1277.5,
+    "series": "C",
+    "klip": [
+     {
+      "dialog": 8.6,
+      "vad": 8.6
+     },
+     {
+      "dialog": 440.6,
+      "vad": 440.6
+     },
+     {
+      "dialog": 524.8,
+      "vad": 524.8
+     },
+     {
+      "dialog": 949.2,
+      "vad": 949.2
+     },
+     {
+      "dialog": 1072.3,
+      "vad": 1072.3
+     }
+    ]
+   },
+   "C_S03E12": {
+    "dur_s": 1282.9,
+    "series": "C",
+    "klip": [
+     {
+      "dialog": 221.7,
+      "vad": 221.7
+     },
+     {
+      "dialog": 381.5,
+      "vad": 381.5
+     },
+     {
+      "dialog": 754.0,
+      "vad": 754.0
+     },
+     {
+      "dialog": 801.3,
+      "vad": 801.3
+     },
+     {
+      "dialog": 1059.6,
+      "vad": 1059.6
+     }
+    ]
+   },
+   "C_S03E13": {
+    "dur_s": 1281.0,
+    "series": "C",
+    "klip": [
+     {
+      "dialog": 15.6,
+      "vad": 45.6
+     },
+     {
+      "dialog": 313.2,
+      "vad": 283.2
+     },
+     {
+      "dialog": 735.8,
+      "vad": 735.8
+     },
+     {
+      "dialog": 913.9,
+      "vad": 913.9
+     },
+     {
+      "dialog": 1040.5,
+      "vad": 1024.8
+     }
+    ]
+   },
+   "C_S03E15": {
+    "dur_s": 1270.7,
+    "series": "C",
+    "klip": [
+     {
+      "dialog": 79.2,
+      "vad": 79.2
+     },
+     {
+      "dialog": 282.2,
+      "vad": 282.2
+     },
+     {
+      "dialog": 538.5,
+      "vad": 528.5
+     },
+     {
+      "dialog": 809.9,
+      "vad": 809.9
+     },
+     {
+      "dialog": 1078.0,
+      "vad": 1078.0
+     }
+    ]
+   },
+   "C_S03E17": {
+    "dur_s": 1250.9,
+    "series": "C",
+    "klip": [
+     {
+      "dialog": 33.1,
+      "vad": 33.1
+     },
+     {
+      "dialog": 254.6,
+      "vad": 254.6
+     },
+     {
+      "dialog": 600.3,
+      "vad": 620.3
+     },
+     {
+      "dialog": 871.3,
+      "vad": 871.3
+     },
+     {
+      "dialog": 1079.6,
+      "vad": 1059.6
+     }
+    ]
+   },
+   "C_S03E18": {
+    "dur_s": 1252.9,
+    "series": "C",
+    "klip": [
+     {
+      "dialog": 124.6,
+      "vad": 124.6
+     },
+     {
+      "dialog": 357.5,
+      "vad": 357.5
+     },
+     {
+      "dialog": 503.5,
+      "vad": 501.2
+     },
+     {
+      "dialog": 986.4,
+      "vad": 986.4
+     },
+     {
+      "dialog": 1006.0,
+      "vad": 1002.3
+     }
+    ]
+   },
+   "C_S03E19": {
+    "dur_s": 1274.0,
+    "series": "C",
+    "klip": [
+     {
+      "dialog": 53.3,
+      "vad": 63.3
+     },
+     {
+      "dialog": 281.6,
+      "vad": 281.6
+     },
+     {
+      "dialog": 629.1,
+      "vad": 629.1
+     },
+     {
+      "dialog": 797.5,
+      "vad": 797.5
+     },
+     {
+      "dialog": 1067.3,
+      "vad": 1067.3
+     }
+    ]
+   },
+   "C_S03E21": {
+    "dur_s": 1277.5,
+    "series": "C",
+    "klip": [
+     {
+      "dialog": 215.5,
+      "vad": 235.5
+     },
+     {
+      "dialog": 450.1,
+      "vad": 480.1
+     },
+     {
+      "dialog": 761.6,
+      "vad": 766.5
+     },
+     {
+      "dialog": 797.8,
+      "vad": 797.8
+     },
+     {
+      "dialog": 1023.9,
+      "vad": 1043.9
+     }
+    ]
+   },
+   "C_S03E22": {
+    "dur_s": 1285.6,
+    "series": "C",
+    "klip": [
+     {
+      "dialog": 5.2,
+      "vad": 5.2
+     },
+     {
+      "dialog": 461.1,
+      "vad": 431.1
+     },
+     {
+      "dialog": 734.0,
+      "vad": 734.0
+     },
+     {
+      "dialog": 937.6,
+      "vad": 957.6
+     },
+     {
+      "dialog": 1070.7,
+      "vad": 1070.7
+     }
+    ]
+   },
+   "SH_S01E01": {
+    "dur_s": 3231.8,
+    "series": "SH",
+    "klip": [
+     {
+      "dialog": 78.8,
+      "vad": 78.8
+     },
+     {
+      "dialog": 1231.1,
+      "vad": 1231.1
+     },
+     {
+      "dialog": 1676.6,
+      "vad": 1676.6
+     },
+     {
+      "dialog": 2038.7,
+      "vad": 2038.7
+     },
+     {
+      "dialog": 3053.5,
+      "vad": 3053.5
+     }
+    ]
+   },
+   "SH_S01E02": {
+    "dur_s": 2912.2,
+    "series": "SH",
+    "klip": [
+     {
+      "dialog": 418.5,
+      "vad": 398.5
+     },
+     {
+      "dialog": 920.3,
+      "vad": 910.3
+     },
+     {
+      "dialog": 1425.1,
+      "vad": 1425.1
+     },
+     {
+      "dialog": 2025.7,
+      "vad": 2025.7
+     },
+     {
+      "dialog": 2671.7,
+      "vad": 2671.7
+     }
+    ]
+   },
+   "SH_S01E03": {
+    "dur_s": 2513.3,
+    "series": "SH",
+    "klip": [
+     {
+      "dialog": 7.0,
+      "vad": 7.0
+     },
+     {
+      "dialog": 963.6,
+      "vad": 963.6
+     },
+     {
+      "dialog": 1284.4,
+      "vad": 1294.4
+     },
+     {
+      "dialog": 1563.2,
+      "vad": 1573.2
+     },
+     {
+      "dialog": 2101.3,
+      "vad": 2111.3
+     }
+    ]
+   },
+   "SH_S01E04": {
+    "dur_s": 2605.4,
+    "series": "SH",
+    "klip": [
+     {
+      "dialog": 426.1,
+      "vad": 446.1
+     },
+     {
+      "dialog": 684.0,
+      "vad": 684.0
+     },
+     {
+      "dialog": 1486.2,
+      "vad": 1486.2
+     },
+     {
+      "dialog": 1776.8,
+      "vad": 1776.8
+     },
+     {
+      "dialog": 2383.8,
+      "vad": 2383.8
+     }
+    ]
+   },
+   "SH_S01E05": {
+    "dur_s": 2530.9,
+    "series": "SH",
+    "klip": [
+     {
+      "dialog": 474.6,
+      "vad": 474.6
+     },
+     {
+      "dialog": 669.7,
+      "vad": 679.7
+     },
+     {
+      "dialog": 1051.2,
+      "vad": 1051.2
+     },
+     {
+      "dialog": 1690.8,
+      "vad": 1690.8
+     },
+     {
+      "dialog": 2184.3,
+      "vad": 2184.3
+     }
+    ]
+   },
+   "SH_S01E06": {
+    "dur_s": 3236.4,
+    "series": "SH",
+    "klip": [
+     {
+      "dialog": 376.5,
+      "vad": 376.5
+     },
+     {
+      "dialog": 677.4,
+      "vad": 677.4
+     },
+     {
+      "dialog": 1493.0,
+      "vad": 1493.0
+     },
+     {
+      "dialog": 2149.7,
+      "vad": 2159.7
+     },
+     {
+      "dialog": 2619.2,
+      "vad": 2619.2
+     }
+    ]
+   }
+  },
+  "vad_none_klip": 0,
+  "nudge_abs_s": {
+   "median": 0.0,
+   "middel": 7.1,
+   "max": 30.0,
+   "nul_af_150": 88
+  }
+ },
+ "del1_Etrack": {
+  "dialog": {
+   "baseline": {
+    "alle": {
+     "n_files": 30,
+     "n_clips": 150,
+     "n_placed": 150,
+     "anchors_per_clip": {
+      "min": 5,
+      "p10": 9,
+      "median": 14.0,
+      "mean": 14.18,
+      "p90": 19,
+      "max": 22
+     },
+     "reach3": 150,
+     "reach3_frac": 1.0,
+     "confident": 147,
+     "conf_frac_placed": 0.98,
+     "dropout": 3,
+     "fp": 4,
+     "fp_frac_conf": 0.0272,
+     "median_abs_clipmedian": 0.22,
+     "spread": {
+      "n": 30,
+      "median": 0.423,
+      "p90": 1.0525,
+      "max": 1.366,
+      "over5": 0
+     }
+    },
+    "C": {
+     "n_files": 24,
+     "n_clips": 120,
+     "n_placed": 120,
+     "anchors_per_clip": {
+      "min": 5,
+      "p10": 10,
+      "median": 15.0,
+      "mean": 14.57,
+      "p90": 20,
+      "max": 22
+     },
+     "reach3": 120,
+     "reach3_frac": 1.0,
+     "confident": 117,
+     "conf_frac_placed": 0.975,
+     "dropout": 3,
+     "fp": 4,
+     "fp_frac_conf": 0.0342,
+     "median_abs_clipmedian": 0.255,
+     "spread": {
+      "n": 24,
+      "median": 0.438,
+      "p90": 1.0525,
+      "max": 1.366,
+      "over5": 0
+     }
+    },
+    "SH": {
+     "n_files": 6,
+     "n_clips": 30,
+     "n_placed": 30,
+     "anchors_per_clip": {
+      "min": 5,
+      "p10": 9,
+      "median": 13.0,
+      "mean": 12.6,
+      "p90": 17,
+      "max": 18
+     },
+     "reach3": 30,
+     "reach3_frac": 1.0,
+     "confident": 30,
+     "conf_frac_placed": 1.0,
+     "dropout": 0,
+     "fp": 0,
+     "fp_frac_conf": 0.0,
+     "median_abs_clipmedian": 0.111,
+     "spread": {
+      "n": 6,
+      "median": 0.4,
+      "p90": 0.8835,
+      "max": 0.883,
+      "over5": 0
+     }
+    }
+   },
+   "margin>0": {
+    "alle": {
+     "n_files": 30,
+     "n_clips": 150,
+     "n_placed": 150,
+     "anchors_per_clip": {
+      "min": 2,
+      "p10": 6,
+      "median": 12.5,
+      "mean": 12.05,
+      "p90": 17,
+      "max": 21
+     },
+     "reach3": 149,
+     "reach3_frac": 0.9933,
+     "confident": 147,
+     "conf_frac_placed": 0.98,
+     "dropout": 3,
+     "fp": 7,
+     "fp_frac_conf": 0.0476,
+     "median_abs_clipmedian": 0.223,
+     "spread": {
+      "n": 30,
+      "median": 0.512,
+      "p90": 1.393,
+      "max": 1.738,
+      "over5": 0
+     }
+    },
+    "C": {
+     "n_files": 24,
+     "n_clips": 120,
+     "n_placed": 120,
+     "anchors_per_clip": {
+      "min": 2,
+      "p10": 6,
+      "median": 13.0,
+      "mean": 12.23,
+      "p90": 18,
+      "max": 21
+     },
+     "reach3": 119,
+     "reach3_frac": 0.9917,
+     "confident": 118,
+     "conf_frac_placed": 0.9833,
+     "dropout": 2,
+     "fp": 7,
+     "fp_frac_conf": 0.0593,
+     "median_abs_clipmedian": 0.246,
+     "spread": {
+      "n": 24,
+      "median": 0.619,
+      "p90": 1.393,
+      "max": 1.738,
+      "over5": 0
+     }
+    },
+    "SH": {
+     "n_files": 6,
+     "n_clips": 30,
+     "n_placed": 30,
+     "anchors_per_clip": {
+      "min": 5,
+      "p10": 6,
+      "median": 12.0,
+      "mean": 11.33,
+      "p90": 16,
+      "max": 18
+     },
+     "reach3": 30,
+     "reach3_frac": 1.0,
+     "confident": 29,
+     "conf_frac_placed": 0.9667,
+     "dropout": 1,
+     "fp": 0,
+     "fp_frac_conf": 0.0,
+     "median_abs_clipmedian": 0.117,
+     "spread": {
+      "n": 6,
+      "median": 0.399,
+      "p90": 0.8694999999999999,
+      "max": 0.869,
+      "over5": 0
+     }
+    }
+   },
+   "smallline>=3": {
+    "alle": {
+     "n_files": 30,
+     "n_clips": 150,
+     "n_placed": 150,
+     "anchors_per_clip": {
+      "min": 1,
+      "p10": 5,
+      "median": 9.0,
+      "mean": 8.65,
+      "p90": 12,
+      "max": 16
+     },
+     "reach3": 149,
+     "reach3_frac": 0.9933,
+     "confident": 149,
+     "conf_frac_placed": 0.9933,
+     "dropout": 1,
+     "fp": 3,
+     "fp_frac_conf": 0.0201,
+     "median_abs_clipmedian": 0.217,
+     "spread": {
+      "n": 30,
+      "median": 0.636,
+      "p90": 1.2349999999999999,
+      "max": 1.571,
+      "over5": 0
+     }
+    },
+    "C": {
+     "n_files": 24,
+     "n_clips": 120,
+     "n_placed": 120,
+     "anchors_per_clip": {
+      "min": 3,
+      "p10": 5,
+      "median": 9.0,
+      "mean": 8.83,
+      "p90": 12,
+      "max": 14
+     },
+     "reach3": 120,
+     "reach3_frac": 1.0,
+     "confident": 120,
+     "conf_frac_placed": 1.0,
+     "dropout": 0,
+     "fp": 3,
+     "fp_frac_conf": 0.025,
+     "median_abs_clipmedian": 0.25,
+     "spread": {
+      "n": 24,
+      "median": 0.636,
+      "p90": 1.2349999999999999,
+      "max": 1.571,
+      "over5": 0
+     }
+    },
+    "SH": {
+     "n_files": 6,
+     "n_clips": 30,
+     "n_placed": 30,
+     "anchors_per_clip": {
+      "min": 1,
+      "p10": 5,
+      "median": 8.0,
+      "mean": 7.93,
+      "p90": 12,
+      "max": 16
+     },
+     "reach3": 29,
+     "reach3_frac": 0.9667,
+     "confident": 29,
+     "conf_frac_placed": 0.9667,
+     "dropout": 1,
+     "fp": 0,
+     "fp_frac_conf": 0.0,
+     "median_abs_clipmedian": 0.111,
+     "spread": {
+      "n": 6,
+      "median": 0.541,
+      "p90": 0.875,
+      "max": 0.875,
+      "over5": 0
+     }
+    }
+   },
+   "conf>=med-0.1": {
+    "alle": {
+     "n_files": 30,
+     "n_clips": 150,
+     "n_placed": 150,
+     "anchors_per_clip": {
+      "min": 3,
+      "p10": 9,
+      "median": 13.5,
+      "mean": 13.58,
+      "p90": 18,
+      "max": 22
+     },
+     "reach3": 150,
+     "reach3_frac": 1.0,
+     "confident": 147,
+     "conf_frac_placed": 0.98,
+     "dropout": 3,
+     "fp": 3,
+     "fp_frac_conf": 0.0204,
+     "median_abs_clipmedian": 0.22,
+     "spread": {
+      "n": 30,
+      "median": 0.449,
+      "p90": 0.8835,
+      "max": 1.301,
+      "over5": 0
+     }
+    },
+    "C": {
+     "n_files": 24,
+     "n_clips": 120,
+     "n_placed": 120,
+     "anchors_per_clip": {
+      "min": 3,
+      "p10": 9,
+      "median": 14.0,
+      "mean": 13.95,
+      "p90": 18,
+      "max": 22
+     },
+     "reach3": 120,
+     "reach3_frac": 1.0,
+     "confident": 117,
+     "conf_frac_placed": 0.975,
+     "dropout": 3,
+     "fp": 3,
+     "fp_frac_conf": 0.0256,
+     "median_abs_clipmedian": 0.243,
+     "spread": {
+      "n": 24,
+      "median": 0.473,
+      "p90": 0.8690000000000001,
+      "max": 1.301,
+      "over5": 0
+     }
+    },
+    "SH": {
+     "n_files": 6,
+     "n_clips": 30,
+     "n_placed": 30,
+     "anchors_per_clip": {
+      "min": 5,
+      "p10": 9,
+      "median": 12.0,
+      "mean": 12.1,
+      "p90": 16,
+      "max": 18
+     },
+     "reach3": 30,
+     "reach3_frac": 1.0,
+     "confident": 30,
+     "conf_frac_placed": 1.0,
+     "dropout": 0,
+     "fp": 0,
+     "fp_frac_conf": 0.0,
+     "median_abs_clipmedian": 0.118,
+     "spread": {
+      "n": 6,
+      "median": 0.4,
+      "p90": 0.8835,
+      "max": 0.883,
+      "over5": 0
+     }
+    }
+   },
+   "lead<1.0": {
+    "alle": {
+     "n_files": 30,
+     "n_clips": 150,
+     "n_placed": 150,
+     "anchors_per_clip": {
+      "min": 0,
+      "p10": 4,
+      "median": 9.0,
+      "mean": 9.8,
+      "p90": 16,
+      "max": 22
+     },
+     "reach3": 145,
+     "reach3_frac": 0.9667,
+     "confident": 144,
+     "conf_frac_placed": 0.96,
+     "dropout": 6,
+     "fp": 0,
+     "fp_frac_conf": 0.0,
+     "median_abs_clipmedian": 0.176,
+     "spread": {
+      "n": 30,
+      "median": 0.288,
+      "p90": 0.5449999999999999,
+      "max": 0.77,
+      "over5": 0
+     }
+    },
+    "C": {
+     "n_files": 24,
+     "n_clips": 120,
+     "n_placed": 120,
+     "anchors_per_clip": {
+      "min": 0,
+      "p10": 4,
+      "median": 10.0,
+      "mean": 10.19,
+      "p90": 17,
+      "max": 22
+     },
+     "reach3": 116,
+     "reach3_frac": 0.9667,
+     "confident": 115,
+     "conf_frac_placed": 0.9583,
+     "dropout": 5,
+     "fp": 0,
+     "fp_frac_conf": 0.0,
+     "median_abs_clipmedian": 0.209,
+     "spread": {
+      "n": 24,
+      "median": 0.294,
+      "p90": 0.5319999999999999,
+      "max": 0.77,
+      "over5": 0
+     }
+    },
+    "SH": {
+     "n_files": 6,
+     "n_clips": 30,
+     "n_placed": 30,
+     "anchors_per_clip": {
+      "min": 2,
+      "p10": 4,
+      "median": 8.0,
+      "mean": 8.23,
+      "p90": 14,
+      "max": 15
+     },
+     "reach3": 29,
+     "reach3_frac": 0.9667,
+     "confident": 29,
+     "conf_frac_placed": 0.9667,
+     "dropout": 1,
+     "fp": 0,
+     "fp_frac_conf": 0.0,
+     "median_abs_clipmedian": 0.084,
+     "spread": {
+      "n": 6,
+      "median": 0.264,
+      "p90": 0.687,
+      "max": 0.687,
+      "over5": 0
+     }
+    }
+   },
+   "kombi": {
+    "alle": {
+     "n_files": 30,
+     "n_clips": 150,
+     "n_placed": 150,
+     "anchors_per_clip": {
+      "min": 0,
+      "p10": 1,
+      "median": 4.0,
+      "mean": 3.89,
+      "p90": 7,
+      "max": 10
+     },
+     "reach3": 101,
+     "reach3_frac": 0.6733,
+     "confident": 100,
+     "conf_frac_placed": 0.6667,
+     "dropout": 50,
+     "fp": 6,
+     "fp_frac_conf": 0.06,
+     "median_abs_clipmedian": 0.221,
+     "spread": {
+      "n": 29,
+      "median": 0.481,
+      "p90": 1.1755,
+      "max": 1.55,
+      "over5": 0
+     }
+    },
+    "C": {
+     "n_files": 24,
+     "n_clips": 120,
+     "n_placed": 120,
+     "anchors_per_clip": {
+      "min": 0,
+      "p10": 1,
+      "median": 4.0,
+      "mean": 3.95,
+      "p90": 7,
+      "max": 9
+     },
+     "reach3": 80,
+     "reach3_frac": 0.6667,
+     "confident": 79,
+     "conf_frac_placed": 0.6583,
+     "dropout": 41,
+     "fp": 5,
+     "fp_frac_conf": 0.0633,
+     "median_abs_clipmedian": 0.223,
+     "spread": {
+      "n": 23,
+      "median": 0.385,
+      "p90": 1.1755,
+      "max": 1.55,
+      "over5": 0
+     }
+    },
+    "SH": {
+     "n_files": 6,
+     "n_clips": 30,
+     "n_placed": 30,
+     "anchors_per_clip": {
+      "min": 0,
+      "p10": 1,
+      "median": 4.0,
+      "mean": 3.63,
+      "p90": 7,
+      "max": 10
+     },
+     "reach3": 21,
+     "reach3_frac": 0.7,
+     "confident": 21,
+     "conf_frac_placed": 0.7,
+     "dropout": 9,
+     "fp": 1,
+     "fp_frac_conf": 0.0476,
+     "median_abs_clipmedian": 0.219,
+     "spread": {
+      "n": 6,
+      "median": 0.631,
+      "p90": 1.048,
+      "max": 1.048,
+      "over5": 0
+     }
+    }
+   },
+   "nomusicline": {
+    "alle": {
+     "n_files": 30,
+     "n_clips": 150,
+     "n_placed": 150,
+     "anchors_per_clip": {
+      "min": 0,
+      "p10": 9,
+      "median": 14.0,
+      "mean": 14.09,
+      "p90": 19,
+      "max": 22
+     },
+     "reach3": 149,
+     "reach3_frac": 0.9933,
+     "confident": 146,
+     "conf_frac_placed": 0.9733,
+     "dropout": 4,
+     "fp": 4,
+     "fp_frac_conf": 0.0274,
+     "median_abs_clipmedian": 0.221,
+     "spread": {
+      "n": 30,
+      "median": 0.423,
+      "p90": 1.0525,
+      "max": 1.366,
+      "over5": 0
+     }
+    },
+    "C": {
+     "n_files": 24,
+     "n_clips": 120,
+     "n_placed": 120,
+     "anchors_per_clip": {
+      "min": 0,
+      "p10": 9,
+      "median": 15.0,
+      "mean": 14.46,
+      "p90": 20,
+      "max": 22
+     },
+     "reach3": 119,
+     "reach3_frac": 0.9917,
+     "confident": 116,
+     "conf_frac_placed": 0.9667,
+     "dropout": 4,
+     "fp": 4,
+     "fp_frac_conf": 0.0345,
+     "median_abs_clipmedian": 0.257,
+     "spread": {
+      "n": 24,
+      "median": 0.438,
+      "p90": 1.0525,
+      "max": 1.366,
+      "over5": 0
+     }
+    },
+    "SH": {
+     "n_files": 6,
+     "n_clips": 30,
+     "n_placed": 30,
+     "anchors_per_clip": {
+      "min": 5,
+      "p10": 9,
+      "median": 13.0,
+      "mean": 12.6,
+      "p90": 17,
+      "max": 18
+     },
+     "reach3": 30,
+     "reach3_frac": 1.0,
+     "confident": 30,
+     "conf_frac_placed": 1.0,
+     "dropout": 0,
+     "fp": 0,
+     "fp_frac_conf": 0.0,
+     "median_abs_clipmedian": 0.111,
+     "spread": {
+      "n": 6,
+      "median": 0.4,
+      "p90": 0.8835,
+      "max": 0.883,
+      "over5": 0
+     }
+    }
+   }
+  },
+  "vad": {
+   "baseline": {
+    "alle": {
+     "n_files": 30,
+     "n_clips": 150,
+     "n_placed": 150,
+     "anchors_per_clip": {
+      "min": 5,
+      "p10": 9,
+      "median": 14.0,
+      "mean": 13.83,
+      "p90": 19,
+      "max": 22
+     },
+     "reach3": 150,
+     "reach3_frac": 1.0,
+     "confident": 148,
+     "conf_frac_placed": 0.9867,
+     "dropout": 2,
+     "fp": 2,
+     "fp_frac_conf": 0.0135,
+     "median_abs_clipmedian": 0.206,
+     "spread": {
+      "n": 30,
+      "median": 0.415,
+      "p90": 1.1195,
+      "max": 1.228,
+      "over5": 0
+     }
+    },
+    "C": {
+     "n_files": 24,
+     "n_clips": 120,
+     "n_placed": 120,
+     "anchors_per_clip": {
+      "min": 6,
+      "p10": 9,
+      "median": 14.0,
+      "mean": 14.12,
+      "p90": 19,
+      "max": 22
+     },
+     "reach3": 120,
+     "reach3_frac": 1.0,
+     "confident": 118,
+     "conf_frac_placed": 0.9833,
+     "dropout": 2,
+     "fp": 2,
+     "fp_frac_conf": 0.0169,
+     "median_abs_clipmedian": 0.229,
+     "spread": {
+      "n": 24,
+      "median": 0.415,
+      "p90": 1.1195,
+      "max": 1.228,
+      "over5": 0
+     }
+    },
+    "SH": {
+     "n_files": 6,
+     "n_clips": 30,
+     "n_placed": 30,
+     "anchors_per_clip": {
+      "min": 5,
+      "p10": 9,
+      "median": 13.0,
+      "mean": 12.7,
+      "p90": 18,
+      "max": 18
+     },
+     "reach3": 30,
+     "reach3_frac": 1.0,
+     "confident": 30,
+     "conf_frac_placed": 1.0,
+     "dropout": 0,
+     "fp": 0,
+     "fp_frac_conf": 0.0,
+     "median_abs_clipmedian": 0.119,
+     "spread": {
+      "n": 6,
+      "median": 0.4,
+      "p90": 0.8835,
+      "max": 0.883,
+      "over5": 0
+     }
+    }
+   },
+   "margin>0": {
+    "alle": {
+     "n_files": 30,
+     "n_clips": 150,
+     "n_placed": 150,
+     "anchors_per_clip": {
+      "min": 2,
+      "p10": 5,
+      "median": 12.0,
+      "mean": 11.63,
+      "p90": 17,
+      "max": 21
+     },
+     "reach3": 148,
+     "reach3_frac": 0.9867,
+     "confident": 144,
+     "conf_frac_placed": 0.96,
+     "dropout": 6,
+     "fp": 3,
+     "fp_frac_conf": 0.0208,
+     "median_abs_clipmedian": 0.205,
+     "spread": {
+      "n": 30,
+      "median": 0.463,
+      "p90": 1.2455,
+      "max": 1.738,
+      "over5": 0
+     }
+    },
+    "C": {
+     "n_files": 24,
+     "n_clips": 120,
+     "n_placed": 120,
+     "anchors_per_clip": {
+      "min": 2,
+      "p10": 5,
+      "median": 12.0,
+      "mean": 11.68,
+      "p90": 17,
+      "max": 21
+     },
+     "reach3": 118,
+     "reach3_frac": 0.9833,
+     "confident": 115,
+     "conf_frac_placed": 0.9583,
+     "dropout": 5,
+     "fp": 3,
+     "fp_frac_conf": 0.0261,
+     "median_abs_clipmedian": 0.234,
+     "spread": {
+      "n": 24,
+      "median": 0.512,
+      "p90": 1.2455,
+      "max": 1.738,
+      "over5": 0
+     }
+    },
+    "SH": {
+     "n_files": 6,
+     "n_clips": 30,
+     "n_placed": 30,
+     "anchors_per_clip": {
+      "min": 5,
+      "p10": 6,
+      "median": 12.0,
+      "mean": 11.43,
+      "p90": 17,
+      "max": 18
+     },
+     "reach3": 30,
+     "reach3_frac": 1.0,
+     "confident": 29,
+     "conf_frac_placed": 0.9667,
+     "dropout": 1,
+     "fp": 0,
+     "fp_frac_conf": 0.0,
+     "median_abs_clipmedian": 0.111,
+     "spread": {
+      "n": 6,
+      "median": 0.399,
+      "p90": 0.8694999999999999,
+      "max": 0.869,
+      "over5": 0
+     }
+    }
+   },
+   "smallline>=3": {
+    "alle": {
+     "n_files": 30,
+     "n_clips": 150,
+     "n_placed": 150,
+     "anchors_per_clip": {
+      "min": 1,
+      "p10": 5,
+      "median": 8.0,
+      "mean": 8.42,
+      "p90": 12,
+      "max": 16
+     },
+     "reach3": 147,
+     "reach3_frac": 0.98,
+     "confident": 144,
+     "conf_frac_placed": 0.96,
+     "dropout": 6,
+     "fp": 0,
+     "fp_frac_conf": 0.0,
+     "median_abs_clipmedian": 0.21,
+     "spread": {
+      "n": 30,
+      "median": 0.571,
+      "p90": 1.1425,
+      "max": 1.235,
+      "over5": 0
+     }
+    },
+    "C": {
+     "n_files": 24,
+     "n_clips": 120,
+     "n_placed": 120,
+     "anchors_per_clip": {
+      "min": 2,
+      "p10": 5,
+      "median": 9.0,
+      "mean": 8.55,
+      "p90": 12,
+      "max": 16
+     },
+     "reach3": 118,
+     "reach3_frac": 0.9833,
+     "confident": 115,
+     "conf_frac_placed": 0.9583,
+     "dropout": 5,
+     "fp": 0,
+     "fp_frac_conf": 0.0,
+     "median_abs_clipmedian": 0.228,
+     "spread": {
+      "n": 24,
+      "median": 0.571,
+      "p90": 1.1425,
+      "max": 1.235,
+      "over5": 0
+     }
+    },
+    "SH": {
+     "n_files": 6,
+     "n_clips": 30,
+     "n_placed": 30,
+     "anchors_per_clip": {
+      "min": 1,
+      "p10": 5,
+      "median": 7.5,
+      "mean": 7.9,
+      "p90": 12,
+      "max": 16
+     },
+     "reach3": 29,
+     "reach3_frac": 0.9667,
+     "confident": 29,
+     "conf_frac_placed": 0.9667,
+     "dropout": 1,
+     "fp": 0,
+     "fp_frac_conf": 0.0,
+     "median_abs_clipmedian": 0.117,
+     "spread": {
+      "n": 6,
+      "median": 0.541,
+      "p90": 0.8975000000000001,
+      "max": 0.898,
+      "over5": 0
+     }
+    }
+   },
+   "conf>=med-0.1": {
+    "alle": {
+     "n_files": 30,
+     "n_clips": 150,
+     "n_placed": 150,
+     "anchors_per_clip": {
+      "min": 4,
+      "p10": 9,
+      "median": 13.0,
+      "mean": 13.27,
+      "p90": 18,
+      "max": 22
+     },
+     "reach3": 150,
+     "reach3_frac": 1.0,
+     "confident": 147,
+     "conf_frac_placed": 0.98,
+     "dropout": 3,
+     "fp": 1,
+     "fp_frac_conf": 0.0068,
+     "median_abs_clipmedian": 0.204,
+     "spread": {
+      "n": 30,
+      "median": 0.41,
+      "p90": 1.1195,
+      "max": 1.254,
+      "over5": 0
+     }
+    },
+    "C": {
+     "n_files": 24,
+     "n_clips": 120,
+     "n_placed": 120,
+     "anchors_per_clip": {
+      "min": 4,
+      "p10": 9,
+      "median": 14.0,
+      "mean": 13.53,
+      "p90": 18,
+      "max": 22
+     },
+     "reach3": 120,
+     "reach3_frac": 1.0,
+     "confident": 117,
+     "conf_frac_placed": 0.975,
+     "dropout": 3,
+     "fp": 1,
+     "fp_frac_conf": 0.0085,
+     "median_abs_clipmedian": 0.228,
+     "spread": {
+      "n": 24,
+      "median": 0.41,
+      "p90": 1.1195,
+      "max": 1.254,
+      "over5": 0
+     }
+    },
+    "SH": {
+     "n_files": 6,
+     "n_clips": 30,
+     "n_placed": 30,
+     "anchors_per_clip": {
+      "min": 5,
+      "p10": 9,
+      "median": 12.0,
+      "mean": 12.2,
+      "p90": 17,
+      "max": 18
+     },
+     "reach3": 30,
+     "reach3_frac": 1.0,
+     "confident": 30,
+     "conf_frac_placed": 1.0,
+     "dropout": 0,
+     "fp": 0,
+     "fp_frac_conf": 0.0,
+     "median_abs_clipmedian": 0.121,
+     "spread": {
+      "n": 6,
+      "median": 0.4,
+      "p90": 0.8835,
+      "max": 0.883,
+      "over5": 0
+     }
+    }
+   },
+   "lead<1.0": {
+    "alle": {
+     "n_files": 30,
+     "n_clips": 150,
+     "n_placed": 150,
+     "anchors_per_clip": {
+      "min": 1,
+      "p10": 4,
+      "median": 9.0,
+      "mean": 9.59,
+      "p90": 15,
+      "max": 22
+     },
+     "reach3": 145,
+     "reach3_frac": 0.9667,
+     "confident": 145,
+     "conf_frac_placed": 0.9667,
+     "dropout": 5,
+     "fp": 0,
+     "fp_frac_conf": 0.0,
+     "median_abs_clipmedian": 0.173,
+     "spread": {
+      "n": 30,
+      "median": 0.279,
+      "p90": 0.5439999999999999,
+      "max": 0.849,
+      "over5": 0
+     }
+    },
+    "C": {
+     "n_files": 24,
+     "n_clips": 120,
+     "n_placed": 120,
+     "anchors_per_clip": {
+      "min": 1,
+      "p10": 4,
+      "median": 10.0,
+      "mean": 9.89,
+      "p90": 16,
+      "max": 22
+     },
+     "reach3": 116,
+     "reach3_frac": 0.9667,
+     "confident": 116,
+     "conf_frac_placed": 0.9667,
+     "dropout": 4,
+     "fp": 0,
+     "fp_frac_conf": 0.0,
+     "median_abs_clipmedian": 0.208,
+     "spread": {
+      "n": 24,
+      "median": 0.282,
+      "p90": 0.5439999999999999,
+      "max": 0.849,
+      "over5": 0
+     }
+    },
+    "SH": {
+     "n_files": 6,
+     "n_clips": 30,
+     "n_placed": 30,
+     "anchors_per_clip": {
+      "min": 2,
+      "p10": 4,
+      "median": 8.0,
+      "mean": 8.4,
+      "p90": 14,
+      "max": 15
+     },
+     "reach3": 29,
+     "reach3_frac": 0.9667,
+     "confident": 29,
+     "conf_frac_placed": 0.9667,
+     "dropout": 1,
+     "fp": 0,
+     "fp_frac_conf": 0.0,
+     "median_abs_clipmedian": 0.084,
+     "spread": {
+      "n": 6,
+      "median": 0.264,
+      "p90": 0.42600000000000005,
+      "max": 0.426,
+      "over5": 0
+     }
+    }
+   },
+   "kombi": {
+    "alle": {
+     "n_files": 30,
+     "n_clips": 150,
+     "n_placed": 150,
+     "anchors_per_clip": {
+      "min": 0,
+      "p10": 1,
+      "median": 4.0,
+      "mean": 3.83,
+      "p90": 7,
+      "max": 10
+     },
+     "reach3": 99,
+     "reach3_frac": 0.66,
+     "confident": 97,
+     "conf_frac_placed": 0.6467,
+     "dropout": 53,
+     "fp": 3,
+     "fp_frac_conf": 0.0309,
+     "median_abs_clipmedian": 0.219,
+     "spread": {
+      "n": 29,
+      "median": 0.42,
+      "p90": 1.0895,
+      "max": 1.262,
+      "over5": 0
+     }
+    },
+    "C": {
+     "n_files": 24,
+     "n_clips": 120,
+     "n_placed": 120,
+     "anchors_per_clip": {
+      "min": 0,
+      "p10": 1,
+      "median": 4.0,
+      "mean": 3.88,
+      "p90": 7,
+      "max": 10
+     },
+     "reach3": 79,
+     "reach3_frac": 0.6583,
+     "confident": 77,
+     "conf_frac_placed": 0.6417,
+     "dropout": 43,
+     "fp": 2,
+     "fp_frac_conf": 0.026,
+     "median_abs_clipmedian": 0.221,
+     "spread": {
+      "n": 23,
+      "median": 0.383,
+      "p90": 1.0895,
+      "max": 1.262,
+      "over5": 0
+     }
+    },
+    "SH": {
+     "n_files": 6,
+     "n_clips": 30,
+     "n_placed": 30,
+     "anchors_per_clip": {
+      "min": 0,
+      "p10": 1,
+      "median": 3.5,
+      "mean": 3.63,
+      "p90": 7,
+      "max": 10
+     },
+     "reach3": 20,
+     "reach3_frac": 0.6667,
+     "confident": 20,
+     "conf_frac_placed": 0.6667,
+     "dropout": 10,
+     "fp": 1,
+     "fp_frac_conf": 0.05,
+     "median_abs_clipmedian": 0.191,
+     "spread": {
+      "n": 6,
+      "median": 0.668,
+      "p90": 1.05,
+      "max": 1.05,
+      "over5": 0
+     }
+    }
+   },
+   "nomusicline": {
+    "alle": {
+     "n_files": 30,
+     "n_clips": 150,
+     "n_placed": 150,
+     "anchors_per_clip": {
+      "min": 0,
+      "p10": 9,
+      "median": 14.0,
+      "mean": 13.74,
+      "p90": 19,
+      "max": 22
+     },
+     "reach3": 149,
+     "reach3_frac": 0.9933,
+     "confident": 147,
+     "conf_frac_placed": 0.98,
+     "dropout": 3,
+     "fp": 2,
+     "fp_frac_conf": 0.0136,
+     "median_abs_clipmedian": 0.209,
+     "spread": {
+      "n": 30,
+      "median": 0.415,
+      "p90": 1.1195,
+      "max": 1.228,
+      "over5": 0
+     }
+    },
+    "C": {
+     "n_files": 24,
+     "n_clips": 120,
+     "n_placed": 120,
+     "anchors_per_clip": {
+      "min": 0,
+      "p10": 9,
+      "median": 14.0,
+      "mean": 14.0,
+      "p90": 19,
+      "max": 22
+     },
+     "reach3": 119,
+     "reach3_frac": 0.9917,
+     "confident": 117,
+     "conf_frac_placed": 0.975,
+     "dropout": 3,
+     "fp": 2,
+     "fp_frac_conf": 0.0171,
+     "median_abs_clipmedian": 0.229,
+     "spread": {
+      "n": 24,
+      "median": 0.415,
+      "p90": 1.1195,
+      "max": 1.228,
+      "over5": 0
+     }
+    },
+    "SH": {
+     "n_files": 6,
+     "n_clips": 30,
+     "n_placed": 30,
+     "anchors_per_clip": {
+      "min": 5,
+      "p10": 9,
+      "median": 13.0,
+      "mean": 12.7,
+      "p90": 18,
+      "max": 18
+     },
+     "reach3": 30,
+     "reach3_frac": 1.0,
+     "confident": 30,
+     "conf_frac_placed": 1.0,
+     "dropout": 0,
+     "fp": 0,
+     "fp_frac_conf": 0.0,
+     "median_abs_clipmedian": 0.119,
+     "spread": {
+      "n": 6,
+      "median": 0.4,
+      "p90": 0.8835,
+      "max": 0.883,
+      "over5": 0
+     }
+    }
+   }
+  }
+ },
+ "fp_klip_Etrack": {
+  "dialog": [
+   {
+    "afsnit": "C_S03E08",
+    "klip": 0,
+    "median": -1.41,
+    "mad": 0.57,
+    "n": 11,
+    "lead_ge1": 6,
+    "lead_med": 1.24
+   },
+   {
+    "afsnit": "C_S03E13",
+    "klip": 1,
+    "median": -1.02,
+    "mad": 0.53,
+    "n": 9,
+    "lead_ge1": 6,
+    "lead_med": 1.08
+   },
+   {
+    "afsnit": "C_S03E17",
+    "klip": 2,
+    "median": -1.02,
+    "mad": 0.14,
+    "n": 17,
+    "lead_ge1": 13,
+    "lead_med": 1.72
+   },
+   {
+    "afsnit": "C_S03E21",
+    "klip": 0,
+    "median": -1.04,
+    "mad": 0.82,
+    "n": 10,
+    "lead_ge1": 6,
+    "lead_med": 1.52
+   }
+  ],
+  "vad": [
+   {
+    "afsnit": "C_S02E24",
+    "klip": 3,
+    "median": -1.1,
+    "mad": 1.0
+   },
+   {
+    "afsnit": "C_S03E17",
+    "klip": 2,
+    "median": -1.07,
+    "mad": 0.27
+   }
+  ]
+ },
+ "dropout_Etrack_dialog": [
+  "C_S02E24 klip3 (n=5, MAD 1.02)",
+  "C_S03E18 klip1 (n=8, MAD 1.09)",
+  "C_S03E18 klip4 (n=9, MAD 1.01)"
+ ],
+ "del2": {
+  "parret_pr_region": {
+   "song_sec": {
+    "dialog_middel": 0.399,
+    "vad_middel": 0.391,
+    "delta": -0.007,
+    "vad_over_dialog_af_150": 0
+   },
+   "uncov_frac": {
+    "dialog_middel": 0.073,
+    "vad_middel": 0.073,
+    "delta": 0.0,
+    "vad_over_dialog_af_150": 33
+   },
+   "speech_sec": {
+    "dialog_middel": 43.019,
+    "vad_middel": 44.07,
+    "delta": 1.051,
+    "vad_over_dialog_af_150": 61
+   }
+  },
+  "klip_med_sang": {
+   "dialog": [
+    5,
+    150,
+    60
+   ],
+   "vad": [
+    4,
+    150,
+    59
+   ]
+  },
+  "serie": {
+   "C": {
+    "song_dialog": 0.5,
+    "song_vad": 0.49,
+    "uncov_dialog": 0.073,
+    "uncov_vad": 0.073
+   },
+   "SH": {
+    "song_dialog": 0.0,
+    "song_vad": 0.0,
+    "uncov_dialog": 0.069,
+    "uncov_vad": 0.071
+   }
+  },
+  "pr_klip": {
+   "C_S02E01": [
+    {
+     "region": 0,
+     "strat": "dialog",
+     "placed": true,
+     "start": 121.75,
+     "song_sec": 0.0,
+     "uncov_frac": 0.09999999999999998,
+     "speech_sec": 37.9
+    },
+    {
+     "region": 0,
+     "strat": "vad",
+     "placed": true,
+     "start": 151.75,
+     "song_sec": 0.0,
+     "uncov_frac": 0.07692307692307687,
+     "speech_sec": 49.3
+    },
+    {
+     "region": 1,
+     "strat": "dialog",
+     "placed": true,
+     "start": 288.16,
+     "song_sec": 0.0,
+     "uncov_frac": 0.21311475409836067,
+     "speech_sec": 35.6
+    },
+    {
+     "region": 1,
+     "strat": "vad",
+     "placed": true,
+     "start": 318.16,
+     "song_sec": 0.0,
+     "uncov_frac": 0.23880597014925375,
+     "speech_sec": 43.6
+    },
+    {
+     "region": 2,
+     "strat": "dialog",
+     "placed": true,
+     "start": 629.71,
+     "song_sec": 0.0,
+     "uncov_frac": 0.15625,
+     "speech_sec": 39.5
+    },
+    {
+     "region": 2,
+     "strat": "vad",
+     "placed": true,
+     "start": 629.71,
+     "song_sec": 0.0,
+     "uncov_frac": 0.15625,
+     "speech_sec": 39.5
+    },
+    {
+     "region": 3,
+     "strat": "dialog",
+     "placed": true,
+     "start": 841.97,
+     "song_sec": 0.0,
+     "uncov_frac": 0.0714285714285714,
+     "speech_sec": 30.0
+    },
+    {
+     "region": 3,
+     "strat": "vad",
+     "placed": true,
+     "start": 861.97,
+     "song_sec": 0.0,
+     "uncov_frac": 0.0357142857142857,
+     "speech_sec": 38.1
+    },
+    {
+     "region": 4,
+     "strat": "dialog",
+     "placed": true,
+     "start": 1091.55,
+     "song_sec": 0.0,
+     "uncov_frac": 0.16216216216216217,
+     "speech_sec": 39.8
+    },
+    {
+     "region": 4,
+     "strat": "vad",
+     "placed": true,
+     "start": 1101.55,
+     "song_sec": 0.0,
+     "uncov_frac": 0.14492753623188404,
+     "speech_sec": 43.3
+    }
+   ],
+   "C_S02E02": [
+    {
+     "region": 0,
+     "strat": "dialog",
+     "placed": true,
+     "start": 212.34,
+     "song_sec": 0.0,
+     "uncov_frac": 0.07042253521126762,
+     "speech_sec": 53.4
+    },
+    {
+     "region": 0,
+     "strat": "vad",
+     "placed": true,
+     "start": 212.34,
+     "song_sec": 0.0,
+     "uncov_frac": 0.07042253521126762,
+     "speech_sec": 53.4
+    },
+    {
+     "region": 1,
+     "strat": "dialog",
+     "placed": true,
+     "start": 400.44,
+     "song_sec": 0.0,
+     "uncov_frac": 0.13043478260869568,
+     "speech_sec": 50.8
+    },
+    {
+     "region": 1,
+     "strat": "vad",
+     "placed": true,
+     "start": 400.44,
+     "song_sec": 0.0,
+     "uncov_frac": 0.13043478260869568,
+     "speech_sec": 50.8
+    },
+    {
+     "region": 2,
+     "strat": "dialog",
+     "placed": true,
+     "start": 681.93,
+     "song_sec": 0.0,
+     "uncov_frac": 0.0,
+     "speech_sec": 41.4
+    },
+    {
+     "region": 2,
+     "strat": "vad",
+     "placed": true,
+     "start": 701.93,
+     "song_sec": 0.0,
+     "uncov_frac": 0.03076923076923077,
+     "speech_sec": 46.1
+    },
+    {
+     "region": 3,
+     "strat": "dialog",
+     "placed": true,
+     "start": 765.81,
+     "song_sec": 0.0,
+     "uncov_frac": 0.11538461538461542,
+     "speech_sec": 37.0
+    },
+    {
+     "region": 3,
+     "strat": "vad",
+     "placed": true,
+     "start": 765.81,
+     "song_sec": 0.0,
+     "uncov_frac": 0.11538461538461542,
+     "speech_sec": 37.0
+    },
+    {
+     "region": 4,
+     "strat": "dialog",
+     "placed": true,
+     "start": 1108.65,
+     "song_sec": 0.0,
+     "uncov_frac": 0.15254237288135597,
+     "speech_sec": 11.1
+    },
+    {
+     "region": 4,
+     "strat": "vad",
+     "placed": true,
+     "start": 1078.65,
+     "song_sec": 0.0,
+     "uncov_frac": 0.1578947368421053,
+     "speech_sec": 13.2
+    }
+   ],
+   "C_S02E03": [
+    {
+     "region": 0,
+     "strat": "dialog",
+     "placed": true,
+     "start": 190.52,
+     "song_sec": 0.0,
+     "uncov_frac": 0.04166666666666663,
+     "speech_sec": 43.7
+    },
+    {
+     "region": 0,
+     "strat": "vad",
+     "placed": true,
+     "start": 220.52,
+     "song_sec": 0.0,
+     "uncov_frac": 0.04761904761904767,
+     "speech_sec": 48.7
+    },
+    {
+     "region": 1,
+     "strat": "dialog",
+     "placed": true,
+     "start": 378.84,
+     "song_sec": 0.0,
+     "uncov_frac": 0.015625,
+     "speech_sec": 53.6
+    },
+    {
+     "region": 1,
+     "strat": "vad",
+     "placed": true,
+     "start": 378.84,
+     "song_sec": 0.0,
+     "uncov_frac": 0.015625,
+     "speech_sec": 53.6
+    },
+    {
+     "region": 2,
+     "strat": "dialog",
+     "placed": true,
+     "start": 667.75,
+     "song_sec": 0.0,
+     "uncov_frac": 0.052631578947368474,
+     "speech_sec": 54.6
+    },
+    {
+     "region": 2,
+     "strat": "vad",
+     "placed": true,
+     "start": 667.75,
+     "song_sec": 0.0,
+     "uncov_frac": 0.052631578947368474,
+     "speech_sec": 54.6
+    },
+    {
+     "region": 3,
+     "strat": "dialog",
+     "placed": true,
+     "start": 919.13,
+     "song_sec": 0.0,
+     "uncov_frac": 0.028169014084507005,
+     "speech_sec": 44.5
+    },
+    {
+     "region": 3,
+     "strat": "vad",
+     "placed": true,
+     "start": 919.13,
+     "song_sec": 0.0,
+     "uncov_frac": 0.028169014084507005,
+     "speech_sec": 44.5
+    },
+    {
+     "region": 4,
+     "strat": "dialog",
+     "placed": true,
+     "start": 1145.56,
+     "song_sec": 0.0,
+     "uncov_frac": 0.05882352941176472,
+     "speech_sec": 37.0
+    },
+    {
+     "region": 4,
+     "strat": "vad",
+     "placed": true,
+     "start": 1155.56,
+     "song_sec": 0.0,
+     "uncov_frac": 0.020000000000000018,
+     "speech_sec": 37.1
+    }
+   ],
+   "C_S02E05": [
+    {
+     "region": 0,
+     "strat": "dialog",
+     "placed": true,
+     "start": 126.83,
+     "song_sec": 0.0,
+     "uncov_frac": 0.10447761194029848,
+     "speech_sec": 37.3
+    },
+    {
+     "region": 0,
+     "strat": "vad",
+     "placed": true,
+     "start": 136.83,
+     "song_sec": 0.0,
+     "uncov_frac": 0.08333333333333337,
+     "speech_sec": 38.2
+    },
+    {
+     "region": 1,
+     "strat": "dialog",
+     "placed": true,
+     "start": 264.39,
+     "song_sec": 0.0,
+     "uncov_frac": 0.1428571428571429,
+     "speech_sec": 44.4
+    },
+    {
+     "region": 1,
+     "strat": "vad",
+     "placed": true,
+     "start": 284.39,
+     "song_sec": 0.0,
+     "uncov_frac": 0.1707317073170732,
+     "speech_sec": 44.8
+    },
+    {
+     "region": 2,
+     "strat": "dialog",
+     "placed": true,
+     "start": 645.35,
+     "song_sec": 0.0,
+     "uncov_frac": 0.12068965517241381,
+     "speech_sec": 39.4
+    },
+    {
+     "region": 2,
+     "strat": "vad",
+     "placed": true,
+     "start": 645.35,
+     "song_sec": 0.0,
+     "uncov_frac": 0.12068965517241381,
+     "speech_sec": 39.4
+    },
+    {
+     "region": 3,
+     "strat": "dialog",
+     "placed": true,
+     "start": 775.65,
+     "song_sec": 0.0,
+     "uncov_frac": 0.04761904761904767,
+     "speech_sec": 50.4
+    },
+    {
+     "region": 3,
+     "strat": "vad",
+     "placed": true,
+     "start": 775.65,
+     "song_sec": 0.0,
+     "uncov_frac": 0.04761904761904767,
+     "speech_sec": 50.4
+    },
+    {
+     "region": 4,
+     "strat": "dialog",
+     "placed": true,
+     "start": 1153.44,
+     "song_sec": 0.0,
+     "uncov_frac": 0.06349206349206349,
+     "speech_sec": 42.0
+    },
+    {
+     "region": 4,
+     "strat": "vad",
+     "placed": true,
+     "start": 1153.44,
+     "song_sec": 0.0,
+     "uncov_frac": 0.06349206349206349,
+     "speech_sec": 42.0
+    }
+   ],
+   "C_S02E07": [
+    {
+     "region": 0,
+     "strat": "dialog",
+     "placed": true,
+     "start": 22.19,
+     "song_sec": 0.0,
+     "uncov_frac": 0.15000000000000002,
+     "speech_sec": 46.0
+    },
+    {
+     "region": 0,
+     "strat": "vad",
+     "placed": true,
+     "start": 22.19,
+     "song_sec": 0.0,
+     "uncov_frac": 0.15000000000000002,
+     "speech_sec": 46.0
+    },
+    {
+     "region": 1,
+     "strat": "dialog",
+     "placed": true,
+     "start": 437.94,
+     "song_sec": 0.0,
+     "uncov_frac": 0.13432835820895528,
+     "speech_sec": 33.7
+    },
+    {
+     "region": 1,
+     "strat": "vad",
+     "placed": true,
+     "start": 437.94,
+     "song_sec": 0.0,
+     "uncov_frac": 0.13432835820895528,
+     "speech_sec": 33.7
+    },
+    {
+     "region": 2,
+     "strat": "dialog",
+     "placed": true,
+     "start": 641.35,
+     "song_sec": 0.0,
+     "uncov_frac": 0.07246376811594202,
+     "speech_sec": 45.8
+    },
+    {
+     "region": 2,
+     "strat": "vad",
+     "placed": true,
+     "start": 641.35,
+     "song_sec": 0.0,
+     "uncov_frac": 0.07246376811594202,
+     "speech_sec": 45.8
+    },
+    {
+     "region": 3,
+     "strat": "dialog",
+     "placed": true,
+     "start": 815.77,
+     "song_sec": 0.0,
+     "uncov_frac": 0.1594202898550725,
+     "speech_sec": 27.4
+    },
+    {
+     "region": 3,
+     "strat": "vad",
+     "placed": true,
+     "start": 815.77,
+     "song_sec": 0.0,
+     "uncov_frac": 0.1594202898550725,
+     "speech_sec": 27.4
+    },
+    {
+     "region": 4,
+     "strat": "dialog",
+     "placed": true,
+     "start": 1202.62,
+     "song_sec": 2.2,
+     "uncov_frac": 0.08620689655172409,
+     "speech_sec": 37.4
+    },
+    {
+     "region": 4,
+     "strat": "vad",
+     "placed": true,
+     "start": 1202.62,
+     "song_sec": 2.2,
+     "uncov_frac": 0.08620689655172409,
+     "speech_sec": 37.4
+    }
+   ],
+   "C_S02E09": [
+    {
+     "region": 0,
+     "strat": "dialog",
+     "placed": true,
+     "start": 39.87,
+     "song_sec": 0.0,
+     "uncov_frac": 0.04705882352941182,
+     "speech_sec": 52.9
+    },
+    {
+     "region": 0,
+     "strat": "vad",
+     "placed": true,
+     "start": 69.87,
+     "song_sec": 0.0,
+     "uncov_frac": 0.0,
+     "speech_sec": 58.0
+    },
+    {
+     "region": 1,
+     "strat": "dialog",
+     "placed": true,
+     "start": 463.46,
+     "song_sec": 0.0,
+     "uncov_frac": 0.0757575757575758,
+     "speech_sec": 41.7
+    },
+    {
+     "region": 1,
+     "strat": "vad",
+     "placed": true,
+     "start": 463.46,
+     "song_sec": 0.0,
+     "uncov_frac": 0.0757575757575758,
+     "speech_sec": 41.7
+    },
+    {
+     "region": 2,
+     "strat": "dialog",
+     "placed": true,
+     "start": 762.1,
+     "song_sec": 0.0,
+     "uncov_frac": 0.04166666666666663,
+     "speech_sec": 44.8
+    },
+    {
+     "region": 2,
+     "strat": "vad",
+     "placed": true,
+     "start": 762.1,
+     "song_sec": 0.0,
+     "uncov_frac": 0.04166666666666663,
+     "speech_sec": 44.8
+    },
+    {
+     "region": 3,
+     "strat": "dialog",
+     "placed": true,
+     "start": 785.16,
+     "song_sec": 0.0,
+     "uncov_frac": 0.028169014084507005,
+     "speech_sec": 47.1
+    },
+    {
+     "region": 3,
+     "strat": "vad",
+     "placed": true,
+     "start": 785.16,
+     "song_sec": 0.0,
+     "uncov_frac": 0.028169014084507005,
+     "speech_sec": 47.1
+    },
+    {
+     "region": 4,
+     "strat": "dialog",
+     "placed": true,
+     "start": 1054.51,
+     "song_sec": 0.0,
+     "uncov_frac": 0.10344827586206895,
+     "speech_sec": 4.8
+    },
+    {
+     "region": 4,
+     "strat": "vad",
+     "placed": true,
+     "start": 1024.51,
+     "song_sec": 0.0,
+     "uncov_frac": 0.06000000000000005,
+     "speech_sec": 13.4
+    }
+   ],
+   "C_S02E10": [
+    {
+     "region": 0,
+     "strat": "dialog",
+     "placed": true,
+     "start": 205.75,
+     "song_sec": 0.0,
+     "uncov_frac": 0.1159420289855072,
+     "speech_sec": 54.7
+    },
+    {
+     "region": 0,
+     "strat": "vad",
+     "placed": true,
+     "start": 175.75,
+     "song_sec": 0.0,
+     "uncov_frac": 0.05714285714285716,
+     "speech_sec": 56.2
+    },
+    {
+     "region": 1,
+     "strat": "dialog",
+     "placed": true,
+     "start": 307.64,
+     "song_sec": 0.0,
+     "uncov_frac": 0.09589041095890416,
+     "speech_sec": 50.4
+    },
+    {
+     "region": 1,
+     "strat": "vad",
+     "placed": true,
+     "start": 307.64,
+     "song_sec": 0.0,
+     "uncov_frac": 0.09589041095890416,
+     "speech_sec": 50.4
+    },
+    {
+     "region": 2,
+     "strat": "dialog",
+     "placed": true,
+     "start": 719.22,
+     "song_sec": 0.0,
+     "uncov_frac": 0.10810810810810811,
+     "speech_sec": 39.7
+    },
+    {
+     "region": 2,
+     "strat": "vad",
+     "placed": true,
+     "start": 719.22,
+     "song_sec": 0.0,
+     "uncov_frac": 0.10810810810810811,
+     "speech_sec": 39.7
+    },
+    {
+     "region": 3,
+     "strat": "dialog",
+     "placed": true,
+     "start": 747.71,
+     "song_sec": 0.0,
+     "uncov_frac": 0.125,
+     "speech_sec": 34.8
+    },
+    {
+     "region": 3,
+     "strat": "vad",
+     "placed": true,
+     "start": 757.71,
+     "song_sec": 0.0,
+     "uncov_frac": 0.12698412698412698,
+     "speech_sec": 39.5
+    },
+    {
+     "region": 4,
+     "strat": "dialog",
+     "placed": true,
+     "start": 1053.39,
+     "song_sec": 0.0,
+     "uncov_frac": 0.0625,
+     "speech_sec": 35.4
+    },
+    {
+     "region": 4,
+     "strat": "vad",
+     "placed": true,
+     "start": 1053.39,
+     "song_sec": 0.0,
+     "uncov_frac": 0.0625,
+     "speech_sec": 35.4
+    }
+   ],
+   "C_S02E12": [
+    {
+     "region": 0,
+     "strat": "dialog",
+     "placed": true,
+     "start": 55.85,
+     "song_sec": 0.0,
+     "uncov_frac": 0.1029411764705882,
+     "speech_sec": 48.7
+    },
+    {
+     "region": 0,
+     "strat": "vad",
+     "placed": true,
+     "start": 55.85,
+     "song_sec": 0.0,
+     "uncov_frac": 0.1029411764705882,
+     "speech_sec": 48.7
+    },
+    {
+     "region": 1,
+     "strat": "dialog",
+     "placed": true,
+     "start": 344.3,
+     "song_sec": 0.0,
+     "uncov_frac": 0.07352941176470584,
+     "speech_sec": 52.8
+    },
+    {
+     "region": 1,
+     "strat": "vad",
+     "placed": true,
+     "start": 314.3,
+     "song_sec": 0.0,
+     "uncov_frac": 0.10144927536231885,
+     "speech_sec": 54.5
+    },
+    {
+     "region": 2,
+     "strat": "dialog",
+     "placed": true,
+     "start": 534.74,
+     "song_sec": 0.0,
+     "uncov_frac": 0.1428571428571429,
+     "speech_sec": 47.8
+    },
+    {
+     "region": 2,
+     "strat": "vad",
+     "placed": true,
+     "start": 534.74,
+     "song_sec": 0.0,
+     "uncov_frac": 0.1428571428571429,
+     "speech_sec": 47.8
+    },
+    {
+     "region": 3,
+     "strat": "dialog",
+     "placed": true,
+     "start": 958.0,
+     "song_sec": 0.0,
+     "uncov_frac": 0.0847457627118644,
+     "speech_sec": 38.9
+    },
+    {
+     "region": 3,
+     "strat": "vad",
+     "placed": true,
+     "start": 958.0,
+     "song_sec": 0.0,
+     "uncov_frac": 0.0847457627118644,
+     "speech_sec": 38.9
+    },
+    {
+     "region": 4,
+     "strat": "dialog",
+     "placed": true,
+     "start": 1201.83,
+     "song_sec": 0.0,
+     "uncov_frac": 0.08064516129032262,
+     "speech_sec": 42.0
+    },
+    {
+     "region": 4,
+     "strat": "vad",
+     "placed": true,
+     "start": 1201.83,
+     "song_sec": 0.0,
+     "uncov_frac": 0.08064516129032262,
+     "speech_sec": 42.0
+    }
+   ],
+   "C_S02E13": [
+    {
+     "region": 0,
+     "strat": "dialog",
+     "placed": true,
+     "start": 27.65,
+     "song_sec": 0.0,
+     "uncov_frac": 0.07692307692307687,
+     "speech_sec": 55.9
+    },
+    {
+     "region": 0,
+     "strat": "vad",
+     "placed": true,
+     "start": 37.65,
+     "song_sec": 0.0,
+     "uncov_frac": 0.09999999999999998,
+     "speech_sec": 57.0
+    },
+    {
+     "region": 1,
+     "strat": "dialog",
+     "placed": true,
+     "start": 325.49,
+     "song_sec": 0.0,
+     "uncov_frac": 0.0,
+     "speech_sec": 47.1
+    },
+    {
+     "region": 1,
+     "strat": "vad",
+     "placed": true,
+     "start": 325.49,
+     "song_sec": 0.0,
+     "uncov_frac": 0.0,
+     "speech_sec": 47.1
+    },
+    {
+     "region": 2,
+     "strat": "dialog",
+     "placed": true,
+     "start": 509.05,
+     "song_sec": 0.0,
+     "uncov_frac": 0.06896551724137934,
+     "speech_sec": 38.5
+    },
+    {
+     "region": 2,
+     "strat": "vad",
+     "placed": true,
+     "start": 497.43,
+     "song_sec": 0.0,
+     "uncov_frac": 0.125,
+     "speech_sec": 39.0
+    },
+    {
+     "region": 3,
+     "strat": "dialog",
+     "placed": true,
+     "start": 913.25,
+     "song_sec": 0.0,
+     "uncov_frac": 0.06153846153846154,
+     "speech_sec": 27.2
+    },
+    {
+     "region": 3,
+     "strat": "vad",
+     "placed": true,
+     "start": 943.25,
+     "song_sec": 0.0,
+     "uncov_frac": 0.0892857142857143,
+     "speech_sec": 32.2
+    },
+    {
+     "region": 4,
+     "strat": "dialog",
+     "placed": true,
+     "start": 1064.4,
+     "song_sec": 0.0,
+     "uncov_frac": 0.054545454545454564,
+     "speech_sec": 44.0
+    },
+    {
+     "region": 4,
+     "strat": "vad",
+     "placed": true,
+     "start": 1064.4,
+     "song_sec": 0.0,
+     "uncov_frac": 0.054545454545454564,
+     "speech_sec": 44.0
+    }
+   ],
+   "C_S02E18": [
+    {
+     "region": 0,
+     "strat": "dialog",
+     "placed": true,
+     "start": 227.71,
+     "song_sec": 0.0,
+     "uncov_frac": 0.03614457831325302,
+     "speech_sec": 49.7
+    },
+    {
+     "region": 0,
+     "strat": "vad",
+     "placed": true,
+     "start": 227.71,
+     "song_sec": 0.0,
+     "uncov_frac": 0.03614457831325302,
+     "speech_sec": 49.7
+    },
+    {
+     "region": 1,
+     "strat": "dialog",
+     "placed": true,
+     "start": 263.32,
+     "song_sec": 0.0,
+     "uncov_frac": 0.044117647058823484,
+     "speech_sec": 45.8
+    },
+    {
+     "region": 1,
+     "strat": "vad",
+     "placed": true,
+     "start": 255.48,
+     "song_sec": 0.0,
+     "uncov_frac": 0.04347826086956519,
+     "speech_sec": 47.1
+    },
+    {
+     "region": 2,
+     "strat": "dialog",
+     "placed": true,
+     "start": 532.43,
+     "song_sec": 0.0,
+     "uncov_frac": 0.03947368421052633,
+     "speech_sec": 47.7
+    },
+    {
+     "region": 2,
+     "strat": "vad",
+     "placed": true,
+     "start": 522.43,
+     "song_sec": 0.0,
+     "uncov_frac": 0.07499999999999996,
+     "speech_sec": 48.4
+    },
+    {
+     "region": 3,
+     "strat": "dialog",
+     "placed": true,
+     "start": 1009.07,
+     "song_sec": 0.0,
+     "uncov_frac": 0.08695652173913049,
+     "speech_sec": 48.9
+    },
+    {
+     "region": 3,
+     "strat": "vad",
+     "placed": true,
+     "start": 1019.07,
+     "song_sec": 0.0,
+     "uncov_frac": 0.06153846153846154,
+     "speech_sec": 49.9
+    },
+    {
+     "region": 4,
+     "strat": "dialog",
+     "placed": true,
+     "start": 1049.25,
+     "song_sec": 0.0,
+     "uncov_frac": 0.026666666666666616,
+     "speech_sec": 54.2
+    },
+    {
+     "region": 4,
+     "strat": "vad",
+     "placed": true,
+     "start": 1049.25,
+     "song_sec": 0.0,
+     "uncov_frac": 0.026666666666666616,
+     "speech_sec": 54.2
+    }
+   ],
+   "C_S02E24": [
+    {
+     "region": 0,
+     "strat": "dialog",
+     "placed": true,
+     "start": 132.81,
+     "song_sec": 0.0,
+     "uncov_frac": 0.19736842105263153,
+     "speech_sec": 48.6
+    },
+    {
+     "region": 0,
+     "strat": "vad",
+     "placed": true,
+     "start": 122.81,
+     "song_sec": 0.0,
+     "uncov_frac": 0.20512820512820518,
+     "speech_sec": 49.0
+    },
+    {
+     "region": 1,
+     "strat": "dialog",
+     "placed": true,
+     "start": 394.18,
+     "song_sec": 0.0,
+     "uncov_frac": 0.06666666666666665,
+     "speech_sec": 48.6
+    },
+    {
+     "region": 1,
+     "strat": "vad",
+     "placed": true,
+     "start": 414.18,
+     "song_sec": 0.0,
+     "uncov_frac": 0.08695652173913049,
+     "speech_sec": 49.7
+    },
+    {
+     "region": 2,
+     "strat": "dialog",
+     "placed": true,
+     "start": 530.68,
+     "song_sec": 0.0,
+     "uncov_frac": 0.10526315789473684,
+     "speech_sec": 26.4
+    },
+    {
+     "region": 2,
+     "strat": "vad",
+     "placed": true,
+     "start": 500.68,
+     "song_sec": 0.0,
+     "uncov_frac": 0.14583333333333337,
+     "speech_sec": 27.1
+    },
+    {
+     "region": 3,
+     "strat": "dialog",
+     "placed": true,
+     "start": 978.69,
+     "song_sec": 0.0,
+     "uncov_frac": 0.19999999999999996,
+     "speech_sec": 9.5
+    },
+    {
+     "region": 3,
+     "strat": "vad",
+     "placed": true,
+     "start": 981.42,
+     "song_sec": 0.0,
+     "uncov_frac": 0.19047619047619047,
+     "speech_sec": 10.9
+    },
+    {
+     "region": 4,
+     "strat": "dialog",
+     "placed": true,
+     "start": 1000.29,
+     "song_sec": 0.0,
+     "uncov_frac": 0.15254237288135597,
+     "speech_sec": 25.6
+    },
+    {
+     "region": 4,
+     "strat": "vad",
+     "placed": true,
+     "start": 1030.29,
+     "song_sec": 0.0,
+     "uncov_frac": 0.07547169811320753,
+     "speech_sec": 33.7
+    }
+   ],
+   "C_S03E03": [
+    {
+     "region": 0,
+     "strat": "dialog",
+     "placed": true,
+     "start": 168.21,
+     "song_sec": 0.0,
+     "uncov_frac": 0.06666666666666665,
+     "speech_sec": 43.5
+    },
+    {
+     "region": 0,
+     "strat": "vad",
+     "placed": true,
+     "start": 178.21,
+     "song_sec": 0.0,
+     "uncov_frac": 0.02941176470588236,
+     "speech_sec": 44.2
+    },
+    {
+     "region": 1,
+     "strat": "dialog",
+     "placed": true,
+     "start": 511.09,
+     "song_sec": 0.0,
+     "uncov_frac": 0.046875,
+     "speech_sec": 47.9
+    },
+    {
+     "region": 1,
+     "strat": "vad",
+     "placed": true,
+     "start": 501.09,
+     "song_sec": 0.0,
+     "uncov_frac": 0.0461538461538461,
+     "speech_sec": 50.1
+    },
+    {
+     "region": 2,
+     "strat": "dialog",
+     "placed": true,
+     "start": 525.44,
+     "song_sec": 0.0,
+     "uncov_frac": 0.06060606060606055,
+     "speech_sec": 51.6
+    },
+    {
+     "region": 2,
+     "strat": "vad",
+     "placed": true,
+     "start": 535.44,
+     "song_sec": 0.0,
+     "uncov_frac": 0.03076923076923077,
+     "speech_sec": 52.1
+    },
+    {
+     "region": 3,
+     "strat": "dialog",
+     "placed": true,
+     "start": 796.55,
+     "song_sec": 0.0,
+     "uncov_frac": 0.01538461538461533,
+     "speech_sec": 48.6
+    },
+    {
+     "region": 3,
+     "strat": "vad",
+     "placed": true,
+     "start": 786.55,
+     "song_sec": 0.0,
+     "uncov_frac": 0.01538461538461533,
+     "speech_sec": 49.2
+    },
+    {
+     "region": 4,
+     "strat": "dialog",
+     "placed": true,
+     "start": 1032.78,
+     "song_sec": 0.0,
+     "uncov_frac": 0.03703703703703709,
+     "speech_sec": 39.1
+    },
+    {
+     "region": 4,
+     "strat": "vad",
+     "placed": true,
+     "start": 1032.78,
+     "song_sec": 0.0,
+     "uncov_frac": 0.03703703703703709,
+     "speech_sec": 39.1
+    }
+   ],
+   "C_S03E06": [
+    {
+     "region": 0,
+     "strat": "dialog",
+     "placed": true,
+     "start": 212.96,
+     "song_sec": 0.0,
+     "uncov_frac": 0.11250000000000004,
+     "speech_sec": 54.7
+    },
+    {
+     "region": 0,
+     "strat": "vad",
+     "placed": true,
+     "start": 222.96,
+     "song_sec": 0.0,
+     "uncov_frac": 0.0864197530864198,
+     "speech_sec": 55.0
+    },
+    {
+     "region": 1,
+     "strat": "dialog",
+     "placed": true,
+     "start": 421.3,
+     "song_sec": 0.0,
+     "uncov_frac": 0.06493506493506496,
+     "speech_sec": 54.1
+    },
+    {
+     "region": 1,
+     "strat": "vad",
+     "placed": true,
+     "start": 441.3,
+     "song_sec": 0.0,
+     "uncov_frac": 0.10465116279069764,
+     "speech_sec": 56.7
+    },
+    {
+     "region": 2,
+     "strat": "dialog",
+     "placed": true,
+     "start": 538.54,
+     "song_sec": 0.0,
+     "uncov_frac": 0.08771929824561409,
+     "speech_sec": 36.6
+    },
+    {
+     "region": 2,
+     "strat": "vad",
+     "placed": true,
+     "start": 558.54,
+     "song_sec": 0.0,
+     "uncov_frac": 0.1636363636363637,
+     "speech_sec": 42.9
+    },
+    {
+     "region": 3,
+     "strat": "dialog",
+     "placed": true,
+     "start": 831.5,
+     "song_sec": 0.0,
+     "uncov_frac": 0.10447761194029848,
+     "speech_sec": 46.4
+    },
+    {
+     "region": 3,
+     "strat": "vad",
+     "placed": true,
+     "start": 811.5,
+     "song_sec": 0.0,
+     "uncov_frac": 0.06779661016949157,
+     "speech_sec": 46.4
+    },
+    {
+     "region": 4,
+     "strat": "dialog",
+     "placed": true,
+     "start": 1126.25,
+     "song_sec": 0.0,
+     "uncov_frac": 0.04081632653061229,
+     "speech_sec": 35.5
+    },
+    {
+     "region": 4,
+     "strat": "vad",
+     "placed": true,
+     "start": 1126.25,
+     "song_sec": 0.0,
+     "uncov_frac": 0.04081632653061229,
+     "speech_sec": 35.5
+    }
+   ],
+   "C_S03E08": [
+    {
+     "region": 0,
+     "strat": "dialog",
+     "placed": true,
+     "start": 75.61,
+     "song_sec": 1.1,
+     "uncov_frac": 0.08750000000000002,
+     "speech_sec": 50.0
+    },
+    {
+     "region": 0,
+     "strat": "vad",
+     "placed": true,
+     "start": 65.61,
+     "song_sec": 0.0,
+     "uncov_frac": 0.06976744186046513,
+     "speech_sec": 52.4
+    },
+    {
+     "region": 1,
+     "strat": "dialog",
+     "placed": true,
+     "start": 258.96,
+     "song_sec": 0.0,
+     "uncov_frac": 0.17333333333333334,
+     "speech_sec": 47.7
+    },
+    {
+     "region": 1,
+     "strat": "vad",
+     "placed": true,
+     "start": 257.1,
+     "song_sec": 0.0,
+     "uncov_frac": 0.1578947368421053,
+     "speech_sec": 49.6
+    },
+    {
+     "region": 2,
+     "strat": "dialog",
+     "placed": true,
+     "start": 594.88,
+     "song_sec": 0.0,
+     "uncov_frac": 0.09433962264150941,
+     "speech_sec": 49.3
+    },
+    {
+     "region": 2,
+     "strat": "vad",
+     "placed": true,
+     "start": 614.88,
+     "song_sec": 0.0,
+     "uncov_frac": 0.10526315789473684,
+     "speech_sec": 49.8
+    },
+    {
+     "region": 3,
+     "strat": "dialog",
+     "placed": true,
+     "start": 930.1,
+     "song_sec": 0.0,
+     "uncov_frac": 0.1875,
+     "speech_sec": 41.8
+    },
+    {
+     "region": 3,
+     "strat": "vad",
+     "placed": true,
+     "start": 930.1,
+     "song_sec": 0.0,
+     "uncov_frac": 0.1875,
+     "speech_sec": 41.8
+    },
+    {
+     "region": 4,
+     "strat": "dialog",
+     "placed": true,
+     "start": 1132.3,
+     "song_sec": 0.0,
+     "uncov_frac": 0.02985074626865669,
+     "speech_sec": 43.3
+    },
+    {
+     "region": 4,
+     "strat": "vad",
+     "placed": true,
+     "start": 1132.3,
+     "song_sec": 0.0,
+     "uncov_frac": 0.02985074626865669,
+     "speech_sec": 43.3
+    }
+   ],
+   "C_S03E09": [
+    {
+     "region": 0,
+     "strat": "dialog",
+     "placed": true,
+     "start": 39.87,
+     "song_sec": 0.0,
+     "uncov_frac": 0.2588235294117647,
+     "speech_sec": 47.8
+    },
+    {
+     "region": 0,
+     "strat": "vad",
+     "placed": true,
+     "start": 9.87,
+     "song_sec": 0.0,
+     "uncov_frac": 0.2727272727272727,
+     "speech_sec": 47.9
+    },
+    {
+     "region": 1,
+     "strat": "dialog",
+     "placed": true,
+     "start": 437.48,
+     "song_sec": 0.0,
+     "uncov_frac": 0.05797101449275366,
+     "speech_sec": 44.0
+    },
+    {
+     "region": 1,
+     "strat": "vad",
+     "placed": true,
+     "start": 437.48,
+     "song_sec": 0.0,
+     "uncov_frac": 0.05797101449275366,
+     "speech_sec": 44.0
+    },
+    {
+     "region": 2,
+     "strat": "dialog",
+     "placed": true,
+     "start": 528.95,
+     "song_sec": 0.0,
+     "uncov_frac": 0.060975609756097615,
+     "speech_sec": 43.4
+    },
+    {
+     "region": 2,
+     "strat": "vad",
+     "placed": true,
+     "start": 528.95,
+     "song_sec": 0.0,
+     "uncov_frac": 0.060975609756097615,
+     "speech_sec": 43.4
+    },
+    {
+     "region": 3,
+     "strat": "dialog",
+     "placed": true,
+     "start": 777.61,
+     "song_sec": 0.0,
+     "uncov_frac": 0.06666666666666665,
+     "speech_sec": 29.8
+    },
+    {
+     "region": 3,
+     "strat": "vad",
+     "placed": true,
+     "start": 769.07,
+     "song_sec": 0.0,
+     "uncov_frac": 0.06666666666666665,
+     "speech_sec": 34.7
+    },
+    {
+     "region": 4,
+     "strat": "dialog",
+     "placed": true,
+     "start": 1096.55,
+     "song_sec": 0.0,
+     "uncov_frac": 0.0757575757575758,
+     "speech_sec": 28.0
+    },
+    {
+     "region": 4,
+     "strat": "vad",
+     "placed": true,
+     "start": 1096.55,
+     "song_sec": 0.0,
+     "uncov_frac": 0.0757575757575758,
+     "speech_sec": 28.0
+    }
+   ],
+   "C_S03E10": [
+    {
+     "region": 0,
+     "strat": "dialog",
+     "placed": true,
+     "start": 8.56,
+     "song_sec": 1.4,
+     "uncov_frac": 0.1444444444444445,
+     "speech_sec": 52.7
+    },
+    {
+     "region": 0,
+     "strat": "vad",
+     "placed": true,
+     "start": 8.56,
+     "song_sec": 1.4,
+     "uncov_frac": 0.1444444444444445,
+     "speech_sec": 52.7
+    },
+    {
+     "region": 1,
+     "strat": "dialog",
+     "placed": true,
+     "start": 440.63,
+     "song_sec": 49.2,
+     "uncov_frac": 0.07894736842105265,
+     "speech_sec": 58.4
+    },
+    {
+     "region": 1,
+     "strat": "vad",
+     "placed": true,
+     "start": 440.63,
+     "song_sec": 49.2,
+     "uncov_frac": 0.07894736842105265,
+     "speech_sec": 58.4
+    },
+    {
+     "region": 2,
+     "strat": "dialog",
+     "placed": true,
+     "start": 524.76,
+     "song_sec": 0.0,
+     "uncov_frac": 0.053333333333333344,
+     "speech_sec": 49.5
+    },
+    {
+     "region": 2,
+     "strat": "vad",
+     "placed": true,
+     "start": 524.76,
+     "song_sec": 0.0,
+     "uncov_frac": 0.053333333333333344,
+     "speech_sec": 49.5
+    },
+    {
+     "region": 3,
+     "strat": "dialog",
+     "placed": true,
+     "start": 949.23,
+     "song_sec": 5.9,
+     "uncov_frac": 0.04081632653061229,
+     "speech_sec": 30.5
+    },
+    {
+     "region": 3,
+     "strat": "vad",
+     "placed": true,
+     "start": 949.23,
+     "song_sec": 5.9,
+     "uncov_frac": 0.04081632653061229,
+     "speech_sec": 30.5
+    },
+    {
+     "region": 4,
+     "strat": "dialog",
+     "placed": true,
+     "start": 1072.27,
+     "song_sec": 0.0,
+     "uncov_frac": 0.018181818181818188,
+     "speech_sec": 23.2
+    },
+    {
+     "region": 4,
+     "strat": "vad",
+     "placed": true,
+     "start": 1072.27,
+     "song_sec": 0.0,
+     "uncov_frac": 0.018181818181818188,
+     "speech_sec": 23.2
+    }
+   ],
+   "C_S03E12": [
+    {
+     "region": 0,
+     "strat": "dialog",
+     "placed": true,
+     "start": 221.65,
+     "song_sec": 0.0,
+     "uncov_frac": 0.06172839506172845,
+     "speech_sec": 50.2
+    },
+    {
+     "region": 0,
+     "strat": "vad",
+     "placed": true,
+     "start": 221.65,
+     "song_sec": 0.0,
+     "uncov_frac": 0.06172839506172845,
+     "speech_sec": 50.2
+    },
+    {
+     "region": 1,
+     "strat": "dialog",
+     "placed": true,
+     "start": 381.53,
+     "song_sec": 0.0,
+     "uncov_frac": 0.11764705882352944,
+     "speech_sec": 55.8
+    },
+    {
+     "region": 1,
+     "strat": "vad",
+     "placed": true,
+     "start": 381.53,
+     "song_sec": 0.0,
+     "uncov_frac": 0.11764705882352944,
+     "speech_sec": 55.8
+    },
+    {
+     "region": 2,
+     "strat": "dialog",
+     "placed": true,
+     "start": 754.03,
+     "song_sec": 0.0,
+     "uncov_frac": 0.12307692307692308,
+     "speech_sec": 40.7
+    },
+    {
+     "region": 2,
+     "strat": "vad",
+     "placed": true,
+     "start": 754.03,
+     "song_sec": 0.0,
+     "uncov_frac": 0.12307692307692308,
+     "speech_sec": 40.7
+    },
+    {
+     "region": 3,
+     "strat": "dialog",
+     "placed": true,
+     "start": 801.28,
+     "song_sec": 0.0,
+     "uncov_frac": 0.0461538461538461,
+     "speech_sec": 42.4
+    },
+    {
+     "region": 3,
+     "strat": "vad",
+     "placed": true,
+     "start": 801.28,
+     "song_sec": 0.0,
+     "uncov_frac": 0.0461538461538461,
+     "speech_sec": 42.4
+    },
+    {
+     "region": 4,
+     "strat": "dialog",
+     "placed": true,
+     "start": 1059.61,
+     "song_sec": 0.0,
+     "uncov_frac": 0.08333333333333337,
+     "speech_sec": 34.7
+    },
+    {
+     "region": 4,
+     "strat": "vad",
+     "placed": true,
+     "start": 1059.61,
+     "song_sec": 0.0,
+     "uncov_frac": 0.08333333333333337,
+     "speech_sec": 34.7
+    }
+   ],
+   "C_S03E13": [
+    {
+     "region": 0,
+     "strat": "dialog",
+     "placed": true,
+     "start": 15.6,
+     "song_sec": 0.0,
+     "uncov_frac": 0.03703703703703709,
+     "speech_sec": 51.3
+    },
+    {
+     "region": 0,
+     "strat": "vad",
+     "placed": true,
+     "start": 45.6,
+     "song_sec": 0.0,
+     "uncov_frac": 0.0864197530864198,
+     "speech_sec": 54.8
+    },
+    {
+     "region": 1,
+     "strat": "dialog",
+     "placed": true,
+     "start": 313.23,
+     "song_sec": 0.0,
+     "uncov_frac": 0.0641025641025641,
+     "speech_sec": 42.3
+    },
+    {
+     "region": 1,
+     "strat": "vad",
+     "placed": true,
+     "start": 283.23,
+     "song_sec": 0.0,
+     "uncov_frac": 0.0,
+     "speech_sec": 46.6
+    },
+    {
+     "region": 2,
+     "strat": "dialog",
+     "placed": true,
+     "start": 735.82,
+     "song_sec": 0.0,
+     "uncov_frac": 0.012499999999999956,
+     "speech_sec": 49.9
+    },
+    {
+     "region": 2,
+     "strat": "vad",
+     "placed": true,
+     "start": 735.82,
+     "song_sec": 0.0,
+     "uncov_frac": 0.012499999999999956,
+     "speech_sec": 49.9
+    },
+    {
+     "region": 3,
+     "strat": "dialog",
+     "placed": true,
+     "start": 913.87,
+     "song_sec": 0.0,
+     "uncov_frac": 0.0,
+     "speech_sec": 42.9
+    },
+    {
+     "region": 3,
+     "strat": "vad",
+     "placed": true,
+     "start": 913.87,
+     "song_sec": 0.0,
+     "uncov_frac": 0.0,
+     "speech_sec": 42.9
+    },
+    {
+     "region": 4,
+     "strat": "dialog",
+     "placed": true,
+     "start": 1040.46,
+     "song_sec": 0.0,
+     "uncov_frac": 0.036363636363636376,
+     "speech_sec": 38.7
+    },
+    {
+     "region": 4,
+     "strat": "vad",
+     "placed": true,
+     "start": 1024.77,
+     "song_sec": 0.0,
+     "uncov_frac": 0.021276595744680882,
+     "speech_sec": 38.9
+    }
+   ],
+   "C_S03E15": [
+    {
+     "region": 0,
+     "strat": "dialog",
+     "placed": true,
+     "start": 79.16,
+     "song_sec": 0.0,
+     "uncov_frac": 0.013513513513513487,
+     "speech_sec": 56.1
+    },
+    {
+     "region": 0,
+     "strat": "vad",
+     "placed": true,
+     "start": 79.16,
+     "song_sec": 0.0,
+     "uncov_frac": 0.013513513513513487,
+     "speech_sec": 56.1
+    },
+    {
+     "region": 1,
+     "strat": "dialog",
+     "placed": true,
+     "start": 282.2,
+     "song_sec": 0.0,
+     "uncov_frac": 0.05405405405405406,
+     "speech_sec": 50.0
+    },
+    {
+     "region": 1,
+     "strat": "vad",
+     "placed": true,
+     "start": 282.2,
+     "song_sec": 0.0,
+     "uncov_frac": 0.05405405405405406,
+     "speech_sec": 50.0
+    },
+    {
+     "region": 2,
+     "strat": "dialog",
+     "placed": true,
+     "start": 538.5,
+     "song_sec": 0.0,
+     "uncov_frac": 0.02941176470588236,
+     "speech_sec": 41.6
+    },
+    {
+     "region": 2,
+     "strat": "vad",
+     "placed": true,
+     "start": 528.5,
+     "song_sec": 0.0,
+     "uncov_frac": 0.044117647058823484,
+     "speech_sec": 41.9
+    },
+    {
+     "region": 3,
+     "strat": "dialog",
+     "placed": true,
+     "start": 809.85,
+     "song_sec": 0.0,
+     "uncov_frac": 0.09999999999999998,
+     "speech_sec": 45.8
+    },
+    {
+     "region": 3,
+     "strat": "vad",
+     "placed": true,
+     "start": 809.85,
+     "song_sec": 0.0,
+     "uncov_frac": 0.09999999999999998,
+     "speech_sec": 45.8
+    },
+    {
+     "region": 4,
+     "strat": "dialog",
+     "placed": true,
+     "start": 1078.04,
+     "song_sec": 0.0,
+     "uncov_frac": 0.03703703703703709,
+     "speech_sec": 48.1
+    },
+    {
+     "region": 4,
+     "strat": "vad",
+     "placed": true,
+     "start": 1078.04,
+     "song_sec": 0.0,
+     "uncov_frac": 0.03703703703703709,
+     "speech_sec": 48.1
+    }
+   ],
+   "C_S03E17": [
+    {
+     "region": 0,
+     "strat": "dialog",
+     "placed": true,
+     "start": 33.1,
+     "song_sec": 0.0,
+     "uncov_frac": 0.09302325581395354,
+     "speech_sec": 52.5
+    },
+    {
+     "region": 0,
+     "strat": "vad",
+     "placed": true,
+     "start": 33.1,
+     "song_sec": 0.0,
+     "uncov_frac": 0.09302325581395354,
+     "speech_sec": 52.5
+    },
+    {
+     "region": 1,
+     "strat": "dialog",
+     "placed": true,
+     "start": 254.59,
+     "song_sec": 0.0,
+     "uncov_frac": 0.05882352941176472,
+     "speech_sec": 50.0
+    },
+    {
+     "region": 1,
+     "strat": "vad",
+     "placed": true,
+     "start": 254.59,
+     "song_sec": 0.0,
+     "uncov_frac": 0.05882352941176472,
+     "speech_sec": 50.0
+    },
+    {
+     "region": 2,
+     "strat": "dialog",
+     "placed": true,
+     "start": 600.32,
+     "song_sec": 0.0,
+     "uncov_frac": 0.023809523809523836,
+     "speech_sec": 55.1
+    },
+    {
+     "region": 2,
+     "strat": "vad",
+     "placed": true,
+     "start": 620.32,
+     "song_sec": 0.0,
+     "uncov_frac": 0.051948051948051965,
+     "speech_sec": 56.7
+    },
+    {
+     "region": 3,
+     "strat": "dialog",
+     "placed": true,
+     "start": 871.28,
+     "song_sec": 0.0,
+     "uncov_frac": 0.014285714285714235,
+     "speech_sec": 52.7
+    },
+    {
+     "region": 3,
+     "strat": "vad",
+     "placed": true,
+     "start": 871.28,
+     "song_sec": 0.0,
+     "uncov_frac": 0.014285714285714235,
+     "speech_sec": 52.7
+    },
+    {
+     "region": 4,
+     "strat": "dialog",
+     "placed": true,
+     "start": 1079.57,
+     "song_sec": 0.0,
+     "uncov_frac": 0.017241379310344862,
+     "speech_sec": 42.6
+    },
+    {
+     "region": 4,
+     "strat": "vad",
+     "placed": true,
+     "start": 1059.57,
+     "song_sec": 0.0,
+     "uncov_frac": 0.0,
+     "speech_sec": 43.4
+    }
+   ],
+   "C_S03E18": [
+    {
+     "region": 0,
+     "strat": "dialog",
+     "placed": true,
+     "start": 124.58,
+     "song_sec": 0.0,
+     "uncov_frac": 0.10810810810810811,
+     "speech_sec": 49.4
+    },
+    {
+     "region": 0,
+     "strat": "vad",
+     "placed": true,
+     "start": 124.58,
+     "song_sec": 0.0,
+     "uncov_frac": 0.10810810810810811,
+     "speech_sec": 49.4
+    },
+    {
+     "region": 1,
+     "strat": "dialog",
+     "placed": true,
+     "start": 357.52,
+     "song_sec": 0.0,
+     "uncov_frac": 0.014705882352941124,
+     "speech_sec": 53.6
+    },
+    {
+     "region": 1,
+     "strat": "vad",
+     "placed": true,
+     "start": 357.52,
+     "song_sec": 0.0,
+     "uncov_frac": 0.014705882352941124,
+     "speech_sec": 53.6
+    },
+    {
+     "region": 2,
+     "strat": "dialog",
+     "placed": true,
+     "start": 503.54,
+     "song_sec": 0.0,
+     "uncov_frac": 0.03703703703703709,
+     "speech_sec": 43.9
+    },
+    {
+     "region": 2,
+     "strat": "vad",
+     "placed": true,
+     "start": 501.17,
+     "song_sec": 0.0,
+     "uncov_frac": 0.0535714285714286,
+     "speech_sec": 44.3
+    },
+    {
+     "region": 3,
+     "strat": "dialog",
+     "placed": true,
+     "start": 986.36,
+     "song_sec": 0.0,
+     "uncov_frac": 0.046875,
+     "speech_sec": 56.8
+    },
+    {
+     "region": 3,
+     "strat": "vad",
+     "placed": true,
+     "start": 986.36,
+     "song_sec": 0.0,
+     "uncov_frac": 0.046875,
+     "speech_sec": 56.8
+    },
+    {
+     "region": 4,
+     "strat": "dialog",
+     "placed": true,
+     "start": 1005.96,
+     "song_sec": 0.0,
+     "uncov_frac": 0.05970149253731338,
+     "speech_sec": 52.1
+    },
+    {
+     "region": 4,
+     "strat": "vad",
+     "placed": true,
+     "start": 1002.35,
+     "song_sec": 0.0,
+     "uncov_frac": 0.06060606060606055,
+     "speech_sec": 52.8
+    }
+   ],
+   "C_S03E19": [
+    {
+     "region": 0,
+     "strat": "dialog",
+     "placed": true,
+     "start": 53.3,
+     "song_sec": 0.0,
+     "uncov_frac": 0.0,
+     "speech_sec": 50.8
+    },
+    {
+     "region": 0,
+     "strat": "vad",
+     "placed": true,
+     "start": 63.3,
+     "song_sec": 0.0,
+     "uncov_frac": 0.012345679012345734,
+     "speech_sec": 53.0
+    },
+    {
+     "region": 1,
+     "strat": "dialog",
+     "placed": true,
+     "start": 281.62,
+     "song_sec": 0.0,
+     "uncov_frac": 0.038961038961038974,
+     "speech_sec": 41.9
+    },
+    {
+     "region": 1,
+     "strat": "vad",
+     "placed": true,
+     "start": 281.62,
+     "song_sec": 0.0,
+     "uncov_frac": 0.038961038961038974,
+     "speech_sec": 41.9
+    },
+    {
+     "region": 2,
+     "strat": "dialog",
+     "placed": true,
+     "start": 629.13,
+     "song_sec": 0.0,
+     "uncov_frac": 0.049180327868852514,
+     "speech_sec": 45.3
+    },
+    {
+     "region": 2,
+     "strat": "vad",
+     "placed": true,
+     "start": 629.13,
+     "song_sec": 0.0,
+     "uncov_frac": 0.049180327868852514,
+     "speech_sec": 45.3
+    },
+    {
+     "region": 3,
+     "strat": "dialog",
+     "placed": true,
+     "start": 797.5,
+     "song_sec": 0.0,
+     "uncov_frac": 0.05882352941176472,
+     "speech_sec": 42.9
+    },
+    {
+     "region": 3,
+     "strat": "vad",
+     "placed": true,
+     "start": 797.5,
+     "song_sec": 0.0,
+     "uncov_frac": 0.05882352941176472,
+     "speech_sec": 42.9
+    },
+    {
+     "region": 4,
+     "strat": "dialog",
+     "placed": true,
+     "start": 1067.32,
+     "song_sec": 0.0,
+     "uncov_frac": 0.02777777777777779,
+     "speech_sec": 45.2
+    },
+    {
+     "region": 4,
+     "strat": "vad",
+     "placed": true,
+     "start": 1067.32,
+     "song_sec": 0.0,
+     "uncov_frac": 0.02777777777777779,
+     "speech_sec": 45.2
+    }
+   ],
+   "C_S03E21": [
+    {
+     "region": 0,
+     "strat": "dialog",
+     "placed": true,
+     "start": 215.51,
+     "song_sec": 0.0,
+     "uncov_frac": 0.038961038961038974,
+     "speech_sec": 44.9
+    },
+    {
+     "region": 0,
+     "strat": "vad",
+     "placed": true,
+     "start": 235.51,
+     "song_sec": 0.0,
+     "uncov_frac": 0.05555555555555558,
+     "speech_sec": 45.7
+    },
+    {
+     "region": 1,
+     "strat": "dialog",
+     "placed": true,
+     "start": 450.07,
+     "song_sec": 0.0,
+     "uncov_frac": 0.1235955056179775,
+     "speech_sec": 40.1
+    },
+    {
+     "region": 1,
+     "strat": "vad",
+     "placed": true,
+     "start": 480.07,
+     "song_sec": 0.0,
+     "uncov_frac": 0.11842105263157898,
+     "speech_sec": 47.8
+    },
+    {
+     "region": 2,
+     "strat": "dialog",
+     "placed": true,
+     "start": 761.6,
+     "song_sec": 0.0,
+     "uncov_frac": 0.014084507042253502,
+     "speech_sec": 42.8
+    },
+    {
+     "region": 2,
+     "strat": "vad",
+     "placed": true,
+     "start": 766.49,
+     "song_sec": 0.0,
+     "uncov_frac": 0.0,
+     "speech_sec": 43.1
+    },
+    {
+     "region": 3,
+     "strat": "dialog",
+     "placed": true,
+     "start": 797.84,
+     "song_sec": 0.0,
+     "uncov_frac": 0.013513513513513487,
+     "speech_sec": 50.7
+    },
+    {
+     "region": 3,
+     "strat": "vad",
+     "placed": true,
+     "start": 797.84,
+     "song_sec": 0.0,
+     "uncov_frac": 0.013513513513513487,
+     "speech_sec": 50.7
+    },
+    {
+     "region": 4,
+     "strat": "dialog",
+     "placed": true,
+     "start": 1023.9,
+     "song_sec": 0.0,
+     "uncov_frac": 0.019607843137254943,
+     "speech_sec": 37.2
+    },
+    {
+     "region": 4,
+     "strat": "vad",
+     "placed": true,
+     "start": 1043.9,
+     "song_sec": 0.0,
+     "uncov_frac": 0.037735849056603765,
+     "speech_sec": 40.8
+    }
+   ],
+   "C_S03E22": [
+    {
+     "region": 0,
+     "strat": "dialog",
+     "placed": true,
+     "start": 5.17,
+     "song_sec": 0.0,
+     "uncov_frac": 0.040000000000000036,
+     "speech_sec": 56.2
+    },
+    {
+     "region": 0,
+     "strat": "vad",
+     "placed": true,
+     "start": 5.17,
+     "song_sec": 0.0,
+     "uncov_frac": 0.040000000000000036,
+     "speech_sec": 56.2
+    },
+    {
+     "region": 1,
+     "strat": "dialog",
+     "placed": true,
+     "start": 461.13,
+     "song_sec": 0.0,
+     "uncov_frac": 0.012820512820512775,
+     "speech_sec": 47.6
+    },
+    {
+     "region": 1,
+     "strat": "vad",
+     "placed": true,
+     "start": 431.13,
+     "song_sec": 0.0,
+     "uncov_frac": 0.03529411764705881,
+     "speech_sec": 50.9
+    },
+    {
+     "region": 2,
+     "strat": "dialog",
+     "placed": true,
+     "start": 734.02,
+     "song_sec": 0.0,
+     "uncov_frac": 0.0,
+     "speech_sec": 50.1
+    },
+    {
+     "region": 2,
+     "strat": "vad",
+     "placed": true,
+     "start": 734.02,
+     "song_sec": 0.0,
+     "uncov_frac": 0.0,
+     "speech_sec": 50.1
+    },
+    {
+     "region": 3,
+     "strat": "dialog",
+     "placed": true,
+     "start": 937.56,
+     "song_sec": 0.0,
+     "uncov_frac": 0.04166666666666663,
+     "speech_sec": 40.5
+    },
+    {
+     "region": 3,
+     "strat": "vad",
+     "placed": true,
+     "start": 957.56,
+     "song_sec": 0.0,
+     "uncov_frac": 0.020408163265306145,
+     "speech_sec": 41.1
+    },
+    {
+     "region": 4,
+     "strat": "dialog",
+     "placed": true,
+     "start": 1070.65,
+     "song_sec": 0.0,
+     "uncov_frac": 0.014285714285714235,
+     "speech_sec": 41.4
+    },
+    {
+     "region": 4,
+     "strat": "vad",
+     "placed": true,
+     "start": 1070.65,
+     "song_sec": 0.0,
+     "uncov_frac": 0.014285714285714235,
+     "speech_sec": 41.4
+    }
+   ],
+   "SH_S01E01": [
+    {
+     "region": 0,
+     "strat": "dialog",
+     "placed": true,
+     "start": 78.83,
+     "song_sec": 0.0,
+     "uncov_frac": 0.09523809523809523,
+     "speech_sec": 39.4
+    },
+    {
+     "region": 0,
+     "strat": "vad",
+     "placed": true,
+     "start": 78.83,
+     "song_sec": 0.0,
+     "uncov_frac": 0.09523809523809523,
+     "speech_sec": 39.4
+    },
+    {
+     "region": 1,
+     "strat": "dialog",
+     "placed": true,
+     "start": 1231.11,
+     "song_sec": 0.0,
+     "uncov_frac": 0.08620689655172409,
+     "speech_sec": 44.4
+    },
+    {
+     "region": 1,
+     "strat": "vad",
+     "placed": true,
+     "start": 1231.11,
+     "song_sec": 0.0,
+     "uncov_frac": 0.08620689655172409,
+     "speech_sec": 44.4
+    },
+    {
+     "region": 2,
+     "strat": "dialog",
+     "placed": true,
+     "start": 1676.63,
+     "song_sec": 0.0,
+     "uncov_frac": 0.06451612903225812,
+     "speech_sec": 50.6
+    },
+    {
+     "region": 2,
+     "strat": "vad",
+     "placed": true,
+     "start": 1676.63,
+     "song_sec": 0.0,
+     "uncov_frac": 0.06451612903225812,
+     "speech_sec": 50.6
+    },
+    {
+     "region": 3,
+     "strat": "dialog",
+     "placed": true,
+     "start": 2038.75,
+     "song_sec": 0.0,
+     "uncov_frac": 0.044117647058823484,
+     "speech_sec": 42.8
+    },
+    {
+     "region": 3,
+     "strat": "vad",
+     "placed": true,
+     "start": 2038.75,
+     "song_sec": 0.0,
+     "uncov_frac": 0.044117647058823484,
+     "speech_sec": 42.8
+    },
+    {
+     "region": 4,
+     "strat": "dialog",
+     "placed": true,
+     "start": 3053.51,
+     "song_sec": 0.0,
+     "uncov_frac": 0.14516129032258063,
+     "speech_sec": 48.5
+    },
+    {
+     "region": 4,
+     "strat": "vad",
+     "placed": true,
+     "start": 3053.51,
+     "song_sec": 0.0,
+     "uncov_frac": 0.14516129032258063,
+     "speech_sec": 48.5
+    }
+   ],
+   "SH_S01E02": [
+    {
+     "region": 0,
+     "strat": "dialog",
+     "placed": true,
+     "start": 418.5,
+     "song_sec": 0.0,
+     "uncov_frac": 0.0,
+     "speech_sec": 52.9
+    },
+    {
+     "region": 0,
+     "strat": "vad",
+     "placed": true,
+     "start": 398.5,
+     "song_sec": 0.0,
+     "uncov_frac": 0.0,
+     "speech_sec": 53.7
+    },
+    {
+     "region": 1,
+     "strat": "dialog",
+     "placed": true,
+     "start": 920.25,
+     "song_sec": 0.0,
+     "uncov_frac": 0.06060606060606055,
+     "speech_sec": 41.3
+    },
+    {
+     "region": 1,
+     "strat": "vad",
+     "placed": true,
+     "start": 910.25,
+     "song_sec": 0.0,
+     "uncov_frac": 0.0714285714285714,
+     "speech_sec": 43.4
+    },
+    {
+     "region": 2,
+     "strat": "dialog",
+     "placed": true,
+     "start": 1425.13,
+     "song_sec": 0.0,
+     "uncov_frac": 0.04109589041095896,
+     "speech_sec": 46.9
+    },
+    {
+     "region": 2,
+     "strat": "vad",
+     "placed": true,
+     "start": 1425.13,
+     "song_sec": 0.0,
+     "uncov_frac": 0.04109589041095896,
+     "speech_sec": 46.9
+    },
+    {
+     "region": 3,
+     "strat": "dialog",
+     "placed": true,
+     "start": 2025.73,
+     "song_sec": 0.0,
+     "uncov_frac": 0.11111111111111116,
+     "speech_sec": 40.1
+    },
+    {
+     "region": 3,
+     "strat": "vad",
+     "placed": true,
+     "start": 2025.73,
+     "song_sec": 0.0,
+     "uncov_frac": 0.11111111111111116,
+     "speech_sec": 40.1
+    },
+    {
+     "region": 4,
+     "strat": "dialog",
+     "placed": true,
+     "start": 2671.67,
+     "song_sec": 0.0,
+     "uncov_frac": 0.08695652173913049,
+     "speech_sec": 31.6
+    },
+    {
+     "region": 4,
+     "strat": "vad",
+     "placed": true,
+     "start": 2671.67,
+     "song_sec": 0.0,
+     "uncov_frac": 0.08695652173913049,
+     "speech_sec": 31.6
+    }
+   ],
+   "SH_S01E03": [
+    {
+     "region": 0,
+     "strat": "dialog",
+     "placed": true,
+     "start": 6.96,
+     "song_sec": 0.0,
+     "uncov_frac": 0.08333333333333337,
+     "speech_sec": 42.5
+    },
+    {
+     "region": 0,
+     "strat": "vad",
+     "placed": true,
+     "start": 6.96,
+     "song_sec": 0.0,
+     "uncov_frac": 0.08333333333333337,
+     "speech_sec": 42.5
+    },
+    {
+     "region": 1,
+     "strat": "dialog",
+     "placed": true,
+     "start": 963.63,
+     "song_sec": 0.0,
+     "uncov_frac": 0.042857142857142816,
+     "speech_sec": 48.2
+    },
+    {
+     "region": 1,
+     "strat": "vad",
+     "placed": true,
+     "start": 963.63,
+     "song_sec": 0.0,
+     "uncov_frac": 0.042857142857142816,
+     "speech_sec": 48.2
+    },
+    {
+     "region": 2,
+     "strat": "dialog",
+     "placed": true,
+     "start": 1284.37,
+     "song_sec": 0.0,
+     "uncov_frac": 0.014705882352941124,
+     "speech_sec": 54.1
+    },
+    {
+     "region": 2,
+     "strat": "vad",
+     "placed": true,
+     "start": 1294.37,
+     "song_sec": 0.0,
+     "uncov_frac": 0.02857142857142858,
+     "speech_sec": 54.4
+    },
+    {
+     "region": 3,
+     "strat": "dialog",
+     "placed": true,
+     "start": 1563.23,
+     "song_sec": 0.0,
+     "uncov_frac": 0.06451612903225812,
+     "speech_sec": 38.9
+    },
+    {
+     "region": 3,
+     "strat": "vad",
+     "placed": true,
+     "start": 1573.23,
+     "song_sec": 0.0,
+     "uncov_frac": 0.09230769230769231,
+     "speech_sec": 44.2
+    },
+    {
+     "region": 4,
+     "strat": "dialog",
+     "placed": true,
+     "start": 2101.27,
+     "song_sec": 0.0,
+     "uncov_frac": 0.07843137254901966,
+     "speech_sec": 21.7
+    },
+    {
+     "region": 4,
+     "strat": "vad",
+     "placed": true,
+     "start": 2111.27,
+     "song_sec": 0.0,
+     "uncov_frac": 0.0888888888888889,
+     "speech_sec": 22.8
+    }
+   ],
+   "SH_S01E04": [
+    {
+     "region": 0,
+     "strat": "dialog",
+     "placed": true,
+     "start": 426.14,
+     "song_sec": 0.0,
+     "uncov_frac": 0.06451612903225812,
+     "speech_sec": 36.4
+    },
+    {
+     "region": 0,
+     "strat": "vad",
+     "placed": true,
+     "start": 446.14,
+     "song_sec": 0.0,
+     "uncov_frac": 0.08333333333333337,
+     "speech_sec": 38.9
+    },
+    {
+     "region": 1,
+     "strat": "dialog",
+     "placed": true,
+     "start": 684.02,
+     "song_sec": 0.0,
+     "uncov_frac": 0.12765957446808507,
+     "speech_sec": 34.2
+    },
+    {
+     "region": 1,
+     "strat": "vad",
+     "placed": true,
+     "start": 684.02,
+     "song_sec": 0.0,
+     "uncov_frac": 0.12765957446808507,
+     "speech_sec": 34.2
+    },
+    {
+     "region": 2,
+     "strat": "dialog",
+     "placed": true,
+     "start": 1486.2,
+     "song_sec": 0.0,
+     "uncov_frac": 0.04347826086956519,
+     "speech_sec": 42.6
+    },
+    {
+     "region": 2,
+     "strat": "vad",
+     "placed": true,
+     "start": 1486.2,
+     "song_sec": 0.0,
+     "uncov_frac": 0.04347826086956519,
+     "speech_sec": 42.6
+    },
+    {
+     "region": 3,
+     "strat": "dialog",
+     "placed": true,
+     "start": 1776.78,
+     "song_sec": 0.0,
+     "uncov_frac": 0.07499999999999996,
+     "speech_sec": 19.1
+    },
+    {
+     "region": 3,
+     "strat": "vad",
+     "placed": true,
+     "start": 1776.78,
+     "song_sec": 0.0,
+     "uncov_frac": 0.07499999999999996,
+     "speech_sec": 19.1
+    },
+    {
+     "region": 4,
+     "strat": "dialog",
+     "placed": true,
+     "start": 2383.8,
+     "song_sec": 0.0,
+     "uncov_frac": 0.05882352941176472,
+     "speech_sec": 40.6
+    },
+    {
+     "region": 4,
+     "strat": "vad",
+     "placed": true,
+     "start": 2383.8,
+     "song_sec": 0.0,
+     "uncov_frac": 0.05882352941176472,
+     "speech_sec": 40.6
+    }
+   ],
+   "SH_S01E05": [
+    {
+     "region": 0,
+     "strat": "dialog",
+     "placed": true,
+     "start": 474.64,
+     "song_sec": 0.0,
+     "uncov_frac": 0.09999999999999998,
+     "speech_sec": 41.2
+    },
+    {
+     "region": 0,
+     "strat": "vad",
+     "placed": true,
+     "start": 474.64,
+     "song_sec": 0.0,
+     "uncov_frac": 0.09999999999999998,
+     "speech_sec": 41.2
+    },
+    {
+     "region": 1,
+     "strat": "dialog",
+     "placed": true,
+     "start": 669.67,
+     "song_sec": 0.0,
+     "uncov_frac": 0.01851851851851849,
+     "speech_sec": 46.3
+    },
+    {
+     "region": 1,
+     "strat": "vad",
+     "placed": true,
+     "start": 679.67,
+     "song_sec": 0.0,
+     "uncov_frac": 0.019607843137254943,
+     "speech_sec": 47.4
+    },
+    {
+     "region": 2,
+     "strat": "dialog",
+     "placed": true,
+     "start": 1051.18,
+     "song_sec": 0.0,
+     "uncov_frac": 0.07547169811320753,
+     "speech_sec": 29.4
+    },
+    {
+     "region": 2,
+     "strat": "vad",
+     "placed": true,
+     "start": 1051.18,
+     "song_sec": 0.0,
+     "uncov_frac": 0.07547169811320753,
+     "speech_sec": 29.4
+    },
+    {
+     "region": 3,
+     "strat": "dialog",
+     "placed": true,
+     "start": 1690.82,
+     "song_sec": 0.0,
+     "uncov_frac": 0.08333333333333337,
+     "speech_sec": 50.1
+    },
+    {
+     "region": 3,
+     "strat": "vad",
+     "placed": true,
+     "start": 1690.82,
+     "song_sec": 0.0,
+     "uncov_frac": 0.08333333333333337,
+     "speech_sec": 50.1
+    },
+    {
+     "region": 4,
+     "strat": "dialog",
+     "placed": true,
+     "start": 2184.31,
+     "song_sec": 0.0,
+     "uncov_frac": 0.0714285714285714,
+     "speech_sec": 44.0
+    },
+    {
+     "region": 4,
+     "strat": "vad",
+     "placed": true,
+     "start": 2184.31,
+     "song_sec": 0.0,
+     "uncov_frac": 0.0714285714285714,
+     "speech_sec": 44.0
+    }
+   ],
+   "SH_S01E06": [
+    {
+     "region": 0,
+     "strat": "dialog",
+     "placed": true,
+     "start": 376.54,
+     "song_sec": 0.0,
+     "uncov_frac": 0.12,
+     "speech_sec": 46.0
+    },
+    {
+     "region": 0,
+     "strat": "vad",
+     "placed": true,
+     "start": 376.54,
+     "song_sec": 0.0,
+     "uncov_frac": 0.12,
+     "speech_sec": 46.0
+    },
+    {
+     "region": 1,
+     "strat": "dialog",
+     "placed": true,
+     "start": 677.39,
+     "song_sec": 0.0,
+     "uncov_frac": 0.046875,
+     "speech_sec": 36.8
+    },
+    {
+     "region": 1,
+     "strat": "vad",
+     "placed": true,
+     "start": 677.39,
+     "song_sec": 0.0,
+     "uncov_frac": 0.046875,
+     "speech_sec": 36.8
+    },
+    {
+     "region": 2,
+     "strat": "dialog",
+     "placed": true,
+     "start": 1492.99,
+     "song_sec": 0.0,
+     "uncov_frac": 0.10909090909090913,
+     "speech_sec": 31.6
+    },
+    {
+     "region": 2,
+     "strat": "vad",
+     "placed": true,
+     "start": 1492.99,
+     "song_sec": 0.0,
+     "uncov_frac": 0.10909090909090913,
+     "speech_sec": 31.6
+    },
+    {
+     "region": 3,
+     "strat": "dialog",
+     "placed": true,
+     "start": 2149.65,
+     "song_sec": 0.0,
+     "uncov_frac": 0.0714285714285714,
+     "speech_sec": 29.3
+    },
+    {
+     "region": 3,
+     "strat": "vad",
+     "placed": true,
+     "start": 2159.65,
+     "song_sec": 0.0,
+     "uncov_frac": 0.040000000000000036,
+     "speech_sec": 33.3
+    },
+    {
+     "region": 4,
+     "strat": "dialog",
+     "placed": true,
+     "start": 2619.24,
+     "song_sec": 0.0,
+     "uncov_frac": 0.0,
+     "speech_sec": 39.3
+    },
+    {
+     "region": 4,
+     "strat": "vad",
+     "placed": true,
+     "start": 2619.24,
+     "song_sec": 0.0,
+     "uncov_frac": 0.0,
+     "speech_sec": 39.3
+    }
+   ]
+  }
+ },
+ "Ftrack": {
+  "FRES": {
+   "dialog": {
+    "V0": {
+     "alle": {
+      "n_placed": 150,
+      "med_n": 14.0,
+      "reach3": 148,
+      "conf": 145,
+      "drop": 5,
+      "fp": 4,
+      "med_abs": 0.238,
+      "spread_med": 0.613,
+      "spread_max": 4.572
+     },
+     "HI": {
+      "n_placed": 85,
+      "med_n": 15,
+      "reach3": 85,
+      "conf": 83,
+      "drop": 2,
+      "fp": 3,
+      "med_abs": 0.252,
+      "spread_med": 0.633,
+      "spread_max": 2.938
+     },
+     "ikkeHI": {
+      "n_placed": 65,
+      "med_n": 14,
+      "reach3": 63,
+      "conf": 62,
+      "drop": 3,
+      "fp": 1,
+      "med_abs": 0.2,
+      "spread_med": 0.561,
+      "spread_max": 4.572
+     }
+    },
+    "V1": {
+     "alle": {
+      "n_placed": 150,
+      "med_n": 14.0,
+      "reach3": 148,
+      "conf": 145,
+      "drop": 5,
+      "fp": 4,
+      "med_abs": 0.238,
+      "spread_med": 0.613,
+      "spread_max": 4.572
+     },
+     "HI": {
+      "n_placed": 85,
+      "med_n": 15,
+      "reach3": 85,
+      "conf": 83,
+      "drop": 2,
+      "fp": 3,
+      "med_abs": 0.252,
+      "spread_med": 0.633,
+      "spread_max": 2.938
+     },
+     "ikkeHI": {
+      "n_placed": 65,
+      "med_n": 14,
+      "reach3": 63,
+      "conf": 62,
+      "drop": 3,
+      "fp": 1,
+      "med_abs": 0.2,
+      "spread_med": 0.561,
+      "spread_max": 4.572
+     }
+    },
+    "V3": {
+     "alle": {
+      "n_placed": 150,
+      "med_n": 14.0,
+      "reach3": 147,
+      "conf": 145,
+      "drop": 5,
+      "fp": 4,
+      "med_abs": 0.238,
+      "spread_med": 0.613,
+      "spread_max": 4.572
+     },
+     "HI": {
+      "n_placed": 85,
+      "med_n": 15,
+      "reach3": 84,
+      "conf": 83,
+      "drop": 2,
+      "fp": 3,
+      "med_abs": 0.252,
+      "spread_med": 0.633,
+      "spread_max": 2.938
+     },
+     "ikkeHI": {
+      "n_placed": 65,
+      "med_n": 14,
+      "reach3": 63,
+      "conf": 62,
+      "drop": 3,
+      "fp": 1,
+      "med_abs": 0.2,
+      "spread_med": 0.561,
+      "spread_max": 4.572
+     }
+    },
+    "V2": {
+     "alle": {
+      "n_placed": 150,
+      "med_n": 14.0,
+      "reach3": 148,
+      "conf": 145,
+      "drop": 5,
+      "fp": 4,
+      "med_abs": 0.238,
+      "spread_med": 0.613,
+      "spread_max": 4.572
+     },
+     "HI": {
+      "n_placed": 85,
+      "med_n": 15,
+      "reach3": 85,
+      "conf": 83,
+      "drop": 2,
+      "fp": 3,
+      "med_abs": 0.252,
+      "spread_med": 0.633,
+      "spread_max": 2.938
+     },
+     "ikkeHI": {
+      "n_placed": 65,
+      "med_n": 14,
+      "reach3": 63,
+      "conf": 62,
+      "drop": 3,
+      "fp": 1,
+      "med_abs": 0.2,
+      "spread_med": 0.561,
+      "spread_max": 4.572
+     }
+    }
+   },
+   "vad": {
+    "V0": {
+     "alle": {
+      "n_placed": 150,
+      "med_n": 14.0,
+      "reach3": 148,
+      "conf": 146,
+      "drop": 4,
+      "fp": 4,
+      "med_abs": 0.242,
+      "spread_med": 0.731,
+      "spread_max": 4.572
+     },
+     "HI": {
+      "n_placed": 85,
+      "med_n": 15,
+      "reach3": 85,
+      "conf": 83,
+      "drop": 2,
+      "fp": 3,
+      "med_abs": 0.252,
+      "spread_med": 0.758,
+      "spread_max": 2.938
+     },
+     "ikkeHI": {
+      "n_placed": 65,
+      "med_n": 14,
+      "reach3": 63,
+      "conf": 63,
+      "drop": 2,
+      "fp": 1,
+      "med_abs": 0.218,
+      "spread_med": 0.703,
+      "spread_max": 4.572
+     }
+    },
+    "V1": {
+     "alle": {
+      "n_placed": 150,
+      "med_n": 14.0,
+      "reach3": 148,
+      "conf": 146,
+      "drop": 4,
+      "fp": 4,
+      "med_abs": 0.242,
+      "spread_med": 0.731,
+      "spread_max": 4.572
+     },
+     "HI": {
+      "n_placed": 85,
+      "med_n": 15,
+      "reach3": 85,
+      "conf": 83,
+      "drop": 2,
+      "fp": 3,
+      "med_abs": 0.252,
+      "spread_med": 0.758,
+      "spread_max": 2.938
+     },
+     "ikkeHI": {
+      "n_placed": 65,
+      "med_n": 14,
+      "reach3": 63,
+      "conf": 63,
+      "drop": 2,
+      "fp": 1,
+      "med_abs": 0.218,
+      "spread_med": 0.703,
+      "spread_max": 4.572
+     }
+    },
+    "V3": {
+     "alle": {
+      "n_placed": 150,
+      "med_n": 14.0,
+      "reach3": 147,
+      "conf": 146,
+      "drop": 4,
+      "fp": 4,
+      "med_abs": 0.242,
+      "spread_med": 0.731,
+      "spread_max": 4.572
+     },
+     "HI": {
+      "n_placed": 85,
+      "med_n": 15,
+      "reach3": 84,
+      "conf": 83,
+      "drop": 2,
+      "fp": 3,
+      "med_abs": 0.252,
+      "spread_med": 0.758,
+      "spread_max": 2.938
+     },
+     "ikkeHI": {
+      "n_placed": 65,
+      "med_n": 14,
+      "reach3": 63,
+      "conf": 63,
+      "drop": 2,
+      "fp": 1,
+      "med_abs": 0.218,
+      "spread_med": 0.703,
+      "spread_max": 4.572
+     }
+    },
+    "V2": {
+     "alle": {
+      "n_placed": 150,
+      "med_n": 14.0,
+      "reach3": 148,
+      "conf": 146,
+      "drop": 4,
+      "fp": 4,
+      "med_abs": 0.242,
+      "spread_med": 0.731,
+      "spread_max": 4.572
+     },
+     "HI": {
+      "n_placed": 85,
+      "med_n": 15,
+      "reach3": 85,
+      "conf": 83,
+      "drop": 2,
+      "fp": 3,
+      "med_abs": 0.252,
+      "spread_med": 0.758,
+      "spread_max": 2.938
+     },
+     "ikkeHI": {
+      "n_placed": 65,
+      "med_n": 14,
+      "reach3": 63,
+      "conf": 63,
+      "drop": 2,
+      "fp": 1,
+      "med_abs": 0.218,
+      "spread_med": 0.703,
+      "spread_max": 4.572
+     }
+    }
+   }
+  },
+  "HI": [
+   "C_S02E01",
+   "C_S02E03",
+   "C_S02E05",
+   "C_S02E07",
+   "C_S02E09",
+   "C_S02E10",
+   "C_S02E18",
+   "C_S03E06",
+   "C_S03E10",
+   "C_S03E12",
+   "C_S03E15",
+   "C_S03E17",
+   "C_S03E18",
+   "C_S03E19",
+   "C_S03E21",
+   "C_S03E22",
+   "SH_S01E05"
+  ],
+  "NHI": [
+   "C_S02E02",
+   "C_S02E12",
+   "C_S02E13",
+   "C_S02E24",
+   "C_S03E03",
+   "C_S03E08",
+   "C_S03E09",
+   "C_S03E13",
+   "SH_S01E01",
+   "SH_S01E02",
+   "SH_S01E03",
+   "SH_S01E04",
+   "SH_S01E06"
+  ],
+  "n_seg_music_anchors": 41,
+  "n_line_music_anchors": 101
+ },
+ "Ftrack_worst_spread": {
+  "fil": "SH_S01E06",
+  "spread": 4.57,
+  "aarsag": "small.en-mistiming (~-4.5 s blok, 17 anchors enige); turbo samme klip: median -0.36. Ikke musik (ingen ♪-flag). Under eskaleringstraeskel 5.0."
+ },
+ "daekning_eksempler": {
+  "C_S02E01": "24%",
+  "C_S03E03": "23%",
+  "SH_S01E01": "9%",
+  "SH_S01E06": "9%"
+ }
+}
