@@ -368,6 +368,30 @@ def _download_local_whisper_model(model_path: Path) -> bool:
     return True
 
 
+def load_whisper_json(path: Path) -> dict:
+    """whisper.cpp's -oj output as a dict, tolerating invalid UTF-8.
+
+    whisper.cpp writes a truncated multibyte sequence now and then -- reproduced with
+    base.en-greedy inside a hallucinated song lyric, identically on every run. That raises
+    UnicodeDecodeError, which is neither OSError nor JSONDecodeError, so it used to escape
+    the caller's handler and fail the whole check over one character. Replacing the bad byte
+    costs one mangled character in one segment's text; failing costs the transcription."""
+    try:
+        raw = path.read_bytes()
+    except OSError as e:
+        raise RuntimeError(f"local Whisper produced unreadable output: {e}") from e
+    try:
+        text = raw.decode("utf-8")
+    except UnicodeDecodeError:
+        text = raw.decode("utf-8", errors="replace")
+        log.warning("local Whisper wrote invalid UTF-8 in %s — decoded with replacement "
+                    "characters; that segment's text may be slightly mangled", path.name)
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError as e:
+        raise RuntimeError(f"local Whisper produced unparseable output: {e}") from e
+
+
 def _run_local_whisper(cfg: Config, audio_path: Path, language: Optional[str],
                         cancel_event=None, timeout: Optional[float] = None) -> dict:
     """Runs the local whisper.cpp build instead of a cloud STT call (Settings -> Correctness ->
@@ -411,10 +435,7 @@ def _run_local_whisper(cfg: Config, audio_path: Path, language: Optional[str],
         out_path = out_stem.with_suffix(".json")
         if not out_path.exists():
             raise RuntimeError(f"local Whisper produced no output file: {stderr[-300:]}")
-        try:
-            data = json.loads(out_path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError) as e:
-            raise RuntimeError(f"local Whisper produced unparseable output: {e}") from e
+        data = load_whisper_json(out_path)
     return _parse_local_whisper_json(data)
 
 

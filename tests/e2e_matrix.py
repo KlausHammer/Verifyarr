@@ -18,9 +18,9 @@ Scenarios (6 + 1 opt-in extra):
   piecewise  6 blocks, each seeded random +/-5..15s.
   swap       in-cue L1/L2 line reversal -- see corrupt_swap docstring.
   gap        5-minute middle chunk deleted (cut version).
-  drift_swap COMBINED drift (2%) + swap. Opt-in extra, kept out of the
-             default set: realistic (a frame-rate-converted file can carry
-             both), and worth knowing whether the two fixes interfere.
+  drift_swap COMBINED drift (2%) + swap -- a frame-rate-converted file can
+             carry both, and the drift fix and the line-order fix must not
+             interfere with each other.
 
 Model axis: "turbo" is tests/fixtures/whisper_full/<slug>.json
 (large-v3-turbo, the baseline); the rest is
@@ -108,7 +108,8 @@ def scores_recovery(slug, scenario):
     return (scenario in TIMING_SCENARIOS or scenario == "clean") \
         and slug not in DRIFT_CASE_SLUGS
 TIMING_SCENARIOS = {"uniform", "drift", "piecewise", "gap", "drift_swap"}
-DEFAULT_SCENARIOS = ["clean", "uniform", "drift", "piecewise", "swap", "gap"]
+DEFAULT_SCENARIOS = ["clean", "uniform", "drift", "piecewise", "swap", "gap",
+                     "drift_swap"]
 MODES = ["full", "sampled"]
 AUDIOS = ["on", "off"]
 
@@ -159,7 +160,18 @@ def audio_evidence(model, slug, fx):
     path = SWEEP / model / f"{slug}.json"
     if not path.exists():
         return None
-    doc = json.loads(path.read_text(encoding="utf-8"))
+    # errors="replace": whisper.cpp writes a truncated multibyte sequence now and
+    # then, reproducibly (base.en-greedy-cpu/SH_S01E05 -- 2 bytes inside a hallucinated
+    # song lyric). Losing 24 matrix rows over that is worse than one mangled character
+    # in one segment's text.
+    raw = path.read_bytes()
+    try:
+        text = raw.decode("utf-8")
+    except UnicodeDecodeError:
+        text = raw.decode("utf-8", errors="replace")
+        print(f"  {model}/{slug}: invalid UTF-8 in sweep output, decoded with replacement",
+              flush=True)
+    doc = json.loads(text)
     return sweep_language(doc), sweep_segments(doc)
 
 

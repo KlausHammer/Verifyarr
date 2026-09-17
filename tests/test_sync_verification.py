@@ -595,5 +595,40 @@ class RealWorldFixTests(SyncVerificationCase):
         self.assertEqual(row["correctness_flag"], "SUSPECT", row["note"])
 
 
+class LocalWhisperJsonTests(unittest.TestCase):
+    """load_whisper_json against output that is not valid UTF-8.
+
+    Real and reproducible: base.en-greedy on SH_S01E05 writes a truncated multibyte
+    sequence inside a hallucinated song lyric, identically on every run.
+    """
+
+    def _write(self, payload: bytes) -> Path:
+        d = Path(tempfile.mkdtemp())
+        p = d / "clip.json"
+        p.write_bytes(payload)
+        return p
+
+    def test_invalid_utf8_recovers_instead_of_raising(self):
+        from verifyarr.correctness import load_whisper_json
+        payload = ('{"transcription": [{"text": " ♪ poo-poo-poo').encode("utf-8") \
+            + b"\x8f" + 'a ♪"}]}'.encode("utf-8")
+        with self.assertRaises(UnicodeDecodeError):   # the byte really is invalid
+            payload.decode("utf-8")
+        data = load_whisper_json(self._write(payload))
+        self.assertEqual(len(data["transcription"]), 1)
+        self.assertIn("�", data["transcription"][0]["text"])
+
+    def test_valid_utf8_is_unchanged(self):
+        from verifyarr.correctness import load_whisper_json
+        payload = '{"transcription": [{"text": " ♪ hej æøå ♪"}]}'.encode("utf-8")
+        data = load_whisper_json(self._write(payload))
+        self.assertEqual(data["transcription"][0]["text"], " ♪ hej æøå ♪")
+
+    def test_malformed_json_still_raises(self):
+        from verifyarr.correctness import load_whisper_json
+        with self.assertRaises(RuntimeError):
+            load_whisper_json(self._write(b'{"transcription": ['))
+
+
 if __name__ == "__main__":
     unittest.main()
