@@ -228,6 +228,42 @@ ANCHOR_SUSPECT_THRESHOLD_S = 2.5
 # of anything, and alass's own single-offset fit stays the default on a tie.
 ANCHOR_PREFER_MARGIN_S = 1.0
 
+# Framerate (1001/1000) tilt detection. A 24fps subtitle on 23.976fps audio (or the
+# reverse) drifts 0.1% end to end -- ~1.3s over a 21-minute episode. The decision
+# quantity is the ACCUMULATED TILT in seconds (Theil-Sen slope times span), not the
+# slope: dividing by a varying span sprays variance into the estimate. Two
+# independent-ish estimators must agree (see pipeline._try_fps_rescale):
+#   * anchor tilt from pooled raw (audio, subtitle) anchor points over all clips --
+#     deliberately NOT clip medians: 52-57% of 15s clips fall below ANCHOR_MIN_COUNT
+#     and would be dropped.
+#   * VAD tilt: same estimator over (cue start, nearest speech-onset delta) points.
+# Calibrated with production sampling (dialogue-dense 16x15s clips, +-30s windows):
+# real tilts -1.40/-1.40/-1.20/+0.97s, healthy anchor max +0.72s, healthy VAD range
+# -0.55..+0.32s (sparse clip-cache onsets, the runtime source). The 0.50 anchor
+# floor alone lets 2/31 healthy through; requiring
+# VAD confirmation (same sign, >= 0.30s) vetoes both while keeping 3/4 real
+# (C_S02E11, the one opposite-direction file, is VAD's blind spot).
+FPS_RATIOS = ((1000 / 1001, "24 -> 23.976"), (1001 / 1000, "23.976 -> 24"))
+# Raised from 0.50 after the matrix caught the one false positive 0.50 let through: SH_S01E06,
+# a healthy file, tilted 0.52s under the `gap` scenario (which deletes 300s from the middle and
+# skews the anchor geometry) and its rescale halved that file's recovery (1.000 -> 0.441). The
+# four genuinely framerate-shifted episodes sit at 0.97-1.54, so 0.90 rejects the false one with
+# 0.38s to spare and keeps every real one. Validating only against untouched subtitles is what
+# hid this -- the detector has to clear the OTHER corruption scenarios too.
+FPS_ANCHOR_TILT_MIN_S = 0.90
+FPS_BINNED_TILT_MIN_S = 0.90
+FPS_LOO_TILT_MIN_S = 0.70
+FPS_VAD_TILT_MIN_S = 0.30
+FPS_MIN_ANCHORS = 20
+FPS_ANCHOR_TRIM_S = 8.0
+FPS_MAX_BASE_SPREAD_S = 1.0
+FPS_BINS = 16
+FPS_MIN_VOTES = 8
+FPS_LOO_PARTS = 8
+FPS_VAD_MAXGAP_S = 2.0
+FPS_VAD_TRIM_S = 1.5
+FPS_VAD_MIN_POINTS = 40
+
 
 def anchors_applicable(sub_lang: Optional[str], audio_lang: Optional[str]) -> bool:
     """Anchor matching is plain token overlap between what Whisper heard and what the subtitle
@@ -327,14 +363,192 @@ def _robust_clip_shift(anchors: list[dict]) -> Optional[dict]:
     return {"shift": round(median, 2), "mad": round(mad, 2), "anchor_count": len(shifts)}
 
 
+def clip_anchors(segments: list[dict], clip_start_sec: float, subs,
+                 window_start_sec: float, window_end_sec: float,
+                 ) -> tuple[Optional[dict], list[tuple[float, float]]]:
+    """One matching pass, two products: the clip's confident shift estimate (or None)
+    plus the RAW (audio_time, subtitle_time) anchor points behind it. The raw points
+    feed pooled whole-file fits (framerate tilt) that must see every clip, including
+    the 52-57% of 15s clips whose anchors never reach ANCHOR_MIN_COUNT."""
+    if not segments:
+        return None, []
+    matched = _match_segments_to_lines(segments, clip_start_sec, subs,
+                                       window_start_sec, window_end_sec)
+    points = [(a["segment_start_abs"], a["matched_line_start_sec"]) for a in matched]
+    return _robust_clip_shift(matched), points
+
+
 def clip_anchor_shift(segments: list[dict], clip_start_sec: float, subs,
                       window_start_sec: float, window_end_sec: float) -> Optional[dict]:
     """_match_segments_to_lines + _robust_clip_shift in one call -- the shape every caller
     actually wants (a clip's confident shift estimate, or None). See both for the details."""
-    if not segments:
+    return clip_anchors(segments, clip_start_sec, subs,
+                        window_start_sec, window_end_sec)[0]
+
+
+def _spread(values) -> float:
+    """Median absolute deviation -- the agreement measure behind every anchor gate."""
+    vals = list(values)
+    med = statistics.median(vals)
+    return statistics.median(abs(v - med) for v in vals)
+
+
+def _theil_tilt(pts) -> Optional[float]:
+    """Theil-Sen median pairwise slope times the x span. Pure fit, no trimming --
+    the caller trims. None when no slope exists. Deterministic (sorted slopes)."""
+    pts = sorted((float(x), float(y)) for x, y in pts)
+    if len(pts) < 3:
         return None
-    return _robust_clip_shift(_match_segments_to_lines(segments, clip_start_sec, subs,
-                                                       window_start_sec, window_end_sec))
+    slopes = sorted((y2 - y1) / (x2 - x1)
+                    for i, (x1, y1) in enumerate(pts)
+                    for x2, y2 in pts[i + 1:] if x2 != x1)
+    if not slopes:
+        return None
+    return statistics.median(slopes) * (pts[-1][0] - pts[0][0])
+
+
+def tilt_from_points(points, trim_s: float, min_points: int, stride: int = 1):
+    """Accumulated tilt in seconds over (x, y) points: Theil-Sen median pairwise slope
+    times the x span, after trimming |y - median(y)| to trim_s. Returns None when fewer
+    than min_points survive to the fit (or no slope exists). Deterministic: slopes are
+    sorted before taking the median. Stride thins dense point sets (VAD) to keep the
+    O(n^2) pairs tractable; anchor pools are small enough to use whole."""
+    pts = sorted((float(x), float(y)) for x, y in points)
+    if len(pts) < min_points:
+        return None
+    med = statistics.median(y for _, y in pts)
+    pts = [(x, y) for x, y in pts if abs(y - med) <= trim_s]
+    return _theil_tilt(pts[::stride or 1])
+
+
+def anchor_drift_signature(points, trim_s: float = FPS_ANCHOR_TRIM_S,
+                           min_points: int = FPS_MIN_ANCHORS,
+                           nbins: int = FPS_BINS, min_votes: int = FPS_MIN_VOTES,
+                           loo_parts: int = FPS_LOO_PARTS) -> Optional[dict]:
+    """The three anchor statistics behind the framerate decision, measured on ONE
+    trimmed pool (None when fewer than min_points survive the trim). Returns
+    {"tilt", "binned", "drops", "n"}:
+
+    * tilt: Theil-Sen slope times span over all points (magnitude).
+    * binned: the same fit over per-region median votes (one vote per 1/16 of the
+      span -- a bad clip holding 30% of the points is only 1-2 votes here).
+    * drops: the tilt with each 1/8 x-range part left out (redundancy: a global
+      drift survives dropping any eighth; a tilt hinged on one region collapses).
+
+    Why three: sampled anchor pools are noisy (matching jitter plus 1-2 bad clips
+    per file), and EVERY single statistic misfires on some healthy file -- plain
+    tilt on C_S02E13 (+0.87, concentrated bad early clip), binned on C_S03E12
+    (+0.86, noisy 2-point bin medians), thirds/inliers/Spearman all overlap too.
+    The AND of the three separates 39/39 measured pools (4 drifting files in both
+    modes pass; all 31 others veto somewhere). VAD confirmation still applies on
+    top (see vad_tilt_from_intervals); sampled evidence only ever TRIGGERS a
+    full-transcript confirmation, it never fixes (see pipeline._try_fps_rescale).
+    """
+    pts = sorted((float(x), float(y)) for x, y in points)
+    if len(pts) < min_points:
+        return None
+    med = statistics.median(y for _, y in pts)
+    pts = [(x, y) for x, y in pts if abs(y - med) <= trim_s]
+    if len(pts) < min_points:
+        return None
+    tilt = _theil_tilt(pts)
+    lo, hi = pts[0][0], pts[-1][0]
+    span = hi - lo
+    binned = None
+    if span > 0:
+        bins: list[list[float]] = [[] for _ in range(nbins)]
+        for x, y in pts:
+            bins[min(nbins - 1, int((x - lo) / span * nbins))].append(y)
+        votes = [(lo + (i + 0.5) / nbins * span, statistics.median(b))
+                 for i, b in enumerate(bins) if b]
+        if len(votes) >= min_votes:
+            binned = _theil_tilt(votes)
+    drops: list[Optional[float]] = []
+    if span > 0:
+        w = span / loo_parts
+        for j in range(loo_parts):
+            rest = [(x, y) for x, y in pts
+                    if not (lo + j * w <= x < lo + (j + 1) * w
+                            or (j == loo_parts - 1 and x == hi))]
+            drops.append(_theil_tilt(rest) if len(rest) >= min_points else None)
+    else:
+        drops = [None] * loo_parts
+    return {"tilt": tilt, "binned": binned, "drops": drops, "n": len(pts)}
+
+
+def vad_tilt_from_intervals(subs, intervals):
+    """Framerate tilt from speech-onset alignment: for every cue start, the nearest
+    speech onset within FPS_VAD_MAXGAP_S, trimmed and Theil-Sen fitted like anchors.
+    Returns (tilt_or_None, n_points_after_trim). Pure function of its inputs -- the
+    caller (pipeline) supplies whatever timeline is available (clip cache, full
+    transcript cache, or a Silero run; see vad.timeline_for_video).
+
+    The matching runs iteratively (up to 3 median-prefetch rounds): plain
+    nearest-onset matching is fragile under global cue shifts -- measured: alass's
+    own perfect rescale of an injected ramp left a constant +0.14s residual, and
+    that alone flipped this estimator +0.01s -> +0.84s on sparse clip-cache onsets
+    (cues near onset midpoints rematch across the gap in bursts). The prefetch
+    absorbs the global shift before the tilt fit sees it; on real drift it
+    converges toward the mid-file offset instead, which IMPROVES the matching
+    (large drift otherwise mismatches cues onto neighbors' onsets -- dense VAD on
+    C_S03E04 goes from a washed-out +0.04 to -0.71). The remaining sparse-mode
+    fragility is why this estimator only ever CONFIRMS on full-transcript
+    evidence behind the anchor gates (see pipeline._try_fps_rescale), never
+    decides on its own.
+    """
+    onsets = sorted(a for a, _ in (intervals or []))
+    if not onsets:
+        return None, 0
+    starts = [e.start / 1000.0 for e in subs.events]
+
+    def match(offset):
+        pts = []
+        for t in starts:
+            i = bisect.bisect_left(onsets, t + offset)
+            best = None
+            for j in (i - 1, i):
+                if 0 <= j < len(onsets):
+                    d = onsets[j] - t
+                    if abs(d - offset) <= FPS_VAD_MAXGAP_S and (
+                            best is None or abs(d - offset) < abs(best - offset)):
+                        best = d
+            if best is not None:
+                pts.append((t, best))
+        return pts
+
+    pts = match(0.0)
+    if len(pts) < FPS_VAD_MIN_POINTS:
+        return None, len(pts)
+    offset = 0.0
+    for _ in range(3):
+        med = statistics.median(y for _, y in pts)
+        if abs(med - offset) < 0.05:
+            break
+        offset = med
+        pts = match(offset)
+        if len(pts) < FPS_VAD_MIN_POINTS:
+            return None, len(pts)
+    med = statistics.median(y for _, y in pts)
+    kept = [(x, y) for x, y in pts if abs(y - med) <= FPS_VAD_TRIM_S]
+    if len(kept) < FPS_VAD_MIN_POINTS:
+        return None, len(kept)
+    return tilt_from_points(kept, FPS_VAD_TRIM_S, FPS_VAD_MIN_POINTS, stride=3), len(kept)
+
+
+def apply_fps_rescale(subs, ratio: float) -> float:
+    """Retimes every cue in place as new_t = ratio * t (c = 0: the pivot is the file
+    start, which is where a framerate mismatch pivots). c = 0 restores the original
+    timing -- and therefore the original cue lead -- exactly; a median-preserving
+    offset instead bakes the ramp's own median (0.001 * t_median, +0.63s on 21 min)
+    in as a permanent global shift (measured on synthetic round-trips). Returns the
+    largest absolute cue change in seconds. Clamps at zero like apply_anchor_resync."""
+    worst = 0.0
+    for e in subs.events:
+        new_start = max(0, int(round(e.start * ratio)))
+        new_end = max(new_start, int(round(e.end * ratio)))
+        worst = max(worst, abs(new_start - e.start) / 1000.0, abs(new_end - e.end) / 1000.0)
+        e.start, e.end = new_start, new_end
+    return worst
 
 
 def summarize_anchor_samples(samples: list[dict]) -> Optional[dict]:

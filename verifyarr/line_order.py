@@ -55,7 +55,7 @@ from verifyarr.correctness import (JobCancelled, _aggregate_correctness, _compar
 from verifyarr.settings import Config
 from verifyarr.subtitles import (
     pick_dialogue_dense_time, subs_fingerprint, subs_text_in_window, tokenize,
-    clip_anchor_shift, anchors_applicable,
+    clip_anchor_shift, clip_anchors, anchors_applicable,
 )
 
 # Padding either side of a candidate's own [start, end] for AUDIO EXTRACTION only (not for
@@ -452,6 +452,10 @@ def collect_samples(video_path: Path, subs, sub_lang: Optional[str], cfg: Config
                 slots.append(("extra", p2, (range_start, range_end)))
 
     samples: list[dict] = []
+    # Raw (audio, subtitle) anchor points pooled over EVERY slot, confident or not --
+    # whole-file fits (framerate tilt) need the sub-ANCHOR_MIN_COUNT clips too, which
+    # contribute no confident "anchor" of their own. New key, ignored by old readers.
+    fps_points: list = []
     whisper_verdicts: dict[int, Optional[bool]] = {i: None for i, *_ in candidates}
     tested_items: list[tuple[int, str, str]] = []  # (index, l1, l2) actually sent to Whisper
 
@@ -482,7 +486,7 @@ def collect_samples(video_path: Path, subs, sub_lang: Optional[str], cfg: Config
                 mid = (bounds[0] + bounds[1]) / 2 if bounds else 0.0
                 samples.append({"start": round(mid, 1),
                                 "error": f"VAD silence-skip (<{cfg.vad_min_speech_seconds:g}s speech in window)",
-                                "anchor": None})
+                                "anchor": None, "anchor_points": []})
                 continue
             start, clip_duration = slot, cfg.clip_seconds
             # Filler/extra slots (not heuristic -- see collect_samples' docstring) share the SAME
@@ -512,7 +516,8 @@ def collect_samples(video_path: Path, subs, sub_lang: Optional[str], cfg: Config
             correctness.whisper_cost.fresh_s += clip_duration
             result = _run_clip(start, clip_duration)
             if result is None:
-                samples.append({"start": round(start, 1), "error": "audio extraction/transcription failed"})
+                samples.append({"start": round(start, 1), "error": "audio extraction/transcription failed",
+                                "anchor_points": []})
                 continue
             if cfg.require_audio_lang and audio_lang and audio_lang != cfg.require_audio_lang:
                 return {"skipped": True, "reason": f"speech is '{audio_lang}', not '{cfg.require_audio_lang}' — skipped"}
@@ -546,19 +551,27 @@ def collect_samples(video_path: Path, subs, sub_lang: Optional[str], cfg: Config
         # decision (Config.anchor_check_enabled, pipeline._resolve_ambiguous_sync). Never for a
         # subtitle in another language than the audio -- see subtitles.anchors_applicable.
         anchor_info: Optional[dict] = None
+        anchor_pts: list = []
         if segments and anchors_applicable(sub_lang, lang):
-            anchor_info = clip_anchor_shift(segments, start, subs, anchor_window[0], anchor_window[1])
+            anchor_info, anchor_pts = clip_anchors(segments, start, subs,
+                                                   anchor_window[0], anchor_window[1])
+            fps_points.extend(anchor_pts)
 
         compare = _compare_transcript_to_window(cfg, transcript_text, window_text, sub_lang, lang,
                                                   cancel_event=cancel_event)
         if "error" in compare:
-            samples.append({"start": round(start, 1), "error": compare["error"], "anchor": anchor_info})
+            samples.append({"start": round(start, 1), "error": compare["error"], "anchor": anchor_info,
+                            "anchor_points": anchor_pts})
         else:
-            samples.append({"start": round(start, 1), "anchor": anchor_info, **compare})
+            samples.append({"start": round(start, 1), "anchor": anchor_info, "anchor_points": anchor_pts,
+                            **compare})
 
     return {"skipped": False, "samples": samples, "audio_lang": audio_lang,
             "whisper_verdicts": whisper_verdicts, "tested_items": tested_items, "candidates": candidates,
-            "heuristic_indices": [i for i, *_ in candidates]}
+            "heuristic_indices": [i for i, *_ in candidates], "fps_points": fps_points,
+            # Provenance for the framerate decision (pipeline._try_fps_rescale): sparse
+            # clip evidence can only TRIGGER a full-transcript confirmation, never fix.
+            "full_coverage": False}
 
 
 # sync.whisper_mode == "full" samples FULL_MODE_SAMPLE_MULTIPLIER times sample_count's usual
@@ -650,6 +663,7 @@ def collect_samples_full(video_path: Path, subs, sub_lang: Optional[str], cfg: C
     n = max(1, cfg.sample_count) * FULL_MODE_SAMPLE_MULTIPLIER
     regions = [(duration * i / n, duration * (i + 1) / n) for i in range(n)]
     samples: list[dict] = []
+    fps_points: list = []  # pooled raw anchor points, every window (see collect_samples)
 
     for region_start, region_end in regions:
         clip_start = pick_dialogue_dense_time(subs, region_start, region_end, cfg.clip_seconds)
@@ -661,14 +675,19 @@ def collect_samples_full(video_path: Path, subs, sub_lang: Optional[str], cfg: C
         if not clip_segs:
             continue  # nothing said in this stretch -- not worth a sample
         transcript_text = " ".join(s.get("text", "") for s in clip_segs)
-        anchor_info = (clip_anchor_shift(clip_segs, 0.0, subs, match_lo, match_hi)
-                       if anchors_applicable(sub_lang, lang) else None)
+        anchor_info: Optional[dict] = None
+        anchor_pts: list = []
+        if clip_segs and anchors_applicable(sub_lang, lang):
+            anchor_info, anchor_pts = clip_anchors(clip_segs, 0.0, subs, match_lo, match_hi)
+            fps_points.extend(anchor_pts)
         compare = _compare_transcript_to_window(cfg, transcript_text, window_text, sub_lang, lang,
                                                   cancel_event=cancel_event)
         if "error" in compare:
-            samples.append({"start": round(clip_start, 1), "error": compare["error"], "anchor": anchor_info})
+            samples.append({"start": round(clip_start, 1), "error": compare["error"], "anchor": anchor_info,
+                            "anchor_points": anchor_pts})
         else:
-            samples.append({"start": round(clip_start, 1), "anchor": anchor_info, **compare})
+            samples.append({"start": round(clip_start, 1), "anchor": anchor_info, "anchor_points": anchor_pts,
+                            **compare})
 
     if anchors_applicable(sub_lang, lang):
         covered = {round(s["start"]) for s in samples}
@@ -676,16 +695,20 @@ def collect_samples_full(video_path: Path, subs, sub_lang: Optional[str], cfg: C
         while t < duration:
             if not any(abs(t - c) < FULL_MODE_ANCHOR_INTERVAL_S / 2 for c in covered):
                 clip_segs = [s for s in segments if t <= s["start"] < t + cfg.clip_seconds]
-                anchor_info = (clip_anchor_shift(clip_segs, 0.0, subs, t - window_before, t + window_after)
-                               if clip_segs else None)
+                anchor_info, anchor_pts = ((clip_anchors(clip_segs, 0.0, subs,
+                                                          t - window_before, t + window_after))
+                                           if clip_segs else (None, []))
+                fps_points.extend(anchor_pts)
                 if anchor_info:
-                    samples.append({"start": round(t, 1), "anchor": anchor_info})
+                    samples.append({"start": round(t, 1), "anchor": anchor_info,
+                                    "anchor_points": anchor_pts})
                     covered.add(round(t))
             t += FULL_MODE_ANCHOR_INTERVAL_S
 
     return {"skipped": False, "samples": samples, "audio_lang": audio_lang,
             "whisper_verdicts": whisper_verdicts, "tested_items": tested_items, "candidates": candidates,
-            "heuristic_indices": heuristic_indices}
+            "heuristic_indices": heuristic_indices, "fps_points": fps_points,
+            "full_coverage": True}
 
 
 def finalize_line_order(collected: dict, cfg: Config, cancel_event=None, compute_swap_severity: bool = True) -> dict:
@@ -745,7 +768,8 @@ def finalize_line_order(collected: dict, cfg: Config, cancel_event=None, compute
 
     return {"skipped": False, "avg_score": avg, "samples": samples, "flag": flag,
             "audio_lang": collected["audio_lang"], "swap_severity": swap_severity,
-            "swap_rate": swap_rate,
+            "swap_rate": swap_rate, "fps_points": collected.get("fps_points", []),
+            "full_coverage": collected.get("full_coverage", False),
             "line_issues": line_issues, "line_flagged": line_flagged}
 
 

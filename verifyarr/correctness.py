@@ -20,7 +20,7 @@ from verifyarr.procprio import wrap_low_priority
 from verifyarr.settings import Config, VOCABULARY_HINT_MAX_CHARS
 from verifyarr.subtitles import (
     pick_dialogue_dense_time, subs_text_in_window, tokenize, is_nonspeech_annotation,
-    clip_anchor_shift, anchors_applicable, ANCHOR_SUSPECT_THRESHOLD_S,
+    clip_anchor_shift, clip_anchors, anchors_applicable, ANCHOR_SUSPECT_THRESHOLD_S,
 )
 
 LANG_CODE_RE = re.compile(r"^[a-z]{2,3}$")
@@ -707,11 +707,13 @@ def evaluate_against_cached_transcripts(conn, video_path: Path, subs: "pysubs2.S
         # against a too-short window would score every candidate low for no reason.
         window_after = (r.get("clip_seconds") or cfg.clip_seconds) + cfg.window_minutes * 60
         anchor = None
+        anchor_pts: list = []
         if use_anchors and r.get("segments"):
             # defensive: rows saved before the nonspeech-annotation filter may still carry them
             clean = [s for s in r["segments"] if not is_nonspeech_annotation(s.get("text", ""))]
-            anchor = clip_anchor_shift(clean, start, subs, start - window_before, start + window_after)
-        sample = {"start": start, "anchor": anchor}
+            anchor, anchor_pts = clip_anchors(clean, start, subs, start - window_before,
+                                              start + window_after)
+        sample = {"start": start, "anchor": anchor, "anchor_points": anchor_pts}
         if score:
             window_text = subs_text_in_window(subs, start, window_before, window_after)
             compare = _compare_transcript_to_window(cfg, r["transcript"], window_text, sub_lang,
@@ -814,9 +816,9 @@ def evaluate_against_full_transcript(conn, video_path: Path, subs: "pysubs2.SSAF
     while t < duration:
         clip_segs = [s for s in segments if t <= s["start"] < t + cfg.clip_seconds]
         if clip_segs:
-            anchor = clip_anchor_shift(clip_segs, 0.0, subs, t - window_before, t + window_after) \
-                if use_anchors else None
-            sample = {"start": round(t, 1), "anchor": anchor}
+            anchor, anchor_pts = (clip_anchors(clip_segs, 0.0, subs, t - window_before, t + window_after)
+                                  if use_anchors else (None, []))
+            sample = {"start": round(t, 1), "anchor": anchor, "anchor_points": anchor_pts}
             if score:
                 window_text = subs_text_in_window(subs, t, window_before, window_after)
                 transcript = " ".join(s.get("text", "") for s in clip_segs)
@@ -955,15 +957,18 @@ def correctness_check(video_path: Path, subs: "pysubs2.SSAFile", sub_lang: Optio
         window_after = cfg.clip_seconds + cfg.window_minutes * 60
         window_text = subs_text_in_window(subs, start, window_before, window_after)
         anchor = None
+        anchor_pts: list = []
         if item.get("segments") and anchors_applicable(sub_lang, transcript_lang):
-            anchor = clip_anchor_shift(item["segments"], item["clip_start"], subs,
-                                       item["clip_start"] - window_before, item["clip_start"] + window_after)
+            anchor, anchor_pts = clip_anchors(item["segments"], item["clip_start"], subs,
+                                              item["clip_start"] - window_before,
+                                              item["clip_start"] + window_after)
         compare = _compare_transcript_to_window(cfg, transcript, window_text, sub_lang, transcript_lang,
                                                   cancel_event=cancel_event)
         if "error" in compare:
-            samples.append({"start": start, "error": compare["error"], "anchor": anchor})
+            samples.append({"start": start, "error": compare["error"], "anchor": anchor,
+                            "anchor_points": anchor_pts})
             continue
-        samples.append({"start": start, "anchor": anchor, **compare})
+        samples.append({"start": start, "anchor": anchor, "anchor_points": anchor_pts, **compare})
 
     avg, flag = _aggregate_correctness(samples, cfg)
     return {"skipped": False, "avg_score": avg, "samples": samples, "flag": flag, "audio_lang": audio_lang}

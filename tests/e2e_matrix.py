@@ -108,7 +108,12 @@ def scores_recovery(slug, scenario):
     """Timing recovery is meaningless on drift-case episodes (own timings off)."""
     return (scenario in TIMING_SCENARIOS or scenario == "clean") \
         and slug not in DRIFT_CASE_SLUGS
-TIMING_SCENARIOS = {"uniform", "drift", "piecewise", "gap", "drift_swap"}
+TIMING_SCENARIOS = {"uniform", "drift", "piecewise", "gap", "drift_swap",
+                    "fps_late", "fps_early"}
+# fps_late/fps_early are deliberately NOT in the default set: alass' own framerate guessing
+# already fixes an injected clean rescale (measured: recovery 1.000, a constant 0.273s residual),
+# so they test alass, not this code. Kept as an opt-in guard that alass keeps doing it --
+# --scenarios fps_late,fps_early.
 DEFAULT_SCENARIOS = ["clean", "uniform", "drift", "piecewise", "swap", "gap",
                      "drift_swap"]
 MODES = ["full", "sampled"]
@@ -384,6 +389,31 @@ def corrupt_drift(subs, rng, rate=0.02):
     return out, None, {"rate": rate}
 
 
+# 24 fps subtitle on a 23.976 fps video (or the reverse). Exactly 1001/1000 = +0.1%,
+# i.e. 0.06 s/min -- 20x smaller than corrupt_drift, and the size actually measured on the
+# real corpus: all four "drifting" episodes are this, in both directions (rapport 9.1).
+NTSC_RATIO = 1001 / 1000.0
+
+
+def _rescale(subs, ratio):
+    out = copy.deepcopy(subs)
+    for e in out.events:
+        e.start = int(round(e.start * ratio))
+        e.end = int(round(e.end * ratio))
+    return out, None, {"ratio": round(ratio, 6)}
+
+
+def corrupt_fps_late(subs, rng):
+    """Subtitle progressively later: t -> t*1001/1000."""
+    return _rescale(subs, NTSC_RATIO)
+
+
+def corrupt_fps_early(subs, rng):
+    """Subtitle progressively earlier: t -> t*1000/1001. The other direction is real too
+    (C_S02E11), and a corrector that only handles one of them is half a corrector."""
+    return _rescale(subs, 1 / NTSC_RATIO)
+
+
 def corrupt_gap(subs, rng, gap_seconds=300.0):
     """Delete a contiguous middle chunk (cut version). Returns kept indices."""
     out = copy.deepcopy(subs)
@@ -536,7 +566,8 @@ def dedupe_rows(rows):
 
 SCENARIOS = {"clean": corrupt_clean, "uniform": corrupt_uniform, "drift": corrupt_drift,
              "piecewise": corrupt_piecewise, "swap": corrupt_swap, "gap": corrupt_gap,
-             "drift_swap": corrupt_drift_swap}
+             "drift_swap": corrupt_drift_swap,
+             "fps_late": corrupt_fps_late, "fps_early": corrupt_fps_early}
 
 
 def rows_done(path):
@@ -613,6 +644,8 @@ def main(argv=None):
         esc_over["sample_count"] = int(argv[argv.index("--sample-count") + 1])
     if "--clip-seconds" in argv:
         esc_over["clip_seconds"] = int(argv[argv.index("--clip-seconds") + 1])
+    if "--fps-sampled-fix" in argv:
+        esc_over["fps_require_full_coverage"] = False
     suffix = f"_{shard}" if shard else ""
     work = OUT_DIR / f"e2e_work_matrix{suffix}"
     work.mkdir(exist_ok=True)

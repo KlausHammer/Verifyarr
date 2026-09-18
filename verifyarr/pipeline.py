@@ -15,11 +15,17 @@ from pathlib import Path
 from typing import Optional
 
 from verifyarr import log
+from verifyarr import vad as vad_timeline
 from verifyarr.settings import Config
 from verifyarr.subtitles import (
     load_subs, max_shift_stats, summarize_anchor_samples, ANCHOR_PREFER_MARGIN_S,
     ANCHOR_SUSPECT_THRESHOLD_S, plan_anchor_resync, apply_anchor_resync,
     anchor_spread, ANCHOR_SCREEN_SPREAD_S, anchor_points,
+    tilt_from_points, vad_tilt_from_intervals, apply_fps_rescale, _spread,
+    anchor_drift_signature,
+    FPS_RATIOS, FPS_ANCHOR_TILT_MIN_S, FPS_BINNED_TILT_MIN_S, FPS_LOO_TILT_MIN_S,
+    FPS_VAD_TILT_MIN_S, FPS_MIN_ANCHORS,
+    FPS_MAX_BASE_SPREAD_S, FPS_ANCHOR_TRIM_S,
 )
 from verifyarr.sync_engine import (
     resolve_alass_bin, resolve_alass_reference, run_alass, parse_alass_shift_blocks,
@@ -853,6 +859,144 @@ def _resync_verified(plan, after, cfg: Config, subtitle_path: Path) -> Optional[
 
 
 
+def _fps_points(result: dict) -> list:
+    """Raw (audio, subtitle) anchor points pooled over every collected clip, confident
+    or not -- the evidence pool for the framerate tilt fit. Prefers the pooled
+    collected["fps_points"] (complete by construction); falls back to per-sample
+    anchor_points for results that predate the pool (ambiguous-winner synthetics
+    built from evaluate_* samples, legacy cache rows)."""
+    pts = list(result.get("fps_points") or [])
+    if not pts:
+        for s in result.get("samples") or []:
+            pts.extend(s.get("anchor_points") or [])
+    return [(float(a), float(b)) for a, b in pts]
+
+
+def _anchor_signature_passes(sig: Optional[dict]) -> Optional[float]:
+    """The anchor side of the framerate decision: plain tilt, binned tilt and every
+    leave-one-eighth-out tilt clear their floors with the SAME sign (see
+    subtitles.anchor_drift_signature for why all three). Returns the signed plain
+    tilt on pass, None on veto. Pure policy over a measurement -- shared by the
+    sampled trigger (_fps_says_needs_full) and the fix below."""
+    if sig is None:
+        return None
+    tilt, binned, drops = sig["tilt"], sig["binned"], sig["drops"]
+    if tilt is None or binned is None or any(d is None for d in drops):
+        return None
+    if abs(tilt) < FPS_ANCHOR_TILT_MIN_S or abs(binned) < FPS_BINNED_TILT_MIN_S:
+        return None
+    if any((d > 0) != (tilt > 0) or abs(d) < FPS_LOO_TILT_MIN_S for d in drops):
+        return None
+    if (binned > 0) != (tilt > 0):
+        return None
+    return tilt
+
+
+def _try_fps_rescale(conn: sqlite3.Connection, video_path: Path, subtitle_path: Path,
+                     lang: Optional[str], cfg: Config, media_root: Path,
+                     current_subs, result: dict):
+    """Fixes a 24fps-subtitle-on-23.976fps-audio mismatch (or the reverse) by the
+    discrete 1001/1000 ratio -- but only on full-transcript evidence, and only when
+    two estimators agree there is one:
+
+    * anchors: plain, binned and leave-one-eighth-out tilt all clear their floors
+      (0.50/0.50/0.40s) with the same sign (_anchor_signature_passes)
+    * VAD tilt: Theil-Sen over (cue start, nearest speech-onset delta), |tilt| >=
+      0.30s with the SAME SIGN as the anchor tilt
+
+    Measured through the built pipeline on 35 files (OUT transcripts, production
+    sampling): 4/4 real drifting files fixed on full-transcript evidence (sampled
+    runs escalate to it via the trigger below), 0/31 others touched.
+    Sampled (16-clip) evidence is deliberately NOT enough to fix on: its pools
+    are noisy (matching jitter plus 1-2 bad clips per file) and every single
+    tilt statistic misfires on some healthy file, so a sampled file that passes
+    the anchor gates only TRIGGERS a full-transcript confirmation
+    (_fps_says_needs_full) -- the fix below requires full_coverage provenance.
+    (An earlier revision fixed straight off sampled evidence and mangled a healthy
+    file alass had just repaired: a +0.14s rewrite flipped sparse VAD +0.01s to
+    +0.84s, double-fixing +1.4s onto it. The round-trip gate caught it.)
+
+    Gates fail closed: content must verify (flag ok), base anchor spread must be
+    sane (excludes wrong-episode/block files), at least 20 anchors, and the write
+    itself must clear min_change_seconds.
+
+    The rescale pivots at the file start (c = 0): that is where a framerate mismatch
+    pivots, so exact inversion restores the original timing -- cue lead included. A
+    median-preserving offset instead bakes the ramp's own median (0.001 * t_median,
+    +0.63s on 21 minutes) in as a permanent global shift.
+
+    Returns (fixed_subs, note_fragment, info) or None. Writes through _write_fix
+    like every other fix (backup first when enabled); the caller re-gathers evidence
+    on the corrected timing via _recheck_after_resync before the verdict chain runs.
+    """
+    if not cfg.fps_check_enabled or cfg.dry_run:
+        return None
+    if (result.get("flag") or "ok") != "ok":
+        return None  # never retime what content-matching didn't verify
+    if cfg.fps_require_full_coverage and not result.get("full_coverage"):
+        return None  # sparse clips trigger (below), they never fix
+    pts = _fps_points(result)
+    if len(pts) < FPS_MIN_ANCHORS:
+        return None
+    if _spread([a - s for a, s in pts]) > FPS_MAX_BASE_SPREAD_S:
+        return None
+    sig = anchor_drift_signature([(a, a - s) for a, s in pts])
+    atilt = _anchor_signature_passes(sig)
+    if atilt is None:
+        return None
+    intervals = vad_timeline.timeline_for_video(conn, video_path, cfg)
+    if not intervals:
+        return None
+    vtilt, nv = vad_tilt_from_intervals(current_subs, intervals)
+    if vtilt is None or abs(vtilt) < FPS_VAD_TILT_MIN_S:
+        return None
+    if (atilt > 0) != (vtilt > 0):
+        return None
+    ratio, name = FPS_RATIOS[1] if atilt > 0 else FPS_RATIOS[0]
+    import copy as _copy
+    fixed = _copy.deepcopy(current_subs)
+    worst = apply_fps_rescale(fixed, ratio)
+    if worst < cfg.min_change_seconds:
+        log.info("fps %s for %s discarded: largest change %.2fs under threshold",
+                 name, subtitle_path.name, worst)
+        return None
+    _write_fix(subtitle_path, cfg, media_root, fixed)
+    info = {"name": name, "ratio": ratio, "atilt": atilt, "vtilt": vtilt,
+            "n_anchors": len(pts), "n_vad": nv, "worst": worst}
+    note = (f" fps {name} (anchor tilt {atilt:+.2f}s over {len(pts)} anchors, "
+            f"VAD tilt {vtilt:+.2f}s over {nv} cues).")
+    return fixed, note, info
+
+
+def _fps_says_needs_full(collected: dict, cfg: Config) -> bool:
+    """Whether sampled anchor pools carry a framerate-drift signature worth buying
+    the full transcript to confirm. The same anchor gates as the fix
+    (_anchor_signature_passes), but no VAD (sparse clip-cache onsets are too
+    flippy to confirm with -- measured: a +0.14s rewrite flipped one file's
+    sparse VAD tilt +0.01s to +0.84s) and no content flag (finalize hasn't run
+    yet; the fix re-checks everything on full evidence anyway).
+
+    Separate from _screen_says_needs_full on purpose: the screen's switches
+    (escalate_sampled_to_full off by default, escalate_only_multi_block) govern
+    the anchor-RESYNC escalation, a different signal (local residuals) driving a
+    different repair (region planning). This trigger answers only to
+    fps_check_enabled, and only fires in sampled mode on non-full evidence --
+    measured trigger rate on 35 files: 4/4 drifting, 0/31 others (the four
+    confusing healthy files each fail one anchor gate: binned vetoes C_S02E13
+    and C_S03E16, leave-one-out vetoes C_S03E09 and C_S03E12)."""
+    if not cfg.fps_require_full_coverage:
+        return False  # sampled evidence is allowed to fix on its own; nothing to buy
+    if not cfg.fps_check_enabled or cfg.whisper_mode != "sampled":
+        return False
+    if collected.get("full_coverage") or collected.get("skipped"):
+        return False
+    pts = [(float(a), float(b)) for a, b in (collected.get("fps_points") or [])]
+    if len(pts) < FPS_MIN_ANCHORS:
+        return False
+    sig = anchor_drift_signature([(a, a - s) for a, s in pts])
+    return _anchor_signature_passes(sig) is not None
+
+
 def _screen_says_needs_full(collected: dict, cfg: Config, sync_blocks: Optional[int] = None) -> bool:
     """Whether a sampled run has seen enough to justify paying for the whole transcript.
 
@@ -1020,9 +1164,15 @@ def correctness_and_finish(video_path: Path, subtitle_path: Path, lang: Optional
             # candidate sync_pair held back); the real block count is in the deferred payload.
             deferred = row.get("_ambiguous_sync") or {}
             blocks = deferred.get("blocks_split_count") or row.get("sync_split_blocks")
-            if _screen_says_needs_full(collected, cfg, blocks):
+            screen_hit = _screen_says_needs_full(collected, cfg, blocks)
+            fps_hit = not screen_hit and _fps_says_needs_full(collected, cfg)
+            if screen_hit:
                 log.info("%s: sampled clips disagree about the timing -- re-checking against "
                          "a full transcript", subtitle_path.name)
+            elif fps_hit:
+                log.info("%s: pooled anchors show a global drift signature -- confirming "
+                         "against a full transcript", subtitle_path.name)
+            if screen_hit or fps_hit:
                 with tempfile.TemporaryDirectory() as td2:
                     full = collect_samples_full(video_path, current_subs, lang, cfg, Path(td2),
                                                  conn, cancel_event=cancel_event)
@@ -1078,6 +1228,40 @@ def correctness_and_finish(video_path: Path, subtitle_path: Path, lang: Optional
                 row["correctness_avg_score"] = round(result["avg_score"], 3) if result["avg_score"] is not None else None
                 row["correctness_audio_lang"] = result.get("audio_lang")
                 row["correctness_samples"] = result.get("samples")
+
+            # A 24fps subtitle on 23.976fps audio (or the reverse) drifts ~1s per 17
+            # minutes -- content-correct everywhere, so every branch below says "ok"
+            # while the file slowly walks out of sync. _try_fps_rescale catches it by
+            # the discrete ratio, but only when pooled anchors AND the VAD timeline
+            # agree on the tilt; like the anchor resync below, the evidence above was
+            # gathered against cue times this fix just changed, so re-gather before
+            # the verdict chain judges the corrected file.
+            fps_fix = _try_fps_rescale(conn, video_path, subtitle_path, lang, cfg,
+                                       media_root, current_subs, result)
+            if fps_fix is not None:
+                current_subs, fps_note, fps_info = fps_fix
+                row["fps_ratio"] = fps_info["name"]
+                row["sync_max_shift_s"] = round(fps_info["worst"], 2)
+                # Says the file was REWRITTEN. Without it a framerate fix leaves sync_status on
+                # "already in sync", and every "healthy files untouched" count -- the matrix's
+                # included -- reads a rewritten file as untouched.
+                row["sync_status"] = f"fixed (framerate {fps_info['name']}, up to {fps_info['worst']:.1f}s)"
+                row["note"] = (row["note"] + fps_note).strip()
+                pre_recheck_collected = collected
+                collected, result, swap_severity = _recheck_after_resync(
+                    video_path, current_subs, lang, cfg, conn, collected, result,
+                    cancel_event=cancel_event)
+                # Same staleness guard as the anchor-resync path: only cache under the
+                # corrected fingerprint when the recheck actually re-gathered evidence
+                # (on failure/skip it returns the SAME pre-fix object).
+                if collected is not pre_recheck_collected:
+                    row["line_order_cache_key"] = cache_key_for(current_subs, cfg)
+                    row["line_order_cache_json"] = json.dumps({
+                        "samples": collected["samples"], "audio_lang": collected["audio_lang"],
+                        "whisper_verdicts": collected["whisper_verdicts"],
+                        "tested_items": collected["tested_items"], "candidates": collected["candidates"],
+                        "heuristic_indices": collected.get("heuristic_indices"),
+                    })
 
             if result["flag"] == "SUSPECT":
                 row["correctness_flag"] = "SUSPECT"

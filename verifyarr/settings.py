@@ -230,6 +230,8 @@ class Config:
     escalate_min_bad_samples: int
     anchor_suspect_min_samples: int
     escalate_only_multi_block: bool
+    fps_check_enabled: bool
+    fps_require_full_coverage: bool
 
     # Line-order check (see line_order.py). Off by default, opt-in.
     line_order_enabled: bool
@@ -399,6 +401,8 @@ class Config:
             escalate_min_bad_samples=vals["sync.escalate_min_bad_samples"],
             anchor_suspect_min_samples=vals["sync.anchor_suspect_min_samples"],
             escalate_only_multi_block=vals["sync.escalate_only_multi_block"],
+            fps_check_enabled=vals["sync.fps_check_enabled"],
+            fps_require_full_coverage=vals["sync.fps_require_full_coverage"],
             require_audio_lang=vals["correctness.require_audio_lang"] or None,
             whisper_mode=vals["sync.whisper_mode"],
             line_order_enabled=vals["sync.line_order_enabled"],
@@ -622,6 +626,18 @@ SETTING_DEFS: dict = {
     # matrix rows give zero false SUSPECT at 2 -- so the second clip is free evidence.
     "sync.anchor_suspect_min_samples": ("sync", "int", 2),
     "sync.escalate_only_multi_block": ("sync", "bool", True),
+    # Framerate tilt check (see pipeline._try_fps_rescale): rescale a 24fps subtitle
+    # on 23.976fps audio (or reverse) by the discrete 1001/1000 ratio when pooled
+    # anchor tilt and VAD tilt agree. On: measured 3/4 real + 0/31 healthy.
+    "sync.fps_check_enabled": ("sync", "bool", True),
+    # Whether a framerate fix may only be applied on whole-file evidence. On, a sampled run that
+    # sees the signature buys the full transcript first. Measured over 280 matrix rows: it changes
+    # NOTHING -- the same 12 corrections on the same file, the same zero regressions -- and costs
+    # 150.1 audio seconds per file against 76.9 (the baseline is 74.2). Off, therefore. The
+    # argument for leaving it on was that sparse VAD onsets are flippy enough that a 0.14s rewrite
+    # once flipped one file's verdict; that did not show up here, so it stays a switch rather than
+    # a rule.
+    "sync.fps_require_full_coverage": ("sync", "bool", False),
     # Off by default, opt-in — see line_order.py.
     "sync.line_order_enabled":       ("sync", "bool", False),
     "sync.line_order_audio_confirm": ("sync", "bool", False),
