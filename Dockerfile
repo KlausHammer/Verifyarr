@@ -43,7 +43,7 @@ RUN if [ -f /tmp/whisper.cpp/build/bin/whisper-vad-speech-segments ]; then \
 # Must match settings.py's WHISPER_MODEL default -- keeps the stock build pre-baked with
 # what the app expects. A different WHISPER_MODEL is fetched at runtime instead (see
 # correctness._download_local_whisper_model); this arg only sets what ships in the image.
-ARG WHISPER_MODEL=small.en-q5_1
+ARG WHISPER_MODEL=tiny.en
 RUN mkdir -p /app/models \
     && bash /tmp/whisper.cpp/models/download-ggml-model.sh ${WHISPER_MODEL} /app/models \
     && rm -rf /tmp/whisper.cpp

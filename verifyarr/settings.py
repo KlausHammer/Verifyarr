@@ -28,10 +28,12 @@ DEFAULT_QUARANTINE_DIR = DATA_DIR / "quarantine"
 # -- a real Docker requirement (which model the image can use without downloading), so it's a
 # docker-compose env var, same as DATA_DIR above, not a settings-table value. Matches the
 # Dockerfile's own WHISPER_MODEL build arg default -- change one, change the other to keep them
-# in sync. small.en-q5_1 over plain small: same measured scores (0.915 vs 0.913 on the
-# correct-vs-wrong-subtitle margin) at ~180MB instead of ~490MB, which matters on an N100 sharing
-# memory with its iGPU. English-only, so see _run_local_whisper's language handling.
-WHISPER_MODEL = os.environ.get("WHISPER_MODEL", "small.en-q5_1")
+# in sync. tiny.en over the small.en family: chosen on WORST-FILE behaviour, not mean score --
+# all 15 models sweep within 0.77-0.82 on the mean, but the bottom-3 mean per model separates them
+# (tiny.en greedy 0.899, small.en-q5_1 0.854, small.en 0.735), and anchor yield is flat across all
+# of them (74-77 confident windows). ~75MB and CPU-only, which drops the Vulkan dependency
+# entirely. English-only, so see _run_local_whisper's language handling.
+WHISPER_MODEL = os.environ.get("WHISPER_MODEL", "tiny.en")
 _WHISPER_MODEL_FILENAME = f"ggml-{WHISPER_MODEL}.bin"
 _BAKED_IN_WHISPER_MODEL_PATH = Path("/app/models") / _WHISPER_MODEL_FILENAME
 # The Dockerfile only bakes in ONE model (whatever WHISPER_MODEL was at build time) -- if this
@@ -225,6 +227,7 @@ class Config:
     # escalating to a full transcript gets 8 of 9. So a flagged file is re-checked against the
     # whole transcript instead. Costs a full transcription, but only for files that screened bad.
     escalate_sampled_to_full: bool
+    escalate_min_bad_samples: int
 
     # Line-order check (see line_order.py). Off by default, opt-in.
     line_order_enabled: bool
@@ -391,6 +394,7 @@ class Config:
             anchor_check_enabled=vals["sync.anchor_check_enabled"],
             anchor_resync_enabled=vals["sync.anchor_resync_enabled"],
             escalate_sampled_to_full=vals["sync.escalate_sampled_to_full"],
+            escalate_min_bad_samples=vals["sync.escalate_min_bad_samples"],
             require_audio_lang=vals["correctness.require_audio_lang"] or None,
             whisper_mode=vals["sync.whisper_mode"],
             line_order_enabled=vals["sync.line_order_enabled"],
@@ -459,8 +463,16 @@ class Config:
         that one alone would wrongly say "not configured" for a local-only setup with no cloud
         key. Doesn't verify local_whisper_binary/local_whisper_model actually point at real
         files — that failure surfaces per-sample instead (same as a cloud key that turns out to
-        be invalid only failing on first use), not as a static config gate."""
-        return bool(self.active_stt_api_key) or self.use_local_whisper
+        be invalid only failing on first use), not as a static config gate.
+
+        The binary IS checked, because local Whisper is now the default: without it a box that
+        never installed whisper-cli reports "STT configured", fails on every clip, and every file
+        it touches comes out SUSPECT — an accusation against the subtitle for a missing
+        dependency. Not verifying anything has to mean "skipped", never "bad". The model file is
+        deliberately not checked: it downloads itself on first use."""
+        if self.use_local_whisper:
+            return bool(self.local_whisper_binary) and Path(self.local_whisper_binary).is_file()
+        return bool(self.active_stt_api_key)
 
     @property
     def active_generate_stt_api_key(self) -> Optional[str]:
@@ -543,7 +555,11 @@ SETTING_DEFS: dict = {
     # sync.alass_bin removed — alass is baked into the Docker image, nothing to pick.
     "sync.enabled":            ("sync", "bool", True),
     "sync.split_penalty":      ("sync", "int", 7),
-    "sync.min_change_seconds": ("sync", "float", 0.25),
+    # 0.5, not 0.25: the residual we can MEASURE on real files lands on a 0.25s grid (12
+    # reference episodes, 144 bins -- nothing at all between 0 and 0.25), so 0.25 is one grid
+    # step, i.e. inside the noise. 7.6% of real bins sit at 0.25-0.5s and are indistinguishable
+    # from in-sync. A +0.4s "fix" also eats more than half of the subtitle's natural ~0.7s lead.
+    "sync.min_change_seconds": ("sync", "float", 0.5),
     # Whisper sampling parameters — the same knobs control both how well sync finds the
     # shift and how well the correctness check compares, hence grouped with sync tuning.
     # ONE count for both series and movies — a longer file isn't harder to verify, no reason
@@ -568,6 +584,14 @@ SETTING_DEFS: dict = {
     "sync.anchor_check_enabled": ("sync", "bool", True),
     "sync.anchor_resync_enabled": ("sync", "bool", True),
     "sync.escalate_sampled_to_full": ("sync", "bool", True),
+    # How many clips must show a real residual before the whole track is transcribed.
+    # 2, not 1: measured over 700 sampled rows per policy, going from 1 to 2 cuts fresh Whisper
+    # audio 30% (739 -> 517 s/file) for -0.001 recovery and -1pp detection. At 2 the
+    # single-residual rule stops firing entirely -- every remaining escalation is spread-driven,
+    # i.e. the block files _try_anchor_resync can actually fix. Turning it off altogether saves
+    # 93% but drops drift detection from 70% to 45%, which is too much: escalation doesn't repair
+    # drift, but it is what NOTICES it.
+    "sync.escalate_min_bad_samples": ("sync", "int", 2),
     # Off by default, opt-in — see line_order.py.
     "sync.line_order_enabled":       ("sync", "bool", False),
     "sync.line_order_audio_confirm": ("sync", "bool", False),
@@ -593,7 +617,7 @@ SETTING_DEFS: dict = {
     # defaults to WHISPER_MODEL (docker-compose env var, default "small.en-q5_1" — see
     # DEFAULT_LOCAL_WHISPER_MODEL_PATH), downloaded on first use if it isn't already baked into
     # the image. Only relevant once use_local_whisper is turned on.
-    "correctness.use_local_whisper":     ("correctness", "bool", False),
+    "correctness.use_local_whisper":     ("correctness", "bool", True),
     "correctness.local_whisper_binary":  ("correctness", "str", "/usr/local/bin/whisper-cli"),
     "correctness.local_whisper_model":   ("correctness", "str", str(DEFAULT_LOCAL_WHISPER_MODEL_PATH)),
     "correctness.local_whisper_use_gpu": ("correctness", "bool", True),

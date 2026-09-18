@@ -421,8 +421,12 @@ def _run_local_whisper(cfg: Config, audio_path: Path, language: Optional[str],
         # repeat on one Windows/GPU build), which is far the cheaper side of that trade --
         # the loop otherwise silently deletes minutes of dialogue from the evidence.
         # generate._drop_repetition_loops still catches whatever gets through.
+        # Greedy decoding (-bs 1 -bo 1): the sweep measured every model both ways, and greedy
+        # was both faster and better on the worst file (medium.en 0.873 greedy vs 0.820 beam,
+        # 72s vs 135s). whisper-cli defaults to beam 5.
         cmd = [binary, "-m", model, "-f", str(audio_path), "-oj", "-of", str(out_stem),
-               "-t", str(max(1, cfg.local_whisper_threads)), "-l", lang, "-mc", "0"]
+               "-t", str(max(1, cfg.local_whisper_threads)), "-l", lang, "-mc", "0",
+               "-bs", "1", "-bo", "1"]
         if not cfg.local_whisper_use_gpu:
             cmd.append("-ng")
         log.debug("local Whisper: model=%s lang=%s clip=%s", Path(model).name, language or "auto",
@@ -743,6 +747,41 @@ MAX_FULL_ANCHOR_WINDOWS = 60
 ANCHOR_RESYNC_INTERVAL_S = 20.0
 
 
+class WhisperCost:
+    """Audio seconds actually sent to Whisper, and how many came free from a cache.
+
+    Raw audio seconds alone overstate the cost: the per-video clip cache and the full-track
+    cache are both keyed on the video, so a file checked twice pays once. Both numbers are
+    needed to answer "what does a run cost" -- the first is the bill, the second is what the
+    cache saved. Module-level because the transcription points sit three call layers below the
+    pipeline; safe because correctness/line-order runs one file at a time on one thread (see
+    correctness_and_finish)."""
+
+    def __init__(self):
+        self.fresh_s = 0.0
+        self.cached_s = 0.0
+
+    def reset(self) -> None:
+        self.fresh_s = self.cached_s = 0.0
+
+    def snapshot(self) -> dict:
+        return {"fresh_audio_s": round(self.fresh_s, 1), "cached_audio_s": round(self.cached_s, 1)}
+
+
+whisper_cost = WhisperCost()
+
+
+def full_transcript_cache_key(cfg: Config) -> tuple[str, str]:
+    """(provider, model) the full-transcript cache is keyed on. One function so a writer and a
+    reader can't disagree about the key -- a mismatch looks like an empty cache, and the caller
+    silently goes and transcribes the whole file again."""
+    if cfg.use_local_whisper:
+        return "local", Path(cfg.local_whisper_model).name
+    if cfg.stt_provider == "openrouter":
+        return cfg.stt_provider, cfg.openrouter_stt_model
+    return cfg.stt_provider, cfg.groq_model
+
+
 def evaluate_against_full_transcript(conn, video_path: Path, subs: "pysubs2.SSAFile",
                                      sub_lang: Optional[str], transcript_lang: Optional[str],
                                      cfg: Config, *, score: bool = True,
@@ -755,9 +794,7 @@ def evaluate_against_full_transcript(conn, video_path: Path, subs: "pysubs2.SSAF
     calls: by the time pipeline._resolve_ambiguous_sync calls this, line_order.
     collect_samples_full has already populated (or reused) this cache entry earlier in the same
     run. Returns None if nothing is cached yet for this (video, provider, model)."""
-    provider = "local" if cfg.use_local_whisper else cfg.stt_provider
-    model = (Path(cfg.local_whisper_model).name if cfg.use_local_whisper
-             else (cfg.openrouter_stt_model if cfg.stt_provider == "openrouter" else cfg.groq_model))
+    provider, model = full_transcript_cache_key(cfg)
     cached = db.get_full_transcript_cache(conn, video_path, stt_provider=provider, stt_model=model)
     if cached is None or not cached["segments"]:
         return None

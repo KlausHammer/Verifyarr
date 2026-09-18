@@ -19,17 +19,18 @@ from verifyarr.settings import Config
 from verifyarr.subtitles import (
     load_subs, max_shift_stats, summarize_anchor_samples, ANCHOR_PREFER_MARGIN_S,
     ANCHOR_SUSPECT_THRESHOLD_S, plan_anchor_resync, apply_anchor_resync,
-    anchor_spread, ANCHOR_SCREEN_SPREAD_S,
+    anchor_spread, ANCHOR_SCREEN_SPREAD_S, anchor_points,
 )
 from verifyarr.sync_engine import (
     resolve_alass_bin, resolve_alass_reference, run_alass, parse_alass_shift_blocks,
     parse_alass_shift_blocks_with_counts,
 )
 from verifyarr.line_order import (
-    heuristic_candidates, collect_samples, collect_samples_full, finalize_line_order, cache_key_for, apply_line_swap,
+    heuristic_candidates, collect_samples, collect_samples_full, finalize_line_order, cache_key_for,
 )
 from verifyarr.correctness import (
     evaluate_against_cached_transcripts, evaluate_against_full_transcript, significant_anchor_residuals, JobCancelled,
+    whisper_cost,
     ANCHOR_RESYNC_INTERVAL_S,
 )
 from verifyarr.fileops import backup_subtitle, quarantine_subtitle
@@ -272,6 +273,12 @@ def _write_fix(subtitle_path: Path, cfg: Config, media_root: Path, source) -> No
         source.save(str(subtitle_path))
 
 
+def _below_min_change(cfg: Config, shift) -> bool:
+    """A fit smaller than min_change_seconds isn't worth writing. Only safe where nothing has
+    been put on disk yet -- skipping the write then leaves the original untouched."""
+    return shift is not None and abs(shift) < cfg.min_change_seconds
+
+
 def apply_pending_sync(subtitle_path: Path, cfg: Config, row: dict, reason: str):
     """Fallback for a row whose sync_pair DEFERRED its fix (row["_ambiguous_sync"], see
     sync_pair) but whose caller then turned out unable to run the Whisper-based comparison that
@@ -286,8 +293,16 @@ def apply_pending_sync(subtitle_path: Path, cfg: Config, row: dict, reason: str)
     if ambiguous is None:
         return None
     new_subs = ambiguous["new_subs"]
-    _write_fix(subtitle_path, cfg, cfg.media_root_for(subtitle_path), new_subs)
     max_shift_new = ambiguous["max_shift_new"]
+    if _below_min_change(cfg, max_shift_new):
+        row["sync_status"] = "already in sync"
+        row["sync_max_shift_s"] = round(max_shift_new, 2)
+        row["sync_split_blocks"] = None
+        row["sync_block_spread_s"] = None
+        row["note"] += (f" alass suggested Δ{max_shift_new:.2f}s, under the "
+                        f"{cfg.min_change_seconds}s threshold — left as is ({reason}).")
+        return ambiguous["old_subs"]
+    _write_fix(subtitle_path, cfg, cfg.media_root_for(subtitle_path), new_subs)
     row["sync_status"] = f"fixed (Δ{max_shift_new:.1f}s)"
     row["sync_max_shift_s"] = round(max_shift_new, 2) if max_shift_new is not None else None
     row["sync_split_blocks"] = 1
@@ -698,6 +713,19 @@ def _resolve_ambiguous_sync(conn: sqlite3.Connection, video_path: Path, subtitle
                 "audio_lang": transcript_lang, "swap_severity": None}
 
     max_shift_new = ambiguous.get("max_shift_new")
+    winner_shift = {"new": max_shift_new, "blocks": ambiguous.get("max_shift_blocks")}.get(winner)
+    if _below_min_change(cfg, winner_shift):
+        # The comparison ran and picked a fit, but it moves less than min_change_seconds. Nothing
+        # is on disk yet at this point, so declining the write leaves the original untouched.
+        row["sync_status"] = "already in sync"
+        row["sync_max_shift_s"] = round(winner_shift, 2)
+        row["sync_split_blocks"] = None
+        row["sync_block_spread_s"] = None
+        row["note"] += structural_note + note_suffix + (
+            f" Not written: Δ{abs(winner_shift):.2f}s is under the "
+            f"{cfg.min_change_seconds}s threshold.")
+        return old_subs, result, result.get("swap_severity"), "old"
+
     if winner == "new":
         _write_fix(subtitle_path, cfg, media_root, new_subs)
         row["sync_status"] = f"fixed (Δ{max_shift_new:.1f}s)" if max_shift_new is not None else "fixed"
@@ -847,7 +875,8 @@ def _screen_says_needs_full(collected: dict, cfg: Config) -> bool:
     spread = anchor_spread(samples)
     if spread is not None and spread > ANCHOR_SCREEN_SPREAD_S:
         return True
-    return bool(significant_anchor_residuals(samples, ANCHOR_SUSPECT_THRESHOLD_S, min_samples=1))
+    return bool(significant_anchor_residuals(samples, ANCHOR_SUSPECT_THRESHOLD_S,
+                                             min_samples=cfg.escalate_min_bad_samples))
 
 
 def _recheck_after_resync(video_path: Path, corrected_subs, lang: Optional[str], cfg: Config,
@@ -872,37 +901,39 @@ def _recheck_after_resync(video_path: Path, corrected_subs, lang: Optional[str],
     if collected.get("skipped"):
         return previous_collected, previous_result, previous_result.get("swap_severity")
     act = cfg.line_order_enabled and cfg.line_order_audio_confirm
-    result = finalize_line_order(collected, cfg, cancel_event=cancel_event, run_llm_confirm=act)
+    result = finalize_line_order(collected, cfg, cancel_event=cancel_event, compute_swap_severity=act)
     return collected, result, result.get("swap_severity")
 
 
 def _apply_line_order(row: dict, result: dict, swap_severity, current_subs, subtitle_path: Path,
                        cfg: Config, media_root: Path) -> None:
-    """Auto-fixes the swaps Whisper confirmed, and records the counts. Split out so the
-    post-resync path can reuse it -- see correctness_and_finish."""
+    """Records what the line-order evidence found. Reports only -- nothing is rewritten.
+
+    The per-cue repair used to run here. It cost 40-61 rewritten cues per Community file for a
+    cross-model agreement of 0.02-0.12 Jaccard, i.e. it mostly rewrote lines the next model would
+    not have touched (B1/B4).
+
+    The file-level rate does not justify the other action either -- measured over 4200 matrix rows,
+    the best threshold that catches 96% of files with injected swaps also fires on 45% of healthy
+    ones (22% false alarms at best, in sampled mode, for 65% detection). There is no valley between
+    the two distributions, so there is nothing to act on: a widespread pattern is reported, never
+    acted on. Both lists survive because a Whisper-confirmed swap and an untested heuristic hit are
+    different evidence to whoever reads the note."""
     issues = result.get("line_issues") or []
     flagged = result.get("line_flagged") or []
-    row["line_order_fixed"] = len(issues)
-    row["line_order_flagged"] = len(flagged)
+    row["line_order_fixed"] = 0
+    row["line_order_flagged"] = len(issues) + len(flagged)
+    row["line_order_swap_rate"] = result.get("swap_rate")
     if issues:
-        # Content otherwise checks out -- even a widespread, dual-confirmed swap pattern
-        # (swap_severity) is just a mechanical per-line fix here, not a reason to redownload;
-        # noted for visibility either way.
         widespread_note = ""
         if swap_severity:
-            widespread_note = (f" (widespread: {swap_severity['whisper_confirmed']}/"
-                               f"{swap_severity['whisper_checked']} tested candidates confirmed)")
-        if cfg.dry_run:
-            row["note"] += f" Line order: would auto-fix {len(issues)} block(s){widespread_note} [dry-run]."
-        else:
-            _backup_best_effort(subtitle_path, cfg, media_root)
-            for item in issues:
-                apply_line_swap(current_subs, item["index"])
-            current_subs.save(str(subtitle_path))
-            row["note"] += f" Line order: auto-fixed {len(issues)} block(s){widespread_note}."
+            widespread_note = (f", {swap_severity['whisper_confirmed']}/"
+                               f"{swap_severity['whisper_checked']} of the tested candidates")
+        row["note"] += (f" Line order: {len(issues)} block(s) confirmed swapped by Whisper"
+                         f"{widespread_note} — reported, not repaired.")
     if flagged:
         row["note"] += (f" Line order: {len(flagged)} block(s) flagged for manual "
-                         f"review (not auto-fixed, unconfirmed).")
+                         f"review (unconfirmed).")
 
 
 def correctness_and_finish(video_path: Path, subtitle_path: Path, lang: Optional[str],
@@ -916,11 +947,14 @@ def correctness_and_finish(video_path: Path, subtitle_path: Path, lang: Optional
     even though the sync stage runs in a thread pool — Groq's rate-limit pacing and this app's
     single-job cancellation both also expect one file at a time here)."""
     media_root = cfg.media_root_for(subtitle_path)
+    # Per file, so the row can report what this check actually cost -- and what the caches saved.
+    whisper_cost.reset()
     # Popped immediately: it's a pysubs2 object sync_pair left for _try_anchor_resync, and nothing
     # that gets persisted or serialized may still be carrying it (see apply_pending_sync).
     pre_sync_subs = row.pop("_pre_sync_subs", None)
     if current_subs is None:
         # sync_pair couldn't parse the original subtitle at all -- nothing to correctness-check.
+        row["whisper_cost"] = whisper_cost.snapshot()
         update_state(conn, video_path, subtitle_path, row)
         return row
 
@@ -1006,7 +1040,7 @@ def correctness_and_finish(video_path: Path, subtitle_path: Path, lang: Optional
 
             act_on_line_order = cfg.line_order_enabled and cfg.line_order_audio_confirm
             result = finalize_line_order(collected, cfg, cancel_event=cancel_event,
-                                          run_llm_confirm=act_on_line_order)
+                                          compute_swap_severity=act_on_line_order)
             row["correctness_avg_score"] = round(result["avg_score"], 3) if result["avg_score"] is not None else None
             row["correctness_audio_lang"] = result.get("audio_lang")
             row["correctness_samples"] = result.get("samples")
@@ -1182,5 +1216,6 @@ def correctness_and_finish(video_path: Path, subtitle_path: Path, lang: Optional
     # safe default -- rather than leave the file unsynced under a "[pending]" status.
     if "_ambiguous_sync" in row:
         apply_pending_sync(subtitle_path, cfg, row, reason=f"correctness check: {row.get('correctness_flag')}")
+    row["whisper_cost"] = whisper_cost.snapshot()
     update_state(conn, video_path, subtitle_path, row, run_id=run_id, media_root=media_root)
     return row

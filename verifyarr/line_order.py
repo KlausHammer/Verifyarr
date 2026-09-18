@@ -26,7 +26,7 @@ Two layers, cheapest first:
    result is cached (cache_key_for, keyed on the subtitle's own content) so a later run against an
    unchanged subtitle reuses it instead of re-transcribing.
 
-Per-line auto-fix (apply_line_swap) and the "widespread pattern" note (finalize_line_order's
+The "widespread pattern" note (finalize_line_order's
 swap_severity) are BOTH based on layer 2 alone, for every TESTED candidate it confirms --
 swapping two lines back is a safe, mechanical fix regardless of how many lines are affected, and
 neither of these blocks/redownloads the file (a real content problem is caught separately, by the
@@ -48,6 +48,7 @@ from verifyarr import log
 from verifyarr import db
 from verifyarr import vad
 from verifyarr import generate
+from verifyarr import correctness
 from verifyarr.correctness import (JobCancelled, _aggregate_correctness, _compare_transcript_to_window,
                                     detect_audio_language_ffprobe, extract_clip,
                                     get_duration_seconds, transcribe_verbose)
@@ -490,6 +491,7 @@ def collect_samples(video_path: Path, subs, sub_lang: Optional[str], cfg: Config
                 cached = db.find_cached_transcript_between(conn, video_path, bounds[0], bounds[1])
 
         if cached is not None:
+            correctness.whisper_cost.cached_s += clip_duration
             start = cached["start"]
             transcript_text = cached["transcript"]
             # A row cached before segments_json existed has segments=None -- anchors simply
@@ -500,6 +502,7 @@ def collect_samples(video_path: Path, subs, sub_lang: Optional[str], cfg: Config
                 audio_lang = cached["audio_lang"]
                 lang = audio_lang or cfg.require_audio_lang
         else:
+            correctness.whisper_cost.fresh_s += clip_duration
             result = _run_clip(start, clip_duration)
             if result is None:
                 samples.append({"start": round(start, 1), "error": "audio extraction/transcription failed"})
@@ -600,6 +603,18 @@ def collect_samples_full(video_path: Path, subs, sub_lang: Optional[str], cfg: C
         reason = f"speech is '{ffprobe_lang}' (per the file's metadata), not '{cfg.require_audio_lang}' — skipped"
         return {"skipped": True, "reason": reason}
 
+    # Counted here, not inside generate: escalating to a full transcript is the single biggest
+    # Whisper bill there is, and the cache lookup is the only thing that decides whether it costs
+    # anything. Looking it up directly also keeps the number honest under a test harness that
+    # replaces full_transcript_for_check wholesale.
+    if conn is not None:
+        _provider, _model = correctness.full_transcript_cache_key(cfg)
+        _hit = db.get_full_transcript_cache(conn, video_path, stt_provider=_provider, stt_model=_model)
+        if _hit is not None and _hit.get("segments"):
+            correctness.whisper_cost.cached_s += duration
+        else:
+            correctness.whisper_cost.fresh_s += duration
+
     spoken_lang, segments = generate.full_transcript_for_check(cfg, video_path, tmp_dir, conn,
                                                                  cancel_event=cancel_event)
     if not segments:
@@ -666,21 +681,21 @@ def collect_samples_full(video_path: Path, subs, sub_lang: Optional[str], cfg: C
             "heuristic_indices": heuristic_indices}
 
 
-def finalize_line_order(collected: dict, cfg: Config, cancel_event=None, run_llm_confirm: bool = True) -> dict:
+def finalize_line_order(collected: dict, cfg: Config, cancel_event=None, compute_swap_severity: bool = True) -> dict:
     """Turns a collect_samples() result — fresh, or reused from a previous run's cache (see
     pipeline.py) — into the actual verdict. Every Whisper-confirmed swap gets auto-fixed
     (line_issues) -- swapping two lines back is a safe, mechanical fix regardless of how many
     lines are affected; a real content problem (wrong episode, bad translation) is caught
     separately, by the ordinary correctness score, which is what decides whether the file is
     trustworthy at all (see pipeline.py). swap_severity is Whisper's own confirmed rate, purely
-    informational (noted when auto-fixing) -- run_llm_confirm=False (line-order feature not
+    informational (noted when auto-fixing) -- compute_swap_severity=False (line-order feature not
     turned on) just skips computing it, nothing else.
 
     Returns the same shape correctness_check does ({"avg_score", "samples", "flag", "audio_lang"}),
     plus:
       "swap_severity": None, or {"whisper_rate", "whisper_confirmed", "whisper_checked",
         "sample_size"} when Whisper's own confirmed rate covers a large share of the TESTED
-        heuristic candidates. Always None when run_llm_confirm is False.
+        heuristic candidates. Always None when compute_swap_severity is False.
       "line_issues": [{"index", "l1", "l2"}] — tested candidates Whisper itself confirmed swapped.
       "line_flagged": [{"index", "l1", "l2"}] — heuristic hits that were NOT confirmed either way
         (never tested because their region already had an earlier candidate, or tested but
@@ -699,7 +714,11 @@ def finalize_line_order(collected: dict, cfg: Config, cancel_event=None, run_llm
 
     swap_severity = None
     w_confirmed, w_checked = _rate(whisper_verdicts)
-    if run_llm_confirm and _meets_swap_threshold(w_confirmed, w_checked, cfg):
+    # Reported whether or not the threshold trips, so the threshold can be set from the whole
+    # distribution instead of from its own censored tail.
+    swap_rate = {"confirmed": w_confirmed, "checked": w_checked,
+                 "rate": round(w_confirmed / w_checked, 3) if w_checked else None}
+    if compute_swap_severity and _meets_swap_threshold(w_confirmed, w_checked, cfg):
         swap_severity = {
             "whisper_rate": round(w_confirmed / w_checked, 3), "whisper_confirmed": w_confirmed,
             "whisper_checked": w_checked, "sample_size": len(tested_items),
@@ -719,6 +738,7 @@ def finalize_line_order(collected: dict, cfg: Config, cancel_event=None, run_llm
 
     return {"skipped": False, "avg_score": avg, "samples": samples, "flag": flag,
             "audio_lang": collected["audio_lang"], "swap_severity": swap_severity,
+            "swap_rate": swap_rate,
             "line_issues": line_issues, "line_flagged": line_flagged}
 
 
@@ -731,11 +751,4 @@ def check_subtitle(video_path: Path, subs, sub_lang: Optional[str], cfg: Config,
     collected = collect_samples(video_path, subs, sub_lang, cfg, tmp_dir, conn=conn, cancel_event=cancel_event)
     if collected.get("skipped"):
         return collected
-    return finalize_line_order(collected, cfg, cancel_event=cancel_event, run_llm_confirm=True)
-
-
-def apply_line_swap(subs, index: int) -> None:
-    """Swaps the two lines of one event in place, preserving pysubs2's \\N line-break marker."""
-    e = subs.events[index]
-    l1, l2 = _split_two_lines(e.text)
-    e.text = f"{l2}\\N{l1}"
+    return finalize_line_order(collected, cfg, cancel_event=cancel_event, compute_swap_severity=True)

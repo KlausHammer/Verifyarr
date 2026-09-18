@@ -73,6 +73,7 @@ VWORK = _os.environ.get("VERIFYARR_UNDER_TEST", str(Path(__file__).resolve().par
 sys.path.insert(0, VWORK)
 
 from verifyarr import db, generate, line_order, pipeline
+from verifyarr.correctness import full_transcript_cache_key
 from verifyarr.settings import Config
 from verifyarr.subtitles import load_subs
 
@@ -255,11 +256,13 @@ def patch_sampled_transcription(lang, segments):
 def cfg_for(conn, mode="full", audio="on", **over) -> Config:
     cfg = Config.from_db(conn)
     vals = dict(
-        groq_api_key="shim-no-real-key-needed", stt_provider="groq",
         backup_originals=False, dry_run=False, sync_enabled=True,
         enable_correctness_check=True, line_order_enabled=True,
         line_order_audio_confirm=(audio == "on"), whisper_mode=mode,
-        use_local_whisper=False,
+        # Local Whisper, like production: the cloud providers only ever generate a missing
+        # subtitle from scratch, which the matrix doesn't exercise. The binary just has to exist
+        # (has_stt_configured); every call that would run it is patched below.
+        use_local_whisper=True, local_whisper_binary=sys.executable,
         # Sampled runs the shipped production defaults, pinned explicitly so a
         # stale shard DB can never silently change what "sampled" means.
         sample_count=5, clip_seconds=60, window_minutes=0.5,
@@ -278,8 +281,9 @@ def run_one(work, video, subs, lang, segments, cfg, conn, tag, mode="full",
         # Sampled keeps the cache empty like a production-fresh file, so VAD
         # placement falls back to dialogue density; the escalation path still
         # works through the patched full_transcript_for_check below.
+        _provider, _model = full_transcript_cache_key(cfg)
         _db.save_full_transcript_cache(conn, video, lang, segments,
-                                       stt_provider=cfg.stt_provider, stt_model=cfg.groq_model)
+                                       stt_provider=_provider, stt_model=_model)
     tmp = work / f"{tag}.srt"
     subs.save(str(tmp))
     captured = {}
@@ -287,9 +291,9 @@ def run_one(work, video, subs, lang, segments, cfg, conn, tag, mode="full",
     real_apply = pipeline._apply_line_order
     real_screen = pipeline._screen_says_needs_full
 
-    def spy_finalize(collected, cfg_, cancel_event=None, run_llm_confirm=True):
+    def spy_finalize(collected, cfg_, cancel_event=None, compute_swap_severity=True):
         res = real_finalize(collected, cfg_, cancel_event=cancel_event,
-                            run_llm_confirm=run_llm_confirm)
+                            compute_swap_severity=compute_swap_severity)
         captured["flagged"] = sorted(i["index"] for i in res.get("line_flagged") or [])
         heur = collected.get("heuristic_indices")
         if heur is None:
@@ -399,7 +403,7 @@ def corrupt_swap(subs, rng, n=6):
     Chosen failure mode: in-cue line reversal is exactly what
     verifyarr/line_order.py detects and auto-fixes (free cap-signal prefilter
     + Whisper audio confirmation in _judge_order, mechanical fix in
-    apply_line_swap). Whole-file cue reordering is NOT used instead: it would
+    line_order.py). Whole-file cue reordering is NOT used instead: it would
     defeat content matching everywhere at once (a wrong-episode verdict, not a
     line-order fix), which is a different feature's job.
 
@@ -591,6 +595,14 @@ def main(argv=None):
     out_stem = argv[argv.index("--out") + 1] if "--out" in argv else "e2e_matrix"
     shard = argv[argv.index("--shard") + 1] if "--shard" in argv else ""
     redo = "--redo" in argv
+    # Escalation policy under test: how many clips must show a real residual before the whole
+    # track gets transcribed (see sync.escalate_min_bad_samples), and --no-escalate to switch
+    # the whole ladder off. Escalation is ~10x the audio a sampled run otherwise spends.
+    esc_over = {}
+    if "--escalate-min-bad" in argv:
+        esc_over["escalate_min_bad_samples"] = int(argv[argv.index("--escalate-min-bad") + 1])
+    if "--no-escalate" in argv:
+        esc_over["escalate_sampled_to_full"] = False
     suffix = f"_{shard}" if shard else ""
     work = OUT_DIR / f"e2e_work_matrix{suffix}"
     work.mkdir(exist_ok=True)
@@ -611,6 +623,17 @@ def main(argv=None):
     # One DB per (model, mode): the video-level clip cache is keyed on
     # video_path only, so sharing one DB across models would let one model's
     # audio evidence leak into another's sampled runs.
+    #
+    # --redo drops the DBs for what it re-runs. Without this the caches outlive the run and a
+    # "before/after" comparison silently mixes fresh results with the previous run's cached
+    # correctness/line-order evidence -- measured: 105 rows changed on code paths the change
+    # under test could not reach.
+    if redo:
+        for model in models:
+            safe = re.sub(r"[^A-Za-z0-9_-]", "_", model)
+            for mode in modes:
+                for stale in work.glob(f"e2e_matrix{suffix}_{safe}_{mode}.db*"):
+                    stale.unlink()
     conns = {}
 
     def conn_for(model, mode):
@@ -669,7 +692,7 @@ def main(argv=None):
                 # full-transcript cache read (keyed on provider+model) matches
                 # this run's priming.
                 for audio in audios:
-                    cfg = cfg_for(conn, mode, audio, groq_model=model)
+                    cfg = cfg_for(conn, mode, audio, groq_model=model, **esc_over)
                     for name in scen:
                         key = (model, slug, name, mode, audio)
                         if key in done:
@@ -690,6 +713,8 @@ def main(argv=None):
                                        lo_flagged=row.get("line_order_flagged"),
                                        lo_fixed_indices=row.get("lo_fixed_indices", []),
                                        lo_flagged_indices=row.get("lo_flagged_indices", []),
+                                       swap_rate=row.get("line_order_swap_rate"),
+                                       whisper_cost=row.get("whisper_cost"),
                                        escalated=row.get("escalated", False),
                                        note=(row.get("note") or "")[:200])
                             if name in TIMING_SCENARIOS or name == "clean":

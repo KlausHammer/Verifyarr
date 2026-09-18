@@ -40,6 +40,7 @@ VWORK = _os.environ.get("VERIFYARR_UNDER_TEST", "/tmp/vwork")
 sys.path.insert(0, VWORK)
 
 from verifyarr import db, generate, pipeline
+from verifyarr.correctness import full_transcript_cache_key
 from verifyarr.settings import Config
 from verifyarr.subtitles import load_subs
 
@@ -97,10 +98,11 @@ def patch_whisper_full(fx: dict):
 def cfg_for(conn, **over) -> Config:
     cfg = Config.from_db(conn)
     vals = dict(
-        groq_api_key="shim-no-real-key-needed", stt_provider="groq",
         backup_originals=False, dry_run=False, sync_enabled=True,
         enable_correctness_check=True, line_order_enabled=True,
-        line_order_audio_confirm=True, whisper_mode="full", use_local_whisper=False,
+        line_order_audio_confirm=True, whisper_mode="full",
+        # Local Whisper, like production -- the cloud providers only generate missing subtitles.
+        use_local_whisper=True, local_whisper_binary=sys.executable,
     )
     vals.update(over)
     for k, v in vals.items():
@@ -110,8 +112,9 @@ def cfg_for(conn, **over) -> Config:
 
 def run_one(video, subs, fx, cfg, conn, tag):
     from verifyarr import db as _db
+    _provider, _model = full_transcript_cache_key(cfg)
     _db.save_full_transcript_cache(conn, video, fx["language"], fx["segments"],
-                                   stt_provider=cfg.stt_provider, stt_model=cfg.groq_model)
+                                   stt_provider=_provider, stt_model=_model)
     tmp = WORK / f"{tag}.srt"
     subs.save(str(tmp))
     with patch_whisper_full(fx):

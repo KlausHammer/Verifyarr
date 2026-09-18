@@ -34,7 +34,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from verifyarr import db, pipeline
-from verifyarr.correctness import significant_anchor_residuals
+from verifyarr.correctness import significant_anchor_residuals, full_transcript_cache_key
 from verifyarr.subtitles import (anchor_points, anchor_regions, plan_anchor_resync,
                                  apply_anchor_resync)
 import pysubs2
@@ -73,7 +73,11 @@ def _test_config(conn) -> Config:
     "is a key configured" gates."""
     cfg = Config.from_db(conn)
     for k, v in dict(
-        groq_api_key="shim-no-real-key-needed", stt_provider="groq",
+        # Local Whisper, the same path production runs -- the cloud providers are only for
+        # generating a missing subtitle from scratch, which these tests don't touch. The binary
+        # only has to EXIST (has_stt_configured checks that); patch_whisper intercepts every call
+        # that would actually run it.
+        use_local_whisper=True, local_whisper_binary=sys.executable,
         backup_originals=False, dry_run=False, sync_enabled=True,
         enable_correctness_check=True, anchor_check_enabled=True,
         line_order_enabled=True, line_order_audio_confirm=True,
@@ -89,8 +93,9 @@ def _prime_full_cache(conn, cfg, fixtures) -> None:
     previously-transcribed segments instead of needing a live STT call."""
     for slug, fx in fixtures.items():
         video_path, _ = fixture_paths(fx)
+        provider, model = full_transcript_cache_key(cfg)
         db.save_full_transcript_cache(conn, video_path, fx["language"], fx["segments"],
-                                      stt_provider=cfg.stt_provider, stt_model=cfg.groq_model)
+                                      stt_provider=provider, stt_model=model)
 
 
 
@@ -453,10 +458,11 @@ class LineOrderTests(SyncVerificationCase):
             with self.subTest(slug=slug):
                 broken = _swap_lines(original, targets)
                 row, _final, _shim = self._run(slug, broken)
-                # Either individually auto-fixed (line_order_fixed > 0) or, if a majority of
-                # TESTED candidates end up swapped, escalated to a file-level SUSPECT -- both
-                # are the app correctly noticing the swap; only total silence is a failure.
-                noticed = (row.get("line_order_fixed") or 0) > 0 or row["correctness_flag"] == "SUSPECT"
+                # Reported, not repaired: line_order_fixed is always 0 now (the per-cue repair
+                # was removed, and the file-level rate can't carry a redownload either -- see
+                # _apply_line_order). Noticing means the block reaches line_order_flagged, or the
+                # file goes SUSPECT for its own reasons. Only total silence is a failure.
+                noticed = (row.get("line_order_flagged") or 0) > 0 or row["correctness_flag"] == "SUSPECT"
                 self.assertTrue(noticed, f"{slug}: swapped lines at {targets} went unnoticed: {row}")
         self.assertTrue(found_any, "no eligible 2-line events found to swap in any healthy fixture")
 

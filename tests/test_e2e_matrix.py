@@ -419,6 +419,8 @@ class AudioCacheTests(unittest.TestCase):
         try:
             with tempfile.TemporaryDirectory() as td:
                 cfg = SimpleNamespace(stt_provider="groq", groq_model="turbo",
+                                      use_local_whisper=True,
+                                      local_whisper_model="/models/ggml-tiny.en.bin",
                                       line_order_enabled=True, line_order_audio_confirm=True)
                 shared = {Path("/media/v.mkv"): Path("/staging/V.wav")}
                 M.run_one(Path(td), Path("/media/v.mkv"), subs, "en",

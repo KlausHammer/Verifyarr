@@ -57,9 +57,10 @@ def main():
               if "--models" in sys.argv else list(M.ALL_MODELS))
     out_stem = sys.argv[sys.argv.index("--out") + 1] if "--out" in sys.argv else "e2e_matrix"
     extra = []
-    for flag in ("--scenarios", "--mode", "--audio-confirm", "--out", "--redo"):
+    for flag in ("--scenarios", "--mode", "--audio-confirm", "--out", "--redo",
+                 "--escalate-min-bad", "--no-escalate"):
         if flag in sys.argv:
-            if flag == "--redo":
+            if flag in ("--redo", "--no-escalate"):
                 extra.append(flag)
             else:
                 extra += [flag, sys.argv[sys.argv.index(flag) + 1]]

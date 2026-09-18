@@ -45,17 +45,19 @@ class TempAppCase(unittest.TestCase):
 
 
 class FinishGenerated(TempAppCase):
-    def _row(self, pending=True, max_shift=0.4):
+    # 1.4s, comfortably over sync.min_change_seconds -- this case is about a deferred fix
+    # REACHING DISK, not about the triviality threshold, which has its own tests.
+    def _row(self, pending=True, max_shift=1.4):
         subtitle = self.video.with_name(f"{self.video.stem}.da.srt")
         _subs(1000, 5000).save(str(subtitle), format_="srt")
         row = {"video": str(self.video), "subtitle": str(subtitle), "lang": "da",
-               "sync_status": "fixed (Δ0.4s) [pending verification]", "sync_max_shift_s": None,
+               "sync_status": "fixed (Δ1.4s) [pending verification]", "sync_max_shift_s": None,
                "structural_change": False, "sync_split_blocks": None, "sync_block_spread_s": None,
                "correctness_flag": "-", "correctness_avg_score": None, "note": "", "auto_action": "-"}
         if pending:
             row["_ambiguous_sync"] = {
-                "old_subs": _subs(1000, 5000), "new_subs": _subs(1400, 5400),
-                "max_shift_new": max_shift, "blocks_subs": _subs(1400, 5600),
+                "old_subs": _subs(1000, 5000), "new_subs": _subs(2400, 6400),
+                "max_shift_new": max_shift, "blocks_subs": _subs(2400, 6600),
                 "max_shift_blocks": max_shift, "blocks_split_count": 2, "blocks_spread": 0.2,
                 "blocks_time_ranges": [], "structural": False,
             }
@@ -74,7 +76,7 @@ class FinishGenerated(TempAppCase):
         # a sanity check of our own output. That is only true if its result is applied.
         subtitle, row = self._row()
         pipeline.finish_generated(self.video, subtitle, self.cfg, self.conn, row)
-        self.assertEqual([e.start for e in pysubs2.load(str(subtitle))], [1400, 5400])
+        self.assertEqual([e.start for e in pysubs2.load(str(subtitle))], [2400, 6400])
 
     def test_status_no_longer_claims_to_be_pending(self):
         subtitle, row = self._row()
