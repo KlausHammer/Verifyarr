@@ -263,10 +263,10 @@ def cfg_for(conn, mode="full", audio="on", **over) -> Config:
         # subtitle from scratch, which the matrix doesn't exercise. The binary just has to exist
         # (has_stt_configured); every call that would run it is patched below.
         use_local_whisper=True, local_whisper_binary=sys.executable,
-        # Sampled runs the shipped production defaults, pinned explicitly so a
-        # stale shard DB can never silently change what "sampled" means.
-        sample_count=5, clip_seconds=60, window_minutes=0.5,
-        overlap_threshold=0.25,
+        # Sampled runs the SHIPPED defaults -- nothing tuning-related is pinned here. Pinning
+        # made three separate "after" runs read as no-change while the default under test was
+        # silently overridden; test_escalation_follows_the_shipped_default guards it now.
+        window_minutes=0.5, overlap_threshold=0.25,
     )
     vals.update(over)
     for k, v in vals.items():
@@ -609,6 +609,10 @@ def main(argv=None):
         esc_over["escalate_only_multi_block"] = False
     if "--escalate-on" in argv:
         esc_over["escalate_sampled_to_full"] = True
+    if "--sample-count" in argv:
+        esc_over["sample_count"] = int(argv[argv.index("--sample-count") + 1])
+    if "--clip-seconds" in argv:
+        esc_over["clip_seconds"] = int(argv[argv.index("--clip-seconds") + 1])
     suffix = f"_{shard}" if shard else ""
     work = OUT_DIR / f"e2e_work_matrix{suffix}"
     work.mkdir(exist_ok=True)

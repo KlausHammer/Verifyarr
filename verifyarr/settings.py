@@ -568,8 +568,14 @@ SETTING_DEFS: dict = {
     # shift and how well the correctness check compares, hence grouped with sync tuning.
     # ONE count for both series and movies — a longer file isn't harder to verify, no reason
     # to sample it more.
-    "sync.sample_count":        ("sync", "int", 5),
-    "sync.clip_seconds":        ("sync", "int", 60),
+    # 8 short clips, not 5 long ones. Coverage dominates clip length: measured over 1043 rows
+    # per setting across all 15 models, drift detection goes 59% (5 clips) -> 76% (8) -> 89% (10)
+    # -> 99% (12) however short the clips get, and recovery rises with it. 8x20s costs LESS audio
+    # than 5x60s (58.9 vs 62.0 s/file) and detects far more, at zero false SUSPECT over 149 clean
+    # files. 10x15s (89%) and 12x20s (99%) go further, but 12 is where the first false alarm on a
+    # healthy file appeared.
+    "sync.sample_count":        ("sync", "int", 8),
+    "sync.clip_seconds":        ("sync", "int", 20),
     "sync.window_minutes":      ("sync", "float", 0.5),
     "sync.overlap_threshold":   ("sync", "float", 0.25),
     # sampled | full -- see Config.whisper_mode.

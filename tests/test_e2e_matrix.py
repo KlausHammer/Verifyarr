@@ -264,7 +264,6 @@ class CfgAxisTests(unittest.TestCase):
     def test_sampled_pins_production_defaults(self):
         cfg = self._cfg("sampled", "off")
         self.assertEqual(cfg.whisper_mode, "sampled")
-        self.assertEqual(cfg.sample_count, 5)
         self.assertFalse(cfg.line_order_audio_confirm)
 
     def test_escalation_follows_the_shipped_default(self):
@@ -274,7 +273,9 @@ class CfgAxisTests(unittest.TestCase):
         for key, attr in (("sync.escalate_sampled_to_full", "escalate_sampled_to_full"),
                           ("sync.escalate_min_bad_samples", "escalate_min_bad_samples"),
                           ("sync.anchor_suspect_min_samples", "anchor_suspect_min_samples"),
-                          ("sync.min_change_seconds", "min_change_seconds")):
+                          ("sync.min_change_seconds", "min_change_seconds"),
+                          ("sync.sample_count", "sample_count"),
+                          ("sync.clip_seconds", "clip_seconds")):
             self.assertEqual(getattr(self._cfg("sampled", "off"), attr), SETTING_DEFS[key][2],
                              f"{key} is pinned in cfg_for and no longer follows the default")
 
@@ -282,7 +283,6 @@ class CfgAxisTests(unittest.TestCase):
         cfg = self._cfg("full", "on")
         self.assertEqual(cfg.whisper_mode, "full")
         self.assertTrue(cfg.line_order_audio_confirm)
-        self.assertEqual(cfg.sample_count, 5)
 
 
 class IndexAnalysisTests(unittest.TestCase):

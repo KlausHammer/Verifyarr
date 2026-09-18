@@ -59,7 +59,8 @@ def main():
     extra = []
     for flag in ("--scenarios", "--mode", "--audio-confirm", "--out", "--redo",
                  "--escalate-min-bad", "--no-escalate", "--suspect-min",
-                 "--escalate-any-block", "--escalate-on"):
+                 "--escalate-any-block", "--escalate-on",
+                 "--sample-count", "--clip-seconds"):
         if flag in sys.argv:
             if flag in ("--redo", "--no-escalate", "--escalate-any-block", "--escalate-on"):
                 extra.append(flag)
