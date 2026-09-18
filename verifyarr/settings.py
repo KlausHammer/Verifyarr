@@ -568,14 +568,20 @@ SETTING_DEFS: dict = {
     # shift and how well the correctness check compares, hence grouped with sync tuning.
     # ONE count for both series and movies — a longer file isn't harder to verify, no reason
     # to sample it more.
-    # 8 short clips, not 5 long ones. Coverage dominates clip length: measured over 1043 rows
-    # per setting across all 15 models, drift detection goes 59% (5 clips) -> 76% (8) -> 89% (10)
-    # -> 99% (12) however short the clips get, and recovery rises with it. 8x20s costs LESS audio
-    # than 5x60s (58.9 vs 62.0 s/file) and detects far more, at zero false SUSPECT over 149 clean
-    # files. 10x15s (89%) and 12x20s (99%) go further, but 12 is where the first false alarm on a
-    # healthy file appeared.
-    "sync.sample_count":        ("sync", "int", 8),
-    "sync.clip_seconds":        ("sync", "int", 20),
+    # 16 short clips, not 5 long ones. Coverage dominates clip length, and the measure that
+    # settles it is how often a broken file reaches the user with NEITHER a fix NOR a warning --
+    # a silent pass is the only failure that actually hurts. Over 268 rows per scenario on all 15
+    # models, sampled:
+    #     5x60s  716 audio s/file   silent: piecewise 28%  drift 33%  drift_swap 33%
+    #     8x20s   52               silent: piecewise 14%  drift 22%  drift_swap 16%
+    #    12x20s   66               silent: piecewise 15%  drift  2%  drift_swap  3%
+    #    16x15s   75               silent: piecewise 10%  drift  0%  drift_swap  0%
+    # 16x15 costs 4 false SUSPECT per 298 clean files where 8x20 costs none, but a false SUSPECT
+    # only writes a line in the report (correctness_auto_action defaults to off and nothing is
+    # rewritten), while a silent pass is a subtitle the viewer has to notice themselves. 8x20
+    # also rewrote 2 healthy files in full mode; 16x15 rewrites none in either mode.
+    "sync.sample_count":        ("sync", "int", 16),
+    "sync.clip_seconds":        ("sync", "int", 15),
     "sync.window_minutes":      ("sync", "float", 0.5),
     "sync.overlap_threshold":   ("sync", "float", 0.25),
     # sampled | full -- see Config.whisper_mode.
