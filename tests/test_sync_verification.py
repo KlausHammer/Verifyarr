@@ -130,6 +130,57 @@ class AnchorEscalationThresholdTests(unittest.TestCase):
 
 
 
+class LineOrderCacheKeyTests(unittest.TestCase):
+    """The cached collect_samples payload IS transcription output (samples, whisper_verdicts),
+    so anything that changes WHICH model produced it has to change the key. Switching
+    WHISPER_MODEL used to silently reuse the previous model's verdicts until the subtitle
+    itself changed."""
+
+    @staticmethod
+    def _subs():
+        import pysubs2
+        f = pysubs2.SSAFile()
+        f.events.append(pysubs2.SSAEvent(start=1000, end=3000, text="Hello there"))
+        return f
+
+    @staticmethod
+    def _cfg(**over):
+        # Real settings.py defaults via an empty scratch DB, same shape as _test_config above.
+        with tempfile.TemporaryDirectory() as td:
+            conn = db.connect(Path(td) / "t.db")
+            cfg = Config.from_db(conn)
+            conn.close()
+        for k, v in over.items():
+            object.__setattr__(cfg, k, v)
+        return cfg
+
+    def _key(self, **over):
+        from verifyarr.line_order import cache_key_for
+        return cache_key_for(self._subs(), self._cfg(**over))
+
+    def test_a_different_local_model_is_a_different_key(self):
+        a = self._key(use_local_whisper=True, local_whisper_model="/m/ggml-tiny.en.bin")
+        b = self._key(use_local_whisper=True, local_whisper_model="/m/ggml-small.en.bin")
+        self.assertNotEqual(a, b)
+
+    def test_switching_provider_is_a_different_key(self):
+        local = self._key(use_local_whisper=True, local_whisper_model="/m/ggml-tiny.en.bin")
+        cloud = self._key(use_local_whisper=False)
+        self.assertNotEqual(local, cloud)
+
+    def test_the_same_settings_still_give_the_same_key(self):
+        a = self._key(use_local_whisper=True, local_whisper_model="/m/ggml-tiny.en.bin")
+        b = self._key(use_local_whisper=True, local_whisper_model="/m/ggml-tiny.en.bin")
+        self.assertEqual(a, b)
+
+    def test_it_agrees_with_the_full_transcript_cache_key(self):
+        # One source for (provider, model) -- a reader and a writer can't disagree.
+        cfg = self._cfg(use_local_whisper=True, local_whisper_model="/m/ggml-tiny.en.bin")
+        provider, model = full_transcript_cache_key(cfg)
+        from verifyarr.line_order import cache_key_for
+        self.assertTrue(cache_key_for(self._subs(), cfg).endswith(f":{provider}:{model}"))
+
+
 class AnchorResyncPlanningTests(unittest.TestCase):
     """The planner that turns anchors into an actual correction (subtitles.plan_anchor_resync).
     Every shape here is taken from a real file in the 52-episode corpus."""

@@ -126,8 +126,15 @@ def cache_key_for(subs, cfg: Config) -> str:
     plus every setting that changes which clips get picked/how they're judged. Any change to the
     subtitle or these settings naturally produces a different key, so a stale cache is never
     reused by accident. whisper_mode included so switching sampled/full re-collects rather than
-    reusing the other mode's cached samples."""
-    return f"{subs_fingerprint(subs)}:{cfg.sample_count}:{cfg.clip_seconds}:{cfg.window_minutes}:{cfg.whisper_mode}"
+    reusing the other mode's cached samples.
+
+    Provider/model included because the cached payload IS transcription output (samples,
+    whisper_verdicts) -- without them, switching WHISPER_MODEL silently reuses the old model's
+    verdicts until the subtitle itself changes. Same (provider, model) pair the full-transcript
+    cache is keyed on, from the one function, so the two can't drift apart."""
+    provider, model = correctness.full_transcript_cache_key(cfg)
+    return (f"{subs_fingerprint(subs)}:{cfg.sample_count}:{cfg.clip_seconds}:"
+            f"{cfg.window_minutes}:{cfg.whisper_mode}:{provider}:{model}")
 
 
 def _window_subtitle_text(subs, start_sec: float, end_sec: float) -> str:
