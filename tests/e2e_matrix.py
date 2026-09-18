@@ -266,7 +266,7 @@ def cfg_for(conn, mode="full", audio="on", **over) -> Config:
         # Sampled runs the shipped production defaults, pinned explicitly so a
         # stale shard DB can never silently change what "sampled" means.
         sample_count=5, clip_seconds=60, window_minutes=0.5,
-        overlap_threshold=0.25, escalate_sampled_to_full=True,
+        overlap_threshold=0.25,
     )
     vals.update(over)
     for k, v in vals.items():
@@ -308,8 +308,8 @@ def run_one(work, video, subs, lang, segments, cfg, conn, tag, mode="full",
         return real_apply(row_, result, swap_severity, current_subs,
                           subtitle_path, cfg_, media_root)
 
-    def spy_screen(collected, cfg_):
-        hit = real_screen(collected, cfg_)
+    def spy_screen(collected, cfg_, *a, **kw):
+        hit = real_screen(collected, cfg_, *a, **kw)
         captured["escalated"] = captured.get("escalated", False) or bool(hit)
         return hit
 
@@ -603,6 +603,12 @@ def main(argv=None):
         esc_over["escalate_min_bad_samples"] = int(argv[argv.index("--escalate-min-bad") + 1])
     if "--no-escalate" in argv:
         esc_over["escalate_sampled_to_full"] = False
+    if "--suspect-min" in argv:
+        esc_over["anchor_suspect_min_samples"] = int(argv[argv.index("--suspect-min") + 1])
+    if "--escalate-any-block" in argv:
+        esc_over["escalate_only_multi_block"] = False
+    if "--escalate-on" in argv:
+        esc_over["escalate_sampled_to_full"] = True
     suffix = f"_{shard}" if shard else ""
     work = OUT_DIR / f"e2e_work_matrix{suffix}"
     work.mkdir(exist_ok=True)

@@ -853,7 +853,7 @@ def _resync_verified(plan, after, cfg: Config, subtitle_path: Path) -> Optional[
 
 
 
-def _screen_says_needs_full(collected: dict, cfg: Config) -> bool:
+def _screen_says_needs_full(collected: dict, cfg: Config, sync_blocks: Optional[int] = None) -> bool:
     """Whether a sampled run has seen enough to justify paying for the whole transcript.
 
     The cheap clips are a SCREEN: they answer "does this file's timing look wrong somewhere"
@@ -870,6 +870,14 @@ def _screen_says_needs_full(collected: dict, cfg: Config) -> bool:
     the strict rule catches 5 of 10 bad files, this one 9 of 10, at the cost of 2 unnecessary
     transcriptions in 42 healthy files."""
     if cfg.whisper_mode != "sampled" or not cfg.escalate_sampled_to_full:
+        return False
+    # The full transcript is only worth buying where it can drive a REPAIR, and the only repair
+    # it drives is region planning -- which needs the file to have regions. alass has already
+    # said whether it does, for free: a multi-block fit means it could not line the file up with
+    # one offset. Measured over 2086 sampled rows, multi-block fires on 75% of piecewise files
+    # and 0% of clean, gap, swap and uniform ones. Detection does not need this branch at all
+    # (see anchor_suspect_min_samples).
+    if cfg.escalate_only_multi_block and not (sync_blocks or 0) > 1:
         return False
     samples = collected.get("samples") or []
     spread = anchor_spread(samples)
@@ -1008,7 +1016,11 @@ def correctness_and_finish(video_path: Path, subtitle_path: Path, lang: Optional
             # setting was turned on (or a borderline one) would otherwise never get re-screened
             # until its subtitle content itself changes. _screen_says_needs_full is a no-op
             # (returns False) outside sampled mode, so this is safe to call unconditionally.
-            if _screen_says_needs_full(collected, cfg):
+            # A deferred multi-block fit reports sync_split_blocks = 1 (that is the single-offset
+            # candidate sync_pair held back); the real block count is in the deferred payload.
+            deferred = row.get("_ambiguous_sync") or {}
+            blocks = deferred.get("blocks_split_count") or row.get("sync_split_blocks")
+            if _screen_says_needs_full(collected, cfg, blocks):
                 log.info("%s: sampled clips disagree about the timing -- re-checking against "
                          "a full transcript", subtitle_path.name)
                 with tempfile.TemporaryDirectory() as td2:
@@ -1105,7 +1117,8 @@ def correctness_and_finish(video_path: Path, subtitle_path: Path, lang: Optional
                                                      bazarr_meta, history_index, cfg.correctness_auto_action,
                                                      conn=conn, run_id=run_id, cancel_event=cancel_event)
             elif cfg.anchor_check_enabled and (bad := significant_anchor_residuals(
-                    result.get("samples") or [], ANCHOR_SUSPECT_THRESHOLD_S)):
+                    result.get("samples") or [], ANCHOR_SUSPECT_THRESHOLD_S,
+                    min_samples=cfg.anchor_suspect_min_samples)):
                 # A Whisper anchor (subtitles.clip_anchor_shift) is a CONTENT-verified point
                 # estimate of the true timing offset at one exact instant -- not the bag-of-
                 # words window score every other branch here relies on, which can be fooled by

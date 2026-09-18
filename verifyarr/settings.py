@@ -228,6 +228,8 @@ class Config:
     # whole transcript instead. Costs a full transcription, but only for files that screened bad.
     escalate_sampled_to_full: bool
     escalate_min_bad_samples: int
+    anchor_suspect_min_samples: int
+    escalate_only_multi_block: bool
 
     # Line-order check (see line_order.py). Off by default, opt-in.
     line_order_enabled: bool
@@ -395,6 +397,8 @@ class Config:
             anchor_resync_enabled=vals["sync.anchor_resync_enabled"],
             escalate_sampled_to_full=vals["sync.escalate_sampled_to_full"],
             escalate_min_bad_samples=vals["sync.escalate_min_bad_samples"],
+            anchor_suspect_min_samples=vals["sync.anchor_suspect_min_samples"],
+            escalate_only_multi_block=vals["sync.escalate_only_multi_block"],
             require_audio_lang=vals["correctness.require_audio_lang"] or None,
             whisper_mode=vals["sync.whisper_mode"],
             line_order_enabled=vals["sync.line_order_enabled"],
@@ -583,7 +587,14 @@ SETTING_DEFS: dict = {
     "sync.block_spread_suspect_threshold_s": ("sync", "float", 20.0),
     "sync.anchor_check_enabled": ("sync", "bool", True),
     "sync.anchor_resync_enabled": ("sync", "bool", True),
-    "sync.escalate_sampled_to_full": ("sync", "bool", True),
+    # Off: transcribing the whole track costs ~10x a sampled run (517 vs 52 audio seconds per
+    # file, measured) and buys almost nothing. What it actually did was make the SUSPECT rule
+    # easier to satisfy -- 3 bad clips out of ~21 full-mode windows instead of out of 5 -- so
+    # lowering anchor_suspect_min_samples to 2 gets the same detection for free. Measured over
+    # 700 sampled rows per policy: drift 69->62%, drift_swap 68->71%, piecewise 17->24%, zero
+    # false SUSPECT on clean either way, recovery 0.631 -> 0.629. Still a setting, because a
+    # library with very long episodes may want the denser evidence.
+    "sync.escalate_sampled_to_full": ("sync", "bool", False),
     # How many clips must show a real residual before the whole track is transcribed.
     # 2, not 1: measured over 700 sampled rows per policy, going from 1 to 2 cuts fresh Whisper
     # audio 30% (739 -> 517 s/file) for -0.001 recovery and -1pp detection. At 2 the
@@ -592,6 +603,13 @@ SETTING_DEFS: dict = {
     # 93% but drops drift detection from 70% to 45%, which is too much: escalation doesn't repair
     # drift, but it is what NOTICES it.
     "sync.escalate_min_bad_samples": ("sync", "int", 2),
+    # How many clips must disagree before the FILE is called SUSPECT. An absolute count is a
+    # much harder bar on 5 sampled clips (60%) than on a full transcript's ~21 windows (14%),
+    # which is most of what escalating actually bought. 2, not 3: on 14 real healthy episodes not
+    # one has even a SINGLE clip over ANCHOR_SUSPECT_THRESHOLD_S (worst is 1.52s), and 600 clean
+    # matrix rows give zero false SUSPECT at 2 -- so the second clip is free evidence.
+    "sync.anchor_suspect_min_samples": ("sync", "int", 2),
+    "sync.escalate_only_multi_block": ("sync", "bool", True),
     # Off by default, opt-in — see line_order.py.
     "sync.line_order_enabled":       ("sync", "bool", False),
     "sync.line_order_audio_confirm": ("sync", "bool", False),

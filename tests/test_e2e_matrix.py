@@ -265,8 +265,18 @@ class CfgAxisTests(unittest.TestCase):
         cfg = self._cfg("sampled", "off")
         self.assertEqual(cfg.whisper_mode, "sampled")
         self.assertEqual(cfg.sample_count, 5)
-        self.assertTrue(cfg.escalate_sampled_to_full)
         self.assertFalse(cfg.line_order_audio_confirm)
+
+    def test_escalation_follows_the_shipped_default(self):
+        # Asserted against SETTINGS_SPEC, not a literal: the matrix used to pin this True, which
+        # silently overrode a changed default and made a whole measurement read "no effect".
+        from verifyarr.settings import SETTING_DEFS
+        for key, attr in (("sync.escalate_sampled_to_full", "escalate_sampled_to_full"),
+                          ("sync.escalate_min_bad_samples", "escalate_min_bad_samples"),
+                          ("sync.anchor_suspect_min_samples", "anchor_suspect_min_samples"),
+                          ("sync.min_change_seconds", "min_change_seconds")):
+            self.assertEqual(getattr(self._cfg("sampled", "off"), attr), SETTING_DEFS[key][2],
+                             f"{key} is pinned in cfg_for and no longer follows the default")
 
     def test_full_with_audio_confirm(self):
         cfg = self._cfg("full", "on")
