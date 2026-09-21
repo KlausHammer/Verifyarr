@@ -288,6 +288,17 @@ FPS_VAD_MIN_POINTS = 40
 # above PAL, and why most stretched files never produce a fittable pool at all: of 144
 # stretch runs, 32 had no line through even 8 anchors and 8 never reached the branch.
 STRETCH_RESID_TRIM_S = 1.5
+# What counts as "on the line" for keep_frac ONLY (see stretch_probe) -- wider
+# than the fit trim above, on purpose. Whisper segment starts routinely sit
+# 0.5-1.5s off their cue (see ANCHOR_SUSPECT_THRESHOLD_S), so on a true stretch
+# ~10% of anchors fall 1.5-3s off the line: counting them as "off the line"
+# put the 0.90 keep bar INSIDE the jitter tail, where dense full-transcript
+# pools measured it exactly (0.85-0.89) and failed while sparse sampled pools
+# fluctuated around it (0.88-0.96) and passed or failed by luck. The fit itself
+# stays at 1.5 -- a wide fit trim lets a competing structure drag the Theil-Sen
+# median off the true line (seen on small.en: keep 0.97 but resid 0.41, failing
+# the 0.40 bar the wide fit itself inflated). Fit tight, count tolerant.
+STRETCH_KEEP_TRIM_S = 2.5
 STRETCH_MIN_POINTS = 20
 STRETCH_MIN_TILT_S = 8.0      # below this the discrete ratios own the case
 STRETCH_MAX_RATE = 0.08       # above PAL+NTSC compounded is a broken pool, not a rate
@@ -296,9 +307,13 @@ STRETCH_MIN_GAIN_S = 1.50
 STRETCH_MAX_RESID_S = 0.40
 # The load-bearing gate: how much of the pool ONE straight line explains. A stretch
 # covers the file end to end; with k blocks a line reaches about 1/k of the anchors.
-# Worst block pool that clears every OTHER gate sits at 0.86 (C_S02E12/piecewise#3:
-# rho -0.97, gain +3.79, resid 0.24) -- so the margin here is 0.04 and thin. Dropping
-# to 0.88 buys one more episode and spends half the margin; not worth it.
+# Worst block pool measured sits at keep 0.85 (C_S02E09, 6 episodes x 8 seeds x
+# both densities) -- under the bar, and it fails the resid gate too (1.01s vs
+# 0.40s), so keep is not its only stopper. Matrix piecewise pools sit at
+# 0.24-0.63. (An older calibration with 15s clips saw 0.86 on C_S02E12/
+# piecewise#3 clearing every other gate; not reproduced at 30s clips -- max
+# 0.52 there.) Do not lower this bar to chase drift pools -- the count trim
+# (STRETCH_KEEP_TRIM_S) is the jitter-tolerant one; this bar stays strict.
 STRETCH_MIN_KEEP_FRAC = 0.90
 
 
@@ -522,7 +537,8 @@ def robust_rate_fit(points, resid_s: float = STRETCH_RESID_TRIM_S,
     return {"slope": m, "intercept": c, "kept": pts, "n": len(pts), "n_raw": len(raw)}
 
 
-def stretch_probe(points, resid_s: float = STRETCH_RESID_TRIM_S) -> Optional[dict]:
+def stretch_probe(points, resid_s: float = STRETCH_RESID_TRIM_S,
+                  keep_s: float = STRETCH_KEEP_TRIM_S) -> Optional[dict]:
     """The measured-rate reading of an anchor pool, on (x, y) = (audio time, offset).
     Returns {"slope", "tilt", "rho", "gain", "resid", "keep_frac", "n", "n_raw", "span"}.
 
@@ -535,12 +551,15 @@ def stretch_probe(points, resid_s: float = STRETCH_RESID_TRIM_S) -> Optional[dic
     * gain       spread before minus spread after removing the fitted ramp: the
                  flattening test. Remove the rate and a rate error collapses;
                  a block error has no rate to remove.
-    * keep_frac  share of the pool the fitted line explains within resid_s. One line
+    * keep_frac  share of the pool the fitted line explains within keep_s. One line
                  covers a rate error end to end; with k blocks it covers about 1/k.
 
     gain, resid and rho are measured on the SURVIVING points, keep_frac on the whole
     pool -- so a fit that reached tightness by discarding the mess is visible as a low
-    keep_frac rather than as a clean-looking fit."""
+    keep_frac rather than as a clean-looking fit. keep_s is deliberately wider than
+    the fit trim: the fit must be robust (a wide fit trim lets competing structures
+    drag it off the line), while the count must tolerate anchor jitter (see
+    STRETCH_KEEP_TRIM_S)."""
     fit = robust_rate_fit(points, resid_s)
     if fit is None:
         return None
@@ -551,10 +570,13 @@ def stretch_probe(points, resid_s: float = STRETCH_RESID_TRIM_S) -> Optional[dic
     m = fit["slope"]
     before = _spread([y for _, y in kept])
     after = _spread([y - m * x for x, y in kept])
-    return {"slope": m, "intercept": fit["intercept"], "tilt": m * span,
+    c = fit["intercept"]
+    raw = sorted((float(x), float(y)) for x, y in points)
+    on_line = sum(1 for x, y in raw if abs(y - (m * x + c)) <= keep_s)
+    return {"slope": m, "intercept": c, "tilt": m * span,
             "rho": spearman_rho(kept), "gain": before - after, "resid": after,
             "n": len(kept), "n_raw": fit["n_raw"],
-            "keep_frac": len(kept) / fit["n_raw"], "span": span}
+            "keep_frac": on_line / fit["n_raw"], "span": span}
 
 
 def anchor_drift_signature(points, trim_s: float = FPS_ANCHOR_TRIM_S,

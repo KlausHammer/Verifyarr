@@ -187,15 +187,42 @@ class StretchRescaleIntegrationTests(unittest.TestCase):
     def test_two_percent_stretch_is_measured_and_undone(self):
         """C_S02E01, not C_S03E03: after alass mangles the latter its pool lands at
         keep_frac 0.88, just under the gate. Only 7 of 36 stretched episodes survive
-        alass well enough to be fixed at all -- this is one of them."""
+        alass well enough to be fixed at all -- this is one of them.
+
+        Either correction path counts: the pre-alass presync (a "Pre-sync before
+        alass: rate" note, no fps_ratio -- the file never reaches the post-alass
+        branch) or the post-alass stretch rescale (fps_ratio). The late-cue timing
+        below is the real proof; the path is implementation detail."""
         import copy
         orig = M.subs_for("C_S02E01", M.fixture("C_S02E01"))
         bad = copy.deepcopy(orig)
         for e in bad.events:
             e.start, e.end = int(e.start * 1.02), int(e.end * 1.02)
         row, out = self._run("C_S02E01", bad)
-        self.assertTrue((row.get("fps_ratio") or "").startswith("stretch"),
+        fixed_by_post_alass = (row.get("fps_ratio") or "").startswith("stretch")
+        fixed_by_presync = "Pre-sync before alass: rate" in (row.get("note") or "")
+        self.assertTrue(fixed_by_post_alass or fixed_by_presync,
                         f"stretch never fired (note: {(row.get('note') or '')[:300]})")
+        o, n = self._late_cue(orig), self._late_cue(out)
+        self.assertAlmostEqual(n.start / 1000.0, o.start / 1000.0, delta=1.0,
+                               msg="late cue not brought back to its original time")
+
+    @_needs_staging()
+    def test_two_percent_stretch_fixed_in_full_mode(self):
+        """Full mode owns the whole transcript, so it must fix a stretch at least
+        as reliably as sampled -- not worse. Regression: the keep gate's 1.5s
+        line trim sat inside the anchor jitter tail, so dense full pools measured
+        keep 0.85-0.89 (just under the 0.90 bar) where sparse sampled pools
+        fluctuated above it. C_S03E08 recovered 0.057 in full vs 1.000 sampled.
+        Fresh DB, no cache warmup: the trim must clear this on its own."""
+        import copy
+        orig = M.subs_for("C_S03E08", M.fixture("C_S03E08"))
+        bad = copy.deepcopy(orig)
+        for e in bad.events:
+            e.start, e.end = int(e.start * 1.02), int(e.end * 1.02)
+        row, out = self._run("C_S03E08", bad, mode="full")
+        self.assertIn("Pre-sync before alass: rate", row.get("note") or "",
+                      f"presync never fired in full mode (note: {(row.get('note') or '')[:300]})")
         o, n = self._late_cue(orig), self._late_cue(out)
         self.assertAlmostEqual(n.start / 1000.0, o.start / 1000.0, delta=1.0,
                                msg="late cue not brought back to its original time")
