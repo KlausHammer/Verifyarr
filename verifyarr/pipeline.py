@@ -179,6 +179,23 @@ SCREEN_MIN_AGREE_FRAC = 0.80
 
 def screen_pair(video_path: Path, subtitle_path: Path, lang: Optional[str], cfg: Config,
                 conn: sqlite3.Connection, cancel_event=None) -> dict:
+    """screen_pair proper (_screen_pair) plus its own Whisper bill, measured as a DELTA.
+
+    It cannot reset the module-level counter: a sweep screens every file in its batch before
+    any correctness check runs (jobs._run_sweep), so a reset here wipes the previous file's
+    total and each row ends up reporting the last screened file's audio plus everything
+    charged since. The counter's docstring says it is safe because one file runs at a time;
+    that stopped being true when Whisper moved ahead of alass. So: measure the delta, hand it
+    to the row, and let correctness_and_finish keep resetting for its own phase."""
+    before = whisper_cost.snapshot()
+    out = _screen_pair(video_path, subtitle_path, lang, cfg, conn, cancel_event=cancel_event)
+    after = whisper_cost.snapshot()
+    out["cost"] = {k: round(after.get(k, 0.0) - before.get(k, 0.0), 1) for k in after}
+    return out
+
+
+def _screen_pair(video_path: Path, subtitle_path: Path, lang: Optional[str], cfg: Config,
+                 conn: sqlite3.Connection, cancel_event=None) -> dict:
     """Whisper evidence BEFORE alass, so we can answer "does this file need anything at all"
     and stop there when the answer is no.
 
@@ -203,10 +220,6 @@ def screen_pair(video_path: Path, subtitle_path: Path, lang: Optional[str], cfg:
     """
     if not cfg.enable_correctness_check or not cfg.has_stt_configured:
         return {"verdict": "unknown", "reason": "correctness check unavailable"}
-    # The screen is now the file's FIRST Whisper spend, so the per-file accounting starts here.
-    # correctness_and_finish used to reset it, which after this reordering would have wiped the
-    # screen's clips from the report and made every file look cheaper than it is.
-    whisper_cost.reset()
     try:
         subs = load_subs(subtitle_path)
     except Exception as e:
@@ -513,12 +526,24 @@ def sync_pair(video_path: Path, subtitle_path: Path, lang: Optional[str], cfg: C
     current_subs = old_subs
     media_root = cfg.media_root_for(subtitle_path)
 
+    if screen is not None:
+        # Carried to correctness_and_finish (_row_cost), which adds it to this file's bill.
+        row["_screen_cost"] = screen.get("cost")
+
+    alass_bin = resolve_alass_bin()
+    if not cfg.sync_enabled:
+        # Settings -> Automation "What runs" table (sync.enabled), further narrowed for an
+        # auto-triggered run (the Bazarr wanted-subtitles poll) by auto_scan_sync_enabled — see
+        # jobs._effective_cfg. Ahead of the screen's early return on purpose: a screened-clean
+        # file must still report that sync was off, not "already in sync", because nothing
+        # compared it to the audio on the sync side at all.
+        row["sync_status"] = "skipped (disabled in settings)"
+        return row, current_subs
+
     # Whisper already looked at this file (screen_pair) and every clip agreed it is where it
     # belongs. Stop here: no alass, and therefore not the full audio track extraction alass
     # needs either -- the single most expensive step on a slow machine. The clips the screen
     # bought are cached per video, so the correctness check that follows re-reads them for free.
-    if screen is not None:
-        row["_screened"] = True   # popped in correctness_and_finish; tells it not to reset the cost
     if screen is not None and screen.get("verdict") == "ok":
         row["sync_status"] = "already in sync"
         row["sync_max_shift_s"] = round(abs(screen["shift"]), 2) if screen.get("shift") is not None else None
@@ -529,13 +554,6 @@ def sync_pair(video_path: Path, subtitle_path: Path, lang: Optional[str], cfg: C
                        + f" -- all under {SCREEN_TOLERANCE_S}s, so alass was not run.")
         return row, current_subs
 
-    alass_bin = resolve_alass_bin()
-    if not cfg.sync_enabled:
-        # Settings -> Automation "What runs" table (sync.enabled), further narrowed for an
-        # auto-triggered run (the Bazarr wanted-subtitles poll) by auto_scan_sync_enabled — see
-        # jobs._effective_cfg.
-        row["sync_status"] = "skipped (disabled in settings)"
-        return row, current_subs
     if not alass_bin:
         row["sync_status"] = "alass not found"
         return row, current_subs
@@ -563,16 +581,20 @@ def sync_pair(video_path: Path, subtitle_path: Path, lang: Optional[str], cfg: C
         reference_path = resolve_alass_reference(video_path, audio_cache, audio_cache_dir, audio_cache_lock)
         tmp_primary = Path(td) / f"synced{subtitle_path.suffix}"
         ok, msg, stderr_tail = run_alass(alass_bin, reference_path, alass_input, tmp_primary, cfg.split_penalty)
+        # old_subs, not current_subs: the pre-sync only ever reached a temp file, so when alass
+        # fails the bytes on disk are still the original. Returning the pre-synced object would
+        # have the correctness check -- and the line-order cache key it writes -- describe
+        # timings no file has.
         if not ok:
             row["sync_status"] = f"error: {msg}"
-            row["note"] = stderr_tail[:300]
-            return row, current_subs
+            row["note"] = (stderr_tail[:300] + presync_note).strip()
+            return row, old_subs
         try:
             primary_subs = load_subs(tmp_primary)
         except Exception as e:
             row["sync_status"] = "could not parse alass output"
-            row["note"] = str(e)
-            return row, current_subs
+            row["note"] = (str(e) + presync_note).strip()
+            return row, old_subs
 
         # Against the ORIGINAL, not against the pre-synced file: the report should say how far
         # the cues moved in total, and the min_change gate below should judge the whole move.
@@ -1377,6 +1399,15 @@ def _apply_line_order(row: dict, result: dict, swap_severity, current_subs, subt
                          f"review (unconfirmed).")
 
 
+def _row_cost(row: dict) -> dict:
+    """This file's whole Whisper bill: the correctness phase plus what the screen spent
+    before it. The screen's share travels in the row because a sweep charges it one batch
+    ahead of this call, so the module-level counter alone is not one file's total."""
+    pre = row.pop("_screen_cost", None) or {}
+    now = whisper_cost.snapshot()
+    return {k: round(v + (pre.get(k) or 0.0), 1) for k, v in now.items()}
+
+
 def correctness_and_finish(video_path: Path, subtitle_path: Path, lang: Optional[str],
                             cfg: Config, conn: sqlite3.Connection, row: dict, current_subs,
                             bazarr_meta: Optional[dict] = None,
@@ -1389,16 +1420,15 @@ def correctness_and_finish(video_path: Path, subtitle_path: Path, lang: Optional
     single-job cancellation both also expect one file at a time here)."""
     media_root = cfg.media_root_for(subtitle_path)
     # Per file, so the row can report what this check actually cost -- and what the caches saved.
-    # Unless screen_pair already started the accounting for this file (Whisper runs before alass
-    # now), in which case resetting here would throw the screen's own clips away.
-    if not row.pop("_screened", False):
-        whisper_cost.reset()
+    # The screen's own spend is carried in the row (see _row_cost) rather than left in the
+    # counter: in a sweep it was charged before this file's turn came round.
+    whisper_cost.reset()
     # Popped immediately: it's a pysubs2 object sync_pair left for _try_anchor_resync, and nothing
     # that gets persisted or serialized may still be carrying it (see apply_pending_sync).
     pre_sync_subs = row.pop("_pre_sync_subs", None)
     if current_subs is None:
         # sync_pair couldn't parse the original subtitle at all -- nothing to correctness-check.
-        row["whisper_cost"] = whisper_cost.snapshot()
+        row["whisper_cost"] = _row_cost(row)
         update_state(conn, video_path, subtitle_path, row)
         return row
 
@@ -1765,6 +1795,6 @@ def correctness_and_finish(video_path: Path, subtitle_path: Path, lang: Optional
     # safe default -- rather than leave the file unsynced under a "[pending]" status.
     if "_ambiguous_sync" in row:
         apply_pending_sync(subtitle_path, cfg, row, reason=f"correctness check: {row.get('correctness_flag')}")
-    row["whisper_cost"] = whisper_cost.snapshot()
+    row["whisper_cost"] = _row_cost(row)
     update_state(conn, video_path, subtitle_path, row, run_id=run_id, media_root=media_root)
     return row

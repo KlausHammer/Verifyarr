@@ -380,6 +380,12 @@ def _run_sweep(conn: sqlite3.Connection, run_id: int, cfg: Config, force: bool,
             for i, video, subtitle, lang in batch:
                 if cancel_event.is_set():
                     raise JobCancelled("cancelled during screening")
+                if not cfg.sync_enabled:
+                    # The screen exists to decide whether alass has to run. With sync off it
+                    # buys Whisper clips for a question nobody asked, and its "ok" verdict
+                    # would label the file "already in sync" when nothing synced it.
+                    screens[i] = None
+                    continue
                 try:
                     screens[i] = screen_pair(video, subtitle, lang, cfg, conn,
                                              cancel_event=cancel_event)

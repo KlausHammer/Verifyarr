@@ -130,6 +130,76 @@ class ScreenOrderTests(unittest.TestCase):
         self.assertGreater(cost.get("cached_audio_s", 0), 0,
                            f"intet genbrugt fra screeningens klip: {cost}")
 
+    def test_cost_is_this_files_bill_not_the_batchs(self):
+        """A sweep screens every file in the batch BEFORE any correctness check runs, so a
+        reset inside screen_pair wipes the previous file's total: each row then reports the
+        last screened file's audio plus everything charged since. Regression guard --
+        screen_pair measures a delta and hands it to the row instead."""
+        from verifyarr import correctness
+        orig = self._orig()
+        correctness.whisper_cost.reset()
+        correctness.whisper_cost.fresh_s = 999.0     # another file's spend, already charged
+        row, _out, _calls, screen = self._run(copy.deepcopy(orig))
+        self.assertIsNotNone(screen.get("cost"), "screen_pair reported no cost of its own")
+        self.assertLess(row["whisper_cost"]["fresh_audio_s"], 900.0,
+                        f"this row billed for another file's audio: {row['whisper_cost']}")
+        self.assertGreaterEqual(
+            row["whisper_cost"]["fresh_audio_s"] + row["whisper_cost"]["cached_audio_s"],
+            screen["cost"]["fresh_audio_s"] + screen["cost"]["cached_audio_s"],
+            "the screen's own clips fell out of the bill")
+
+    def test_sync_disabled_says_so_even_when_the_screen_cleared_the_file(self):
+        """"already in sync" is a claim about the audio. With sync off nothing compared the
+        file to the audio on the sync side, so the row must say it was skipped."""
+        fx = M.fixture(self.SLUG)
+        video = M.media_dir(self.SLUG) / fx["video_name"]
+        if not video.exists():
+            self.skipTest("no video")
+        lang, segments = M.audio_evidence(MODEL, self.SLUG, fx)
+        work = Path(tempfile.mkdtemp(prefix="screen_off_"))
+        conn = db.connect(work / "t.db")
+        try:
+            cfg = M.cfg_for(conn, "sampled", "on", groq_model=MODEL, sync_enabled=False)
+            tmp = work / "s.srt"
+            self._orig().save(str(tmp))
+            with M.patch_whisper_full(lang, segments), M.patch_sampled_transcription(lang, segments):
+                screen = pipeline.screen_pair(video, tmp, "en", cfg, conn)
+                row, _subs = pipeline.sync_pair(video, tmp, "en", cfg, {}, work, screen=screen)
+            self.assertEqual(row.get("sync_status"), "skipped (disabled in settings)")
+        finally:
+            conn.close()
+
+    def test_alass_failure_returns_what_is_on_disk(self):
+        """The pre-sync only ever reaches a temp file. If alass fails, the bytes on disk are
+        the original -- so the correctness check that follows must be handed those, not the
+        pre-synced object it never wrote."""
+        fx = M.fixture(self.SLUG)
+        video = M.media_dir(self.SLUG) / fx["video_name"]
+        if not video.exists():
+            self.skipTest("no video")
+        lang, segments = M.audio_evidence(MODEL, self.SLUG, fx)
+        work = Path(tempfile.mkdtemp(prefix="screen_fail_"))
+        conn = db.connect(work / "t.db")
+        real_alass = pipeline.run_alass
+        pipeline.run_alass = lambda *a, **kw: (False, "boom", "alass exploded")
+        try:
+            cfg = M.cfg_for(conn, "sampled", "on", groq_model=MODEL)
+            bad = copy.deepcopy(self._orig())
+            for e in bad.events:            # 2% stretch: the screen WILL pre-sync this
+                e.start, e.end = int(e.start * 1.02), int(e.end * 1.02)
+            tmp = work / "s.srt"
+            bad.save(str(tmp))
+            with M.patch_whisper_full(lang, segments), M.patch_sampled_transcription(lang, segments):
+                screen = pipeline.screen_pair(video, tmp, "en", cfg, conn)
+                row, subs = pipeline.sync_pair(video, tmp, "en", cfg, {}, work, screen=screen)
+            self.assertTrue((row.get("sync_status") or "").startswith("error:"))
+            on_disk = load_subs(tmp)
+            self.assertEqual([e.start for e in subs.events], [e.start for e in on_disk.events],
+                             "returned timings are not the ones on disk")
+        finally:
+            pipeline.run_alass = real_alass
+            conn.close()
+
 
 if __name__ == "__main__":
     unittest.main()
