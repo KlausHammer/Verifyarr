@@ -263,6 +263,43 @@ FPS_LOO_PARTS = 8
 FPS_VAD_MAXGAP_S = 2.0
 FPS_VAD_TRIM_S = 1.5
 FPS_VAD_MIN_POINTS = 40
+# Monotonicity is measured (anchor_drift_signature returns "rho") but deliberately
+# NOT gated on here. On the four real 0.1% files rho is only 0.48-0.68, while the
+# healthy file with the largest tilt (C_S03E05) reaches 0.74 -- a floor would veto a
+# real case before a false one. At 0.1% the offset moves 1.2s over 20 minutes, which
+# is the same size as the matching jitter, so the ordering is genuinely weak. It is
+# the large-stretch branch below that can use it.
+
+# --- measured-rate stretch (the large case the discrete ratios cannot reach) ---
+# A 2% stretch displaces the end of a 21-minute file by 25s, so the +-8s median trim
+# above throws the signal away and the 1001/1000 ratios are the wrong size anyway.
+# This branch fits the rate instead, trimming residuals about the LINE so any slope
+# survives, and confirms it by flattening: applying the fit must collapse the
+# residual spread to healthy-file levels.
+# Calibrated THROUGH the pipeline (tests/e2e_matrix.run_one, sampled mode, tiny.en):
+# 18 episodes x {clean, uniform, swap, gap, piecewise x4 seeds, fps_late, fps_early,
+# drift, drift_swap} = 216 cases. Result: 7 of 36 stretched episodes corrected,
+# 0 of 180 others touched.
+#
+# Measuring OUTSIDE the pipeline gave 77% instead of 19% and was wrong: alass runs
+# first and rewrites the file, so the pool we actually see is not the injected error.
+# On a 2% stretch alass guesses a false PAL conversion (25/24) and applies it on top,
+# turning 2% into 6.25% (measured, C_S03E03) -- which is why the rate cap has to sit
+# above PAL, and why most stretched files never produce a fittable pool at all: of 144
+# stretch runs, 32 had no line through even 8 anchors and 8 never reached the branch.
+STRETCH_RESID_TRIM_S = 1.5
+STRETCH_MIN_POINTS = 20
+STRETCH_MIN_TILT_S = 8.0      # below this the discrete ratios own the case
+STRETCH_MAX_RATE = 0.08       # above PAL+NTSC compounded is a broken pool, not a rate
+STRETCH_RHO_MIN = 0.90
+STRETCH_MIN_GAIN_S = 1.50
+STRETCH_MAX_RESID_S = 0.40
+# The load-bearing gate: how much of the pool ONE straight line explains. A stretch
+# covers the file end to end; with k blocks a line reaches about 1/k of the anchors.
+# Worst block pool that clears every OTHER gate sits at 0.86 (C_S02E12/piecewise#3:
+# rho -0.97, gain +3.79, resid 0.24) -- so the margin here is 0.04 and thin. Dropping
+# to 0.88 buys one more episode and spends half the margin; not worth it.
+STRETCH_MIN_KEEP_FRAC = 0.90
 
 
 def anchors_applicable(sub_lang: Optional[str], audio_lang: Optional[str]) -> bool:
@@ -421,6 +458,105 @@ def tilt_from_points(points, trim_s: float, min_points: int, stride: int = 1):
     return _theil_tilt(pts[::stride or 1])
 
 
+def spearman_rho(points) -> Optional[float]:
+    """Rank correlation between x and y: +-1 when the offset marches through the file in
+    one direction, near 0 when it steps and sits. This is the one statistic that tells a
+    rate error from a block error -- a block file's offset is huge but not ordered.
+    Ties get average ranks. None below 4 points."""
+    pts = [(float(x), float(y)) for x, y in points]
+    if len(pts) < 4:
+        return None
+
+    def ranks(vals):
+        order = sorted(range(len(vals)), key=lambda i: vals[i])
+        out = [0.0] * len(vals)
+        i = 0
+        while i < len(order):
+            j = i
+            while j + 1 < len(order) and vals[order[j + 1]] == vals[order[i]]:
+                j += 1
+            avg = (i + j) / 2.0 + 1.0
+            for k in range(i, j + 1):
+                out[order[k]] = avg
+            i = j + 1
+        return out
+
+    rx, ry = ranks([x for x, _ in pts]), ranks([y for _, y in pts])
+    mx, my = statistics.mean(rx), statistics.mean(ry)
+    num = sum((a - mx) * (b - my) for a, b in zip(rx, ry))
+    den = (sum((a - mx) ** 2 for a in rx) * sum((b - my) ** 2 for b in ry)) ** 0.5
+    return None if den == 0 else num / den
+
+
+def robust_rate_fit(points, resid_s: float = STRETCH_RESID_TRIM_S,
+                    floor: int = 8, iters: int = 3) -> Optional[dict]:
+    """Theil-Sen line refitted with residuals trimmed about the LINE, not the median.
+    The median trim only works while the tilt is small -- on a 2% stretch it discards
+    the very signal it is meant to measure (40 anchors down to 19). Returns
+    {"slope", "intercept", "kept", "n", "n_raw"}, or None below `floor` points.
+
+    `floor` is deliberately low: the fit should always produce a reading so the
+    caller can gate on HOW MUCH of the pool the line explains (stretch_probe's
+    keep_frac), rather than on the fit quietly failing."""
+    raw = sorted((float(x), float(y)) for x, y in points)
+    if len(raw) < floor:
+        return None
+    pts = raw
+    m = c = None
+    for _ in range(max(1, iters)):
+        slopes = sorted((y2 - y1) / (x2 - x1)
+                        for i, (x1, y1) in enumerate(pts)
+                        for x2, y2 in pts[i + 1:] if x2 != x1)
+        if not slopes:
+            return None
+        m = statistics.median(slopes)
+        c = statistics.median(y - m * x for x, y in pts)
+        kept = [(x, y) for x, y in raw if abs(y - (m * x + c)) <= resid_s]
+        # Too few points near the line means the line does not describe this pool.
+        # Returning the untrimmed set instead would report a tight fit over a mess.
+        if len(kept) < floor:
+            return None
+        if kept == pts:
+            break
+        pts = kept
+    return {"slope": m, "intercept": c, "kept": pts, "n": len(pts), "n_raw": len(raw)}
+
+
+def stretch_probe(points, resid_s: float = STRETCH_RESID_TRIM_S) -> Optional[dict]:
+    """The measured-rate reading of an anchor pool, on (x, y) = (audio time, offset).
+    Returns {"slope", "tilt", "rho", "gain", "resid", "keep_frac", "n", "n_raw", "span"}.
+
+    Four independent things a real rate error does, and a block error cannot do all of:
+
+    * tilt       slope x span, seconds -- how far the file has walked by the end
+    * rho        monotonicity of the pool (see spearman_rho). A rate error marches;
+                 a block error steps and sits. This is what tells them apart --
+                 but a SINGLE block in one direction ranks monotone too, so:
+    * gain       spread before minus spread after removing the fitted ramp: the
+                 flattening test. Remove the rate and a rate error collapses;
+                 a block error has no rate to remove.
+    * keep_frac  share of the pool the fitted line explains within resid_s. One line
+                 covers a rate error end to end; with k blocks it covers about 1/k.
+
+    gain, resid and rho are measured on the SURVIVING points, keep_frac on the whole
+    pool -- so a fit that reached tightness by discarding the mess is visible as a low
+    keep_frac rather than as a clean-looking fit."""
+    fit = robust_rate_fit(points, resid_s)
+    if fit is None:
+        return None
+    kept = fit["kept"]
+    span = kept[-1][0] - kept[0][0]
+    if span <= 0 or len(kept) < 4:
+        return None
+    m = fit["slope"]
+    before = _spread([y for _, y in kept])
+    after = _spread([y - m * x for x, y in kept])
+    return {"slope": m, "intercept": fit["intercept"], "tilt": m * span,
+            "rho": spearman_rho(kept), "gain": before - after, "resid": after,
+            "n": len(kept), "n_raw": fit["n_raw"],
+            "keep_frac": len(kept) / fit["n_raw"], "span": span}
+
+
 def anchor_drift_signature(points, trim_s: float = FPS_ANCHOR_TRIM_S,
                            min_points: int = FPS_MIN_ANCHORS,
                            nbins: int = FPS_BINS, min_votes: int = FPS_MIN_VOTES,
@@ -434,6 +570,10 @@ def anchor_drift_signature(points, trim_s: float = FPS_ANCHOR_TRIM_S,
       span -- a bad clip holding 30% of the points is only 1-2 votes here).
     * drops: the tilt with each 1/8 x-range part left out (redundancy: a global
       drift survives dropping any eighth; a tilt hinged on one region collapses).
+    * rho: monotonicity (spearman_rho). A rate error walks the offset steadily
+      later and later through the file; a block error steps and sits. This is the
+      one statistic that separates the two -- the other three measure HOW MUCH the
+      pool tilts, not whether the tilt is ordered.
 
     Why three: sampled anchor pools are noisy (matching jitter plus 1-2 bad clips
     per file), and EVERY single statistic misfires on some healthy file -- plain
@@ -473,7 +613,8 @@ def anchor_drift_signature(points, trim_s: float = FPS_ANCHOR_TRIM_S,
             drops.append(_theil_tilt(rest) if len(rest) >= min_points else None)
     else:
         drops = [None] * loo_parts
-    return {"tilt": tilt, "binned": binned, "drops": drops, "n": len(pts)}
+    return {"tilt": tilt, "binned": binned, "drops": drops, "n": len(pts),
+            "rho": spearman_rho(pts)}
 
 
 def vad_tilt_from_intervals(subs, intervals):
@@ -535,17 +676,28 @@ def vad_tilt_from_intervals(subs, intervals):
     return tilt_from_points(kept, FPS_VAD_TRIM_S, FPS_VAD_MIN_POINTS, stride=3), len(kept)
 
 
-def apply_fps_rescale(subs, ratio: float) -> float:
-    """Retimes every cue in place as new_t = ratio * t (c = 0: the pivot is the file
-    start, which is where a framerate mismatch pivots). c = 0 restores the original
-    timing -- and therefore the original cue lead -- exactly; a median-preserving
-    offset instead bakes the ramp's own median (0.001 * t_median, +0.63s on 21 min)
-    in as a permanent global shift (measured on synthetic round-trips). Returns the
-    largest absolute cue change in seconds. Clamps at zero like apply_anchor_resync."""
+def apply_fps_rescale(subs, ratio: float, offset: float = 0.0) -> float:
+    """Retimes every cue in place as new_t = ratio * (t + offset).
+
+    The framerate path passes offset = 0: the pivot is the file start, which is where
+    a framerate mismatch pivots, and that restores the original timing -- cue lead
+    included -- exactly. A median-preserving offset instead bakes the ramp's own median
+    (0.001 * t_median, +0.63s on 21 min) in as a permanent global shift (measured on
+    synthetic round-trips).
+
+    The measured-rate path passes the FITTED intercept, because there the file is not
+    pivoting at zero: alass has already shifted it, so the pool reads a rate AND an
+    offset, and undoing only the rate leaves the shift behind (measured: 19s left on
+    C_S02E01). Solving a - s = m*a + c for a gives a = (s + c) / (1 - m) -- ratio and
+    offset together are that inverse.
+
+    Returns the largest absolute cue change in seconds. Clamps at zero like
+    apply_anchor_resync."""
+    off_ms = offset * 1000.0
     worst = 0.0
     for e in subs.events:
-        new_start = max(0, int(round(e.start * ratio)))
-        new_end = max(new_start, int(round(e.end * ratio)))
+        new_start = max(0, int(round((e.start + off_ms) * ratio)))
+        new_end = max(new_start, int(round((e.end + off_ms) * ratio)))
         worst = max(worst, abs(new_start - e.start) / 1000.0, abs(new_end - e.end) / 1000.0)
         e.start, e.end = new_start, new_end
     return worst

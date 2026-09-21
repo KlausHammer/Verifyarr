@@ -108,5 +108,123 @@ class FpsRescaleIntegrationTests(unittest.TestCase):
                                msg="alass did not repair the injected scale")
 
 
+class StretchProbeUnitTests(unittest.TestCase):
+    """The four readings, on pools whose shape is known by construction."""
+
+    @staticmethod
+    def _pool(fn, n=45, step=30.0, noise=0.2, seed=7):
+        import random
+        rng = random.Random(seed)
+        return [(i * step, fn(i * step) + rng.gauss(0, noise)) for i in range(n)]
+
+    def test_stretch_reads_its_own_rate(self):
+        from verifyarr.subtitles import stretch_probe
+        p = stretch_probe(self._pool(lambda t: -0.02 * t))
+        self.assertAlmostEqual(p["slope"], -0.02, delta=0.002)
+        self.assertGreater(abs(p["rho"]), 0.95)
+        self.assertGreater(p["keep_frac"], 0.9)
+        self.assertLess(p["resid"], 0.6)
+
+    def test_blocks_leave_most_of_the_pool_off_the_line(self):
+        """The discriminator: a line cannot cover several blocks at once."""
+        from verifyarr.subtitles import stretch_probe
+        shifts = [-12.0, 7.0, -5.0, 14.0, -9.0, 3.0]
+        p = stretch_probe(self._pool(lambda t: shifts[min(5, int(t // 240))]))
+        self.assertTrue(p is None or p["keep_frac"] < 0.65,
+                        f"block pool looked like one line: {p}")
+
+    def test_single_monotone_step_is_not_a_rate(self):
+        """One big step ranks monotone (rho 0.87 on a clean step) -- rho alone would
+        take it. keep_frac and the flattening test are what stop it."""
+        from verifyarr.subtitles import stretch_probe, STRETCH_MIN_KEEP_FRAC
+        p = stretch_probe(self._pool(lambda t: 0.0 if t < 660 else 12.0))
+        self.assertTrue(p is None or p["keep_frac"] < STRETCH_MIN_KEEP_FRAC
+                        or p["resid"] > 0.6, f"step read as a rate: {p}")
+
+    def test_healthy_pool_has_no_tilt_and_no_gain(self):
+        from verifyarr.subtitles import stretch_probe
+        p = stretch_probe(self._pool(lambda t: 0.15, noise=0.3))
+        self.assertLess(abs(p["tilt"]), 1.0)
+        self.assertLess(p["gain"], 0.5)
+
+    def test_line_trim_survives_a_slope_the_median_trim_would_discard(self):
+        """Why the fit trims about the LINE: a 2% pool spans +-25s, so a median trim
+        throws the signal away. robust_rate_fit must keep essentially everything."""
+        from verifyarr.subtitles import robust_rate_fit, anchor_drift_signature
+        pool = self._pool(lambda t: -0.02 * t)
+        fit = robust_rate_fit(pool)
+        self.assertGreater(fit["n"] / fit["n_raw"], 0.9)
+        sig = anchor_drift_signature(pool)
+        self.assertLess(sig["n"], 0.7 * fit["n"],
+                        "median trim should discard much of a 2% pool; the line trim should not")
+
+    def test_bad_fit_returns_none_rather_than_the_untrimmed_pool(self):
+        """Regression: returning pts on a failed trim reported resid 3.76s as a
+        keep_frac of 1.00 -- a tight fit over a mess."""
+        from verifyarr.subtitles import robust_rate_fit
+        import random
+        rng = random.Random(3)
+        scattered = [(i * 30.0, rng.uniform(-40, 40)) for i in range(45)]
+        fit = robust_rate_fit(scattered, floor=20)
+        self.assertTrue(fit is None or fit["n"] < 45)
+
+    def test_spearman_is_signed_and_tie_safe(self):
+        from verifyarr.subtitles import spearman_rho
+        self.assertAlmostEqual(spearman_rho([(i, i) for i in range(10)]), 1.0)
+        self.assertAlmostEqual(spearman_rho([(i, -i) for i in range(10)]), -1.0)
+        self.assertIsNone(spearman_rho([(i, 5.0) for i in range(10)]))
+        self.assertIsNone(spearman_rho([(0, 0), (1, 1)]))
+
+
+class StretchRescaleIntegrationTests(unittest.TestCase):
+    """The round-1 lesson: measure through process_pair, never through the functions
+    alone. A dead path passed seven unit tests and fired 0 times in 360 matrix rows."""
+
+    _run = FpsRescaleIntegrationTests._run
+    _late_cue = FpsRescaleIntegrationTests._late_cue
+
+    @_needs_staging()
+    def test_two_percent_stretch_is_measured_and_undone(self):
+        """C_S02E01, not C_S03E03: after alass mangles the latter its pool lands at
+        keep_frac 0.88, just under the gate. Only 7 of 36 stretched episodes survive
+        alass well enough to be fixed at all -- this is one of them."""
+        import copy
+        orig = M.subs_for("C_S02E01", M.fixture("C_S02E01"))
+        bad = copy.deepcopy(orig)
+        for e in bad.events:
+            e.start, e.end = int(e.start * 1.02), int(e.end * 1.02)
+        row, out = self._run("C_S02E01", bad)
+        self.assertTrue((row.get("fps_ratio") or "").startswith("stretch"),
+                        f"stretch never fired (note: {(row.get('note') or '')[:300]})")
+        o, n = self._late_cue(orig), self._late_cue(out)
+        self.assertAlmostEqual(n.start / 1000.0, o.start / 1000.0, delta=1.0,
+                               msg="late cue not brought back to its original time")
+
+    @_needs_staging()
+    def test_block_errors_do_not_trigger_the_stretch_branch(self):
+        import random
+        orig = M.subs_for("C_S03E03", M.fixture("C_S03E03"))
+        for seed in (0, 1, 2):
+            bad, _k, _d = M.corrupt_piecewise(orig, random.Random(f"C_S03E03|{seed}"))
+            row, _ = self._run("C_S03E03", bad)
+            self.assertFalse((row.get("fps_ratio") or "").startswith("stretch"),
+                             f"stretch fired on piecewise seed {seed}: {row.get('note')}")
+
+    @_needs_staging()
+    def test_healthy_file_still_untouched_by_the_new_branch(self):
+        orig = M.subs_for("C_S03E03", M.fixture("C_S03E03"))
+        row, _ = self._run("C_S03E03", orig)
+        self.assertIsNone(row.get("fps_ratio"), f"stretch fired on healthy: {row.get('note')}")
+
+    @_needs_staging()
+    def test_real_zero_point_one_percent_still_takes_the_discrete_path(self):
+        """The 8s tilt floor is the branch selector: 0.1% must not be read as a rate."""
+        orig = M.subs_for("C_S03E04", M.fixture("C_S03E04"))
+        row, _ = self._run("C_S03E04", orig)
+        self.assertEqual(row.get("fps_ratio"), "24 -> 23.976",
+                         f"discrete path lost the real drift case: {row.get('note')}")
+
+
+
 if __name__ == "__main__":
     unittest.main()

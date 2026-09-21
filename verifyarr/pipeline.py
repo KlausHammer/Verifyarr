@@ -22,6 +22,8 @@ from verifyarr.subtitles import (
     ANCHOR_SUSPECT_THRESHOLD_S, plan_anchor_resync, apply_anchor_resync,
     anchor_spread, ANCHOR_SCREEN_SPREAD_S, anchor_points,
     tilt_from_points, vad_tilt_from_intervals, apply_fps_rescale, _spread,
+    stretch_probe, STRETCH_MIN_POINTS, STRETCH_MIN_TILT_S, STRETCH_MAX_RATE,
+    STRETCH_RHO_MIN, STRETCH_MIN_GAIN_S, STRETCH_MAX_RESID_S, STRETCH_MIN_KEEP_FRAC,
     anchor_drift_signature,
     FPS_RATIOS, FPS_ANCHOR_TILT_MIN_S, FPS_BINNED_TILT_MIN_S, FPS_LOO_TILT_MIN_S,
     FPS_VAD_TILT_MIN_S, FPS_MIN_ANCHORS,
@@ -892,6 +894,84 @@ def _anchor_signature_passes(sig: Optional[dict]) -> Optional[float]:
     return tilt
 
 
+def _try_stretch_rescale(subtitle_path: Path, cfg: Config, media_root: Path,
+                         current_subs, pts: list):
+    """Fixes a stretched subtitle by the MEASURED rate, for the case the discrete
+    1001/1000 ratios cannot reach: a whole-file rate error big enough to walk the end
+    of the file 8+ seconds out (a 2% stretch moves it 25s on 21 minutes). The discrete
+    path cannot see it at all -- its +-8s median trim discards a +-25s signal.
+
+    The hard part is not seeing the tilt; a block error tilts too, often further. It is
+    telling a rate error from a block error, and five readings have to agree
+    (subtitles.stretch_probe, thresholds and their evidence in subtitles.STRETCH_*):
+
+      keep_frac  one straight line explains almost the whole anchor pool. THE
+                 discriminator: a stretch is one line end to end, while k blocks
+                 leave a line reaching about 1/k of the anchors.
+      gain       removing the fitted ramp collapses the residual spread...
+      resid      ...to where a healthy file sits
+      |rho|      the offset is ordered, not stepped
+      |rate|     above PAL+NTSC compounded is a broken pool, not a rate
+
+    Monotonicity alone is NOT enough, which is worth saying because it looks like it
+    should be: 5 of 420 block-error pools reach |rho| 0.91-0.95 with gains up to +6.7s
+    and residuals as low as 0.13s. keep_frac is what stops all five. Ablation over 914
+    pools: dropping keep_frac costs 6 false positives, the rate cap 8, resid 1; tilt,
+    rho and the point floor cost none there and are kept only as redundancy.
+
+    Measured through the matrix (tiny.en, 280 rows): 14 rows corrected, 0 false
+    positives. drift recovery 0.061 -> 0.164 sampled and 0.093 -> 0.201 full;
+    piecewise, clean, uniform and gap unchanged. Separately over 18 episodes x 9
+    scenarios: 7 of 36 stretched episodes corrected, 0 of 180 others touched.
+
+    The catch rate is low for one reason, and it is not the gates: alass runs BEFORE
+    this and rewrites the file, so what reaches here is no longer the original error.
+    On a 2% stretch alass guesses a false PAL conversion and applies it on top,
+    turning 2% into 6.25% (measured, C_S03E03), and of 144 stretch runs 32 left no
+    line through even 8 anchors. Measured on the same files BEFORE alass the pool
+    reads the true rate (-1.99%, keep_frac 0.93, rho -0.99) and a correction from it
+    lands 12 of 12 files inside 1s -- so the right home for this is ahead of alass,
+    not behind it. See the findings log, sections 10.6-10.8.
+
+    Unlike the framerate path this passes the fitted intercept to apply_fps_rescale:
+    the file is not pivoting at zero any more once alass has shifted it, and undoing
+    only the rate leaves that shift behind (measured: 19s on C_S02E01).
+
+    Returns (fixed_subs, note_fragment, info) or None.
+    """
+    if not cfg.fps_check_enabled:
+        return None
+    p = stretch_probe([(a, a - s) for a, s in pts])
+    if p is None or p["rho"] is None:
+        return None
+    if p["n"] < STRETCH_MIN_POINTS or abs(p["tilt"]) < STRETCH_MIN_TILT_S:
+        return None
+    if abs(p["slope"]) > STRETCH_MAX_RATE or abs(p["rho"]) < STRETCH_RHO_MIN:
+        return None
+    if p["gain"] < STRETCH_MIN_GAIN_S or p["resid"] > STRETCH_MAX_RESID_S:
+        return None
+    if p["keep_frac"] < STRETCH_MIN_KEEP_FRAC:
+        return None
+    # a = (s + c) / (1 - m): the rate and the offset are one inverse. alass has
+    # usually shifted the file already, so undoing only the rate leaves its shift.
+    ratio = 1.0 / (1.0 - p["slope"])
+    import copy as _copy
+    fixed = _copy.deepcopy(current_subs)
+    worst = apply_fps_rescale(fixed, ratio, offset=p["intercept"])
+    if worst < cfg.min_change_seconds:
+        return None
+    _write_fix(subtitle_path, cfg, media_root, fixed)
+    name = f"stretch {(ratio - 1) * 100:+.2f}%"
+    info = {"name": name, "kind": "stretch", "ratio": ratio, "atilt": p["tilt"],
+            "vtilt": None, "n_anchors": p["n"], "n_vad": 0, "worst": worst, "probe": p}
+    note = (f" rate {name} offset {p['intercept']:+.1f}s "
+            f"(tilt {p['tilt']:+.1f}s over {p['n']} anchors, "
+            f"rho {p['rho']:+.2f}, spread {p['gain']:+.2f}s tighter to {p['resid']:.2f}s, "
+            f"{p['keep_frac']:.0%} of the pool on the line).")
+    log.info("stretch rescale %s for %s: %s", name, subtitle_path.name, note.strip())
+    return fixed, note, info
+
+
 def _try_fps_rescale(conn: sqlite3.Connection, video_path: Path, subtitle_path: Path,
                      lang: Optional[str], cfg: Config, media_root: Path,
                      current_subs, result: dict):
@@ -936,6 +1016,12 @@ def _try_fps_rescale(conn: sqlite3.Connection, video_path: Path, subtitle_path: 
     if cfg.fps_require_full_coverage and not result.get("full_coverage"):
         return None  # sparse clips trigger (below), they never fix
     pts = _fps_points(result)
+    # Large stretch first: it fails every gate below by construction (a 2% stretch
+    # blows the base-spread gate and the +-8s median trim throws its own signal
+    # away), and the discrete ratios are the wrong size for it anyway.
+    stretch = _try_stretch_rescale(subtitle_path, cfg, media_root, current_subs, pts)
+    if stretch is not None:
+        return stretch
     if len(pts) < FPS_MIN_ANCHORS:
         return None
     if _spread([a - s for a, s in pts]) > FPS_MAX_BASE_SPREAD_S:
@@ -1245,7 +1331,8 @@ def correctness_and_finish(video_path: Path, subtitle_path: Path, lang: Optional
                 # Says the file was REWRITTEN. Without it a framerate fix leaves sync_status on
                 # "already in sync", and every "healthy files untouched" count -- the matrix's
                 # included -- reads a rewritten file as untouched.
-                row["sync_status"] = f"fixed (framerate {fps_info['name']}, up to {fps_info['worst']:.1f}s)"
+                kind = "rate" if fps_info.get("kind") == "stretch" else "framerate"
+                row["sync_status"] = f"fixed ({kind} {fps_info['name']}, up to {fps_info['worst']:.1f}s)"
                 row["note"] = (row["note"] + fps_note).strip()
                 pre_recheck_collected = collected
                 collected, result, swap_severity = _recheck_after_resync(
