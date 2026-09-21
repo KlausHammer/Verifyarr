@@ -1138,6 +1138,12 @@ def _try_stretch_rescale(subtitle_path: Path, cfg: Config, media_root: Path,
     lands 12 of 12 files inside 1s -- so the right home for this is ahead of alass,
     not behind it. See the findings log, sections 10.6-10.8.
 
+    Since presync_from_screen took that job this branch fires 0 times in 4200 matrix
+    rows, and no test asserts it fires. It is NOT dead: it is the only stretch fix on
+    every path where the screen does not run -- bazarr.py without a `conn`, jobs.py
+    when a screen raises, and any file the screen calls "unknown". Keep it, and do
+    not read the zero as unused code.
+
     Unlike the framerate path this passes the fitted intercept to apply_fps_rescale:
     the file is not pivoting at zero any more once alass has shifted it, and undoing
     only the rate leaves that shift behind (measured: 19s on C_S02E01).
