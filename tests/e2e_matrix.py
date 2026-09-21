@@ -305,6 +305,24 @@ def patch_sampled_transcription(lang, segments):
         line_order._extract_and_transcribe = real
 
 
+_FRESH = {}
+
+
+def _fresh_conn_cfg(work, key, mode, audio, model, esc_over):
+    """One throwaway DB for one row (--fresh-db). Reuses a single path, wiped each
+    time, so a 920-row arm leaves one file behind rather than 920."""
+    old = _FRESH.pop("conn", None)
+    if old is not None:
+        with contextlib.suppress(Exception):
+            old.close()
+    for stale in work.glob("e2e_fresh.db*"):
+        with contextlib.suppress(Exception):
+            stale.unlink()
+    conn = db.connect(work / "e2e_fresh.db")
+    _FRESH["conn"] = conn
+    return conn, cfg_for(conn, mode, audio, groq_model=model, **esc_over)
+
+
 def cfg_for(conn, mode="full", audio="on", **over) -> Config:
     cfg = Config.from_db(conn)
     vals = dict(
@@ -850,6 +868,16 @@ def main(argv=None):
     out_stem = argv[argv.index("--out") + 1] if "--out" in argv else "e2e_matrix"
     shard = argv[argv.index("--shard") + 1] if "--shard" in argv else ""
     redo = "--redo" in argv
+    # --fresh-db: one throwaway DB per ROW instead of one per (model, mode) shard.
+    #
+    # The shared DB is not a detail. The clip cache is keyed on (video_path,
+    # region_index), so every row for an episode inherits the clips its predecessors
+    # bought -- and a sampled row that would see 18 anchors on its own sees 46 after a
+    # dozen earlier scenarios primed the same video. Measured: SH_S01E06 drift sampled
+    # flips from warned (fresh) to fixed (primed). Production meets each file once.
+    # So the shared-DB number is the optimistic one and this is the honest one; keep
+    # both, and never quote the primed figure as what a first run will do.
+    fresh_db = "--fresh-db" in argv
     # Escalation policy under test: how many clips must show a real residual before the whole
     # track gets transcribed (see sync.escalate_min_bad_samples), and --no-escalate to switch
     # the whole ladder off. Escalation is ~10x the audio a sampled run otherwise spends.
@@ -964,6 +992,9 @@ def main(argv=None):
                         key = (model, slug, name, mode, audio)
                         if key in done:
                             continue
+                        if fresh_db:
+                            conn, cfg = _fresh_conn_cfg(work, key, mode, audio,
+                                                        model, esc_over)
                         s_rng = random.Random(f"matrix-v1:{slug}:{name}")
                         # wrong_episode is the one corruption that needs a second
                         # episode, so it takes the slug to know which one NOT to use.

@@ -58,12 +58,12 @@ def main():
     out_stem = sys.argv[sys.argv.index("--out") + 1] if "--out" in sys.argv else "e2e_matrix"
     extra = []
     for flag in ("--scenarios", "--mode", "--audio-confirm", "--out", "--redo",
-                 "--escalate-min-bad", "--no-escalate", "--suspect-min",
+                 "--fresh-db", "--escalate-min-bad", "--no-escalate", "--suspect-min",
                  "--escalate-any-block", "--escalate-on",
                  "--sample-count", "--clip-seconds", "--fps-sampled-fix"):
         if flag in sys.argv:
-            if flag in ("--redo", "--no-escalate", "--escalate-any-block", "--escalate-on",
-                        "--fps-sampled-fix"):
+            if flag in ("--redo", "--fresh-db", "--no-escalate", "--escalate-any-block",
+                        "--escalate-on", "--fps-sampled-fix"):
                 extra.append(flag)
             else:
                 extra += [flag, sys.argv[sys.argv.index(flag) + 1]]
