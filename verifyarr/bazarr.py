@@ -418,7 +418,14 @@ def _find_fresh_local_subtitle(video_path: Path, lang: Optional[str], newer_than
         if lang and _lang_from_name_parts(f.name, len(stem)) != lang:
             continue
         candidates.append(f)
-    return max(candidates, key=lambda f: f.stat().st_mtime) if candidates else None
+    # Guarded like the stat in the loop above: Bazarr can rename a file mid-scan, and an
+    # OSError here would abort the whole remediation rather than lose one candidate.
+    def _mtime(f: Path) -> float:
+        try:
+            return f.stat().st_mtime
+        except OSError:
+            return -1.0
+    return max(candidates, key=_mtime) if candidates else None
 
 
 def _remediate(video_path: Path, series_id, episode_id, lang: Optional[str], cfg: Config,

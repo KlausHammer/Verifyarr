@@ -85,9 +85,34 @@ class RunnerTests(unittest.TestCase):
     def test_unconfigured_returns_none(self):
         class Cfg:
             pass
-        self.assertIsNone(vad.timeline_for_video(None, "/nonexistent.mkv", Cfg()))
+        intervals, whole = vad.timeline_for_video(None, "/nonexistent.mkv", Cfg())
+        self.assertIsNone(intervals)
+        self.assertTrue(whole, "no timeline at all is not a partial one")
         self.assertIsNone(vad.run_vad_timeline("/nonexistent.mkv", "", ""))
         self.assertIsNone(vad.run_vad_timeline("/nonexistent.mkv", "/no/bin", "/no/model"))
+
+
+
+
+class PartialTimelineTests(unittest.TestCase):
+    """Cached clips map only what has been sampled. Absence of data there is not silence."""
+
+    def test_partial_timeline_never_reports_silence(self):
+        # one clip's worth of speech at 100-120s; the region at 600s was never sampled
+        ivs = [(100.0, 120.0)]
+        self.assertIsNone(vad.pick_sample_time(SUBS, ivs, 600.0, 700.0, 30.0, 650.0),
+                          "whole-file timeline should still call an empty stretch silent")
+        self.assertEqual(vad.pick_sample_time(SUBS, ivs, 600.0, 700.0, 30.0, 650.0,
+                                              whole_file=False),
+                         650.0, "unsampled region was written off as silence")
+
+    def test_partial_timeline_still_nudges_onto_known_speech(self):
+        """Moving onto speech we KNOW about is safe on partial data -- only the silence
+        verdict is not. Losing the nudge would be the wrong way to fix this."""
+        ivs = [(150.0, 200.0)]
+        got = vad.pick_sample_time(SUBS, ivs, 90.0, 220.0, 30.0, 160.0, whole_file=False)
+        self.assertIsNotNone(got)
+        self.assertGreater(vad.speech_coverage(ivs, got, got + 30.0), 0.0)
 
 
 if __name__ == "__main__":

@@ -405,7 +405,7 @@ def collect_samples(video_path: Path, subs, sub_lang: Optional[str], cfg: Config
     # Speech timeline for VAD-guided filler placement (see vad.py; None keeps today's
     # dialogue-density positions bit-for-bit). Heuristic slots stay anchored to this
     # subtitle's own timing and are never moved.
-    timeline = vad.timeline_for_video(conn, video_path, cfg)
+    timeline, timeline_whole = vad.timeline_for_video(conn, video_path, cfg)
 
     # One slot per region: ("heuristic", cluster, None) if a candidate cluster starts in it,
     # else ("filler", start_sec, (region_start, region_end)) at that region's most dialogue-
@@ -419,7 +419,8 @@ def collect_samples(video_path: Path, subs, sub_lang: Optional[str], cfg: Config
         else:
             base = pick_dialogue_dense_time(subs, region_start, region_end, cfg.clip_seconds)
             start = vad.pick_sample_time(subs, timeline, region_start, region_end,
-                                         cfg.clip_seconds, base, cfg.vad_min_speech_seconds)
+                                         cfg.clip_seconds, base, cfg.vad_min_speech_seconds,
+                                         whole_file=timeline_whole)
             slots.append(("filler", start, (region_start, region_end)))
 
     if extra_target_ranges:
@@ -481,21 +482,37 @@ def collect_samples(video_path: Path, subs, sub_lang: Optional[str], cfg: Config
             start, clip_duration = cluster["clip_start"], cluster["clip_end"] - cluster["clip_start"]
         else:
             if slot is None:
-                # VAD-proven silence: non-evidence at the region middle, no STT call (same
-                # {"start", "error"} shape extraction failures produce; anchor stays None).
-                mid = (bounds[0] + bounds[1]) / 2 if bounds else 0.0
-                samples.append({"start": round(mid, 1),
-                                "error": f"VAD silence-skip (<{cfg.vad_min_speech_seconds:g}s speech in window)",
-                                "anchor": None, "anchor_points": []})
-                continue
-            start, clip_duration = slot, cfg.clip_seconds
+                # VAD-proven silence. Before writing it off, check whether this region has a
+                # transcript we ALREADY paid for: the silence skip exists to avoid spending an
+                # STT call, and a cache hit spends none. Discarding a paid-for transcript as
+                # silence is pure loss -- and the cache lookup used to sit below this branch,
+                # so it never ran for a region VAD had nulled.
+                cached_silent = (db.find_cached_transcript_between(conn, video_path, bounds[0], bounds[1])
+                                 if conn is not None and bounds else None)
+                if cached_silent is None:
+                    # non-evidence at the region middle, no STT call (same {"start", "error"}
+                    # shape extraction failures produce; anchor stays None).
+                    mid = (bounds[0] + bounds[1]) / 2 if bounds else 0.0
+                    samples.append({"start": round(mid, 1),
+                                    "error": f"VAD silence-skip (<{cfg.vad_min_speech_seconds:g}s speech in window)",
+                                    "anchor": None, "anchor_points": []})
+                    continue
+                cached = cached_silent
+                start, clip_duration = cached["start"], cfg.clip_seconds
+            else:
+                start, clip_duration = slot, cfg.clip_seconds
             # Filler/extra slots (not heuristic -- see collect_samples' docstring) share the SAME
             # video-level cache correctness_check uses: the audio doesn't depend on which
             # subtitle is checking it, so an earlier check of this video (any subtitle, either
             # code path) may already have transcribed a usable clip. A normal slot is looked up
             # by its slot number, validated against this run's region for it (see
             # db.get_cached_transcript's `within`); an extra slot by position alone.
-            if conn is not None and kind == "filler":
+            # Skipped when the silence branch above already found one -- the slot-numbered
+            # lookup can miss what the positional one found, and overwriting it with None
+            # would throw away the transcript that just saved this region.
+            if cached is not None:
+                pass
+            elif conn is not None and kind == "filler":
                 cache_index = idx
                 cached = db.get_cached_transcript(conn, video_path, idx, within=bounds)
             elif conn is not None:

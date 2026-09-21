@@ -110,7 +110,7 @@ def pick_sample_time(subs, intervals: Optional[list[tuple[float, float]]],
                      region_start: float, region_end: float, clip_seconds: float,
                      base_start: float,
                      min_speech_seconds: float = MIN_SPEECH_SECONDS_DEFAULT,
-                     ) -> Optional[float]:
+                     whole_file: bool = True) -> Optional[float]:
     """Nudge a dialogue-dense clip start onto actual speech.
 
     base_start (today: pick_dialogue_dense_time) is the cue-overlap guarantee and
@@ -121,6 +121,12 @@ def pick_sample_time(subs, intervals: Optional[list[tuple[float, float]]],
     even the best window holds less than min_speech_seconds of speech -- the caller
     records a non-evidence sample and spends no STT call (see module docstring).
     Deterministic: same inputs, same output, no randomness, no language data.
+
+    whole_file=False means the timeline only maps what has already been sampled (cached
+    clips, see timeline_for_video). Then the nudge still applies -- moving onto known
+    speech is safe on partial data -- but a low-coverage window is UNMEASURED, not silent,
+    and base_start comes back rather than None. Skipping it would mean never looking at
+    the regions we have not looked at.
     """
     if intervals is None:
         return base_start
@@ -136,7 +142,7 @@ def pick_sample_time(subs, intervals: Optional[list[tuple[float, float]]],
         if cov > best_cov + 1e-9:
             best, best_cov = cand, cov
     if best is None or best_cov < min_speech_seconds:
-        return None
+        return None if whole_file else base_start
     return best
 
 
@@ -158,16 +164,25 @@ def scan_region_time(subs, intervals: list[tuple[float, float]],
     return best
 
 
-def timeline_for_video(conn, video_path: Path, cfg) -> Optional[list[tuple[float, float]]]:
-    """Best available speech timeline for sample placement, cheapest source first.
+def timeline_for_video(conn, video_path: Path, cfg
+                       ) -> tuple[Optional[list[tuple[float, float]]], bool]:
+    """(speech intervals, whole_file) -- best available timeline for sample placement.
 
-    1. Full-transcript cache segments (whole-file map, any provider).
-    2. Cached clip segments (offset by their clip starts -- cache stores them
-       relative to the clip, see db.get_cached_transcript).
-    3. Silero binary run when vad_binary/vad_model are configured.
-    None when nothing is available: callers keep today's dialogue-density behavior.
-    All sources are language-independent.
-    """
+    1. Full-transcript cache segments (whole-file map, any provider).  whole_file=True
+    2. Cached clip segments, offset by their clip starts.               whole_file=False
+    3. Silero binary run when vad_binary/vad_model are configured.      whole_file=True
+    (None, False) when nothing is available: callers keep dialogue-density behavior.
+
+    The second value is the whole point of the pair, and leaving it out was a real bug.
+    Sources 1 and 3 map the entire file, so a stretch with no interval in it is silence.
+    Source 2 maps only what has already been sampled -- perhaps three clips out of a
+    21-minute episode -- so a stretch with no interval in it is simply unmeasured. Read as
+    a whole-file map it declares everything we have not looked at to be silent, and the
+    caller then skips those regions without spending an STT call: the file is never looked
+    at precisely because it was never looked at. Raising sync.sample_count from 3 to 16
+    made that bite hard, since 13 of the new regions lie outside any cached clip by
+    construction. Partial data is still useful for NUDGING a clip onto known speech; it is
+    never evidence of absence. All sources are language-independent."""
     from verifyarr import db
     if conn is not None:
         try:
@@ -175,7 +190,7 @@ def timeline_for_video(conn, video_path: Path, cfg) -> Optional[list[tuple[float
         except Exception:
             full = None
         if full and full.get("segments"):
-            return segments_to_intervals(full["segments"])
+            return segments_to_intervals(full["segments"]), True
         try:
             rows = db.get_cached_transcripts_for_video(conn, video_path)
         except Exception:
@@ -189,9 +204,13 @@ def timeline_for_video(conn, video_path: Path, cfg) -> Optional[list[tuple[float
             for s in segments_to_intervals(r.get("segments")):
                 ivs.append((s[0] + base, s[1] + base))
         if ivs:
-            return ivs
+            # Try a real whole-file run first: it can answer "is this silent", which these
+            # clips cannot. Only fall back to them when there is no VAD binary configured.
+            whole = run_vad_timeline(video_path, getattr(cfg, "vad_binary", ""),
+                                     getattr(cfg, "vad_model", ""))
+            return (whole, True) if whole else (ivs, False)
     return run_vad_timeline(video_path, getattr(cfg, "vad_binary", ""),
-                            getattr(cfg, "vad_model", ""))
+                            getattr(cfg, "vad_model", "")), True
 
 
 def run_vad_timeline(video_path: Path, binary: str, model: str,

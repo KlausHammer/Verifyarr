@@ -947,7 +947,10 @@ def _resolve_ambiguous_sync(conn: sqlite3.Connection, video_path: Path, subtitle
         row["note"] += structural_note + note_suffix + (
             f" Not written: Δ{abs(winner_shift):.2f}s is under the "
             f"{cfg.min_change_seconds}s threshold.")
-        return old_subs, result, result.get("swap_severity"), "old"
+        # _synthetic("old"), not `result`: what stays on disk is the original, so the verdict
+        # handed back has to be the original's. The two are close here by construction (the
+        # move was under the threshold), which is exactly why the mismatch could sit unnoticed.
+        return old_subs, _synthetic("old"), _synthetic("old").get("swap_severity"), "old"
 
     if winner == "new":
         _write_fix(subtitle_path, cfg, media_root, new_subs)
@@ -1255,7 +1258,7 @@ def _try_fps_rescale(conn: sqlite3.Connection, video_path: Path, subtitle_path: 
     atilt = _anchor_signature_passes(sig)
     if atilt is None:
         return None
-    intervals = vad_timeline.timeline_for_video(conn, video_path, cfg)
+    intervals, _whole = vad_timeline.timeline_for_video(conn, video_path, cfg)
     if not intervals:
         return None
     vtilt, nv = vad_tilt_from_intervals(current_subs, intervals)

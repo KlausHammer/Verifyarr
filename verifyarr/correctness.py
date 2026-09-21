@@ -800,7 +800,15 @@ def evaluate_against_full_transcript(conn, video_path: Path, subs: "pysubs2.SSAF
     cached = db.get_full_transcript_cache(conn, video_path, stt_provider=provider, stt_model=model)
     if cached is None or not cached["segments"]:
         return None
-    segments = cached["segments"]
+    # The cache stores what transcribe_full_track produced, tags and all: generate's own
+    # subtitle-creation feature shares that cache and may legitimately want "[music]" kept,
+    # so generate._drop_nonspeech runs on the way OUT of full_transcript_for_check, not on
+    # the way in. Reading the cache directly means doing that filtering here -- otherwise an
+    # anchor can match a cue against "(screaming)" and call it dialogue. The clip-based twin
+    # (evaluate_against_cached_transcripts) has filtered all along; this path had not.
+    segments = [s for s in cached["segments"] if not is_nonspeech_annotation(s.get("text", ""))]
+    if not segments:
+        return None
 
     window_before = cfg.window_minutes * 60
     window_after = cfg.clip_seconds + cfg.window_minutes * 60
@@ -880,7 +888,7 @@ def correctness_check(video_path: Path, subs: "pysubs2.SSAFile", sub_lang: Optio
     # Speech timeline for VAD-guided placement (free when a prior check of this video --
     # any subtitle -- cached segments, else an optional Silero run, else None). None keeps
     # today's dialogue-density behavior bit-for-bit (see vad.pick_sample_time).
-    timeline = vad.timeline_for_video(conn, video_path, cfg)
+    timeline, timeline_whole = vad.timeline_for_video(conn, video_path, cfg)
     built = []
     for idx, (region_start, region_end) in enumerate(regions):
         # The audio at a given point in this video doesn't depend on which subtitle is being
@@ -900,7 +908,8 @@ def correctness_check(video_path: Path, subs: "pysubs2.SSAFile", sub_lang: Optio
         else:
             base = pick_dialogue_dense_time(subs, region_start, region_end, cfg.clip_seconds)
             start = vad.pick_sample_time(subs, timeline, region_start, region_end,
-                                         cfg.clip_seconds, base, cfg.vad_min_speech_seconds)
+                                         cfg.clip_seconds, base, cfg.vad_min_speech_seconds,
+                                         whole_file=timeline_whole)
             if start is None:
                 # Proven silence: record non-evidence, spend no STT call (same {"start",
                 # "error"} shape extraction failures already produce -- flows through below
