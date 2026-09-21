@@ -1,0 +1,195 @@
+{
+ "models": [
+  "tiny.en-greedy-cpu"
+ ],
+ "slugs": [
+  "C_S03E04"
+ ],
+ "scenarios": [
+  "clean",
+  "uniform",
+  "drift",
+  "piecewise",
+  "swap",
+  "gap",
+  "drift_swap"
+ ],
+ "modes": [
+  "full",
+  "sampled"
+ ],
+ "audio_confirms": [
+  "on",
+  "off"
+ ],
+ "by_scenario": {
+  "clean": {
+   "runs": 4,
+   "errors": 0,
+   "skipped": 0,
+   "untouched": 0
+  },
+  "uniform": {
+   "runs": 4,
+   "errors": 0,
+   "skipped": 0
+  },
+  "drift": {
+   "runs": 4,
+   "errors": 0,
+   "skipped": 0
+  },
+  "piecewise": {
+   "runs": 4,
+   "errors": 0,
+   "skipped": 0
+  },
+  "swap": {
+   "runs": 4,
+   "errors": 0,
+   "skipped": 0,
+   "mean_frac_restored": 0.0,
+   "noticed": 4
+  },
+  "gap": {
+   "runs": 4,
+   "errors": 0,
+   "skipped": 0
+  },
+  "drift_swap": {
+   "runs": 4,
+   "errors": 0,
+   "skipped": 0,
+   "mean_frac_restored": 0.0,
+   "noticed": 3
+  }
+ },
+ "by_model": {
+  "tiny.en-greedy-cpu": {
+   "runs": 28,
+   "errors": 0,
+   "skipped": 0,
+   "mean_frac_restored": 0.0,
+   "clean_untouched": 0,
+   "clean_runs": 4
+  }
+ },
+ "agreement_clean": {},
+ "swap_detail": {
+  "full.on": {
+   "runs": 1,
+   "mean_frac_injected_fixed": 0.167,
+   "mean_n_noninjected_fixed": 38
+  },
+  "full.off": {
+   "runs": 1,
+   "mean_frac_injected_fixed": 0.0,
+   "mean_n_noninjected_fixed": 0
+  },
+  "sampled.on": {
+   "runs": 1,
+   "mean_frac_injected_fixed": 0.167,
+   "mean_n_noninjected_fixed": 2
+  },
+  "sampled.off": {
+   "runs": 1,
+   "mean_frac_injected_fixed": 0.0,
+   "mean_n_noninjected_fixed": 0
+  }
+ },
+ "clean_swap_delta": {
+  "full.on": {
+   "pairs": 1,
+   "mean_delta": 0,
+   "median_delta": 0
+  },
+  "full.off": {
+   "pairs": 1,
+   "mean_delta": 0,
+   "median_delta": 0
+  },
+  "sampled.on": {
+   "pairs": 1,
+   "mean_delta": 0,
+   "median_delta": 0
+  },
+  "sampled.off": {
+   "pairs": 1,
+   "mean_delta": 0,
+   "median_delta": 0
+  }
+ },
+ "escalation": {
+  "full": {
+   "runs": 14,
+   "escalated": 0
+  },
+  "sampled": {
+   "runs": 14,
+   "escalated": 0
+  }
+ },
+ "drift_case": {
+  "slugs": [
+   "C_S03E04"
+  ],
+  "runs": 28,
+  "errors": 0,
+  "skipped": 0,
+  "by_scenario": {
+   "clean": {
+    "runs": 4,
+    "suspect": 0,
+    "sync_counts": {
+     "fixed (framerate 24 -> 23.976, up to 1.3s)": 4
+    }
+   },
+   "uniform": {
+    "runs": 4,
+    "suspect": 0,
+    "sync_counts": {
+     "fixed (framerate 24 -> 23.976, up to 1.3s)": 4
+    }
+   },
+   "drift": {
+    "runs": 4,
+    "suspect": 1,
+    "sync_counts": {
+     "fixed (\u039424.7s, 6 anchor region(s))": 2,
+     "fixed (\u039412.8s, 2 sync block(s))": 1,
+     "fixed (\u039425.3s, 3 anchor region(s))": 1
+    }
+   },
+   "piecewise": {
+    "runs": 4,
+    "suspect": 0,
+    "sync_counts": {
+     "fixed (\u039415.5s, 5 anchor region(s))": 2,
+     "fixed (\u039415.5s, 2 anchor region(s))": 2
+    }
+   },
+   "swap": {
+    "runs": 4,
+    "suspect": 0,
+    "sync_counts": {
+     "fixed (framerate 24 -> 23.976, up to 1.3s)": 4
+    }
+   },
+   "gap": {
+    "runs": 4,
+    "suspect": 0,
+    "sync_counts": {
+     "fixed (framerate 24 -> 23.976, up to 1.3s)": 4
+    }
+   },
+   "drift_swap": {
+    "runs": 4,
+    "suspect": 0,
+    "sync_counts": {
+     "fixed (\u039424.7s, 6 anchor region(s))": 2,
+     "fixed (framerate 24 -> 23.976, up to 1.3s)": 2
+    }
+   }
+  }
+ }
+}

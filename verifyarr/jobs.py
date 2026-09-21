@@ -26,7 +26,8 @@ from verifyarr.settings import Config
 from verifyarr.discovery import (discover_pairs, discover_all_videos, discover_missing,
                                 parse_lang_from_filename, build_library_video_rows,
                                 infer_title_and_episode, resolve_embedded_cache)
-from verifyarr.pipeline import process_pair, sync_pair, correctness_and_finish, finish_generated
+from verifyarr.pipeline import (process_pair, sync_pair, screen_pair,
+                                correctness_and_finish, finish_generated)
 from verifyarr.reports import write_report
 from verifyarr.bazarr import LazyHistoryIndex
 from verifyarr.correctness import JobCancelled
@@ -369,12 +370,31 @@ def _run_sweep(conn: sqlite3.Connection, run_id: int, cfg: Config, force: bool,
             # means a file's subtitle is never left rewritten on disk (sync_pair does that
             # itself, with no `conn`/DB involved) without a matching DB row. Cancellation is
             # enforced promptly below instead, between batches and before each correctness call.
+            # Whisper screens each file BEFORE alass (pipeline.screen_pair). Sequential because
+            # it needs `conn` for the clip cache -- but it is not a new cost: these are the same
+            # clips the correctness check below would have paid for anyway, now bought earlier and
+            # cached per video. What it buys is the files it ends here: a screened-clean file
+            # never enters the pool at all, and so never pays for the full audio-track extraction
+            # alass needs -- the most expensive single step on a slow machine.
+            screens: dict[int, dict] = {}
+            for i, video, subtitle, lang in batch:
+                if cancel_event.is_set():
+                    raise JobCancelled("cancelled during screening")
+                try:
+                    screens[i] = screen_pair(video, subtitle, lang, cfg, conn,
+                                             cancel_event=cancel_event)
+                except JobCancelled:
+                    raise
+                except Exception as e:   # a screen that fails must not fail the file
+                    log.warning("[%d/%d] %s screen failed: %s", i, len(to_process), labels[i], e)
+                    screens[i] = None
+
             sync_results: dict[int, tuple] = {}
             sync_errors: dict[int, Exception] = {}
             with concurrent.futures.ThreadPoolExecutor(max_workers=SYNC_WORKERS) as pool:
                 future_to_i = {
                     pool.submit(sync_pair, video, subtitle, lang, cfg, audio_cache, audio_cache_dir,
-                                video_locks[video]): i
+                                video_locks[video], screen=screens.get(i)): i
                     for i, video, subtitle, lang in batch
                 }
                 for future in concurrent.futures.as_completed(future_to_i):

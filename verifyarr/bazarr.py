@@ -350,12 +350,18 @@ def verify_subtitle_candidate(video_path: Path, subtitle_path: Path, lang: Optio
     time a normal Scan reaches this file, same as any other file's line-order check reuses its
     cached correctness data (see pipeline.correctness_and_finish)."""
     # local import: pipeline.py imports FROM this module
-    from verifyarr.pipeline import sync_pair, _resolve_ambiguous_sync, apply_pending_sync
+    from verifyarr.pipeline import sync_pair, screen_pair, _resolve_ambiguous_sync, apply_pending_sync
 
+    # Whisper before alass, same order as pipeline.process_pair -- the screen can end the file
+    # here, and its clips are cached for whatever follows. Needs `conn` for that cache, so
+    # without one there is no screen and the old order stands.
+    screen = (screen_pair(video_path, subtitle_path, lang, cfg, conn)
+              if conn is not None and cfg.sync_enabled else None)
     # Without a conn there's no transcript cache to compare sync candidates on (that cache is
     # what makes the comparison free), so don't even ask sync_pair to defer -- it applies
     # alass's result directly, same as every caller did before this feature existed.
-    row, current_subs = sync_pair(video_path, subtitle_path, lang, cfg, defer_verification=conn is not None)
+    row, current_subs = sync_pair(video_path, subtitle_path, lang, cfg,
+                                  defer_verification=conn is not None, screen=screen)
     if current_subs is None:
         return {"ok": False, "flag": "parse-error", "avg_score": None, "reason": row.get("note")}
 

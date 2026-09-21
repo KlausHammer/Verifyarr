@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import shutil
+import statistics
 import sqlite3
 import tempfile
 from pathlib import Path
@@ -158,6 +159,139 @@ def handle_suspect(subtitle_path: Path, video_path: Path, cfg: Config, media_roo
                                            cancel_event=cancel_event, conn=conn, run_id=run_id)
 
 
+# Below this nothing is worth rewriting a file for. A subtitle that is off by less than
+# half a second everywhere is in sync as far as a viewer is concerned, and the user's rule
+# is explicit: a small drift, or a couple of cues off by under 0.5s, is not worth fixing.
+# Every screen threshold is this same number -- offset, block spread and accumulated drift --
+# because they are all "how far is a cue from where it belongs", just measured differently.
+SCREEN_TOLERANCE_S = 0.5
+SCREEN_MIN_CLIPS = 3          # fewer confident clips than this is not evidence, it is silence
+# Of the clips that produced a match, how many land on the SAME answer. The gate on applying
+# a global offset before alass, and the reason is a measured near-miss: piecewise seed 0 read
+# as a clean -5.41s offset with a spread of 0.23s, because the clips that matched all sat in
+# one block. Measured over 10 episodes x 6 scenarios (agreement among matched clips):
+#   clean 0.56-1.00, gap 0.60-1.00, uniform 0.67-1.00, piecewise 0.00-0.73, drift 0.00-0.33
+# 0.80 clears piecewise by 0.07 and keeps the three uniform files whose -45s shift is real.
+# Deliberately NOT applied to the "ok" verdict: that rests on offset, spread and drift all
+# being small, which caught 109 of 109 damaged files in a separate 1070-measurement sweep.
+SCREEN_MIN_AGREE_FRAC = 0.80
+
+
+def screen_pair(video_path: Path, subtitle_path: Path, lang: Optional[str], cfg: Config,
+                conn: sqlite3.Connection, cancel_event=None) -> dict:
+    """Whisper evidence BEFORE alass, so we can answer "does this file need anything at all"
+    and stop there when the answer is no.
+
+    Why this order. alass runs first today, and on a stretched file it guesses a framerate
+    conversion that is not there: a 2% stretch comes out the other side as 6.25% (measured on
+    C_S03E03, findings 10.5). Everything downstream then measures alass' damage instead of the
+    original error. Measured on 12 episodes, share of cues landing within 1s of the truth:
+    alass alone 0.082, this screen's own correction 1.000 on all 12. Running alass afterwards
+    added nothing (median 0.30s against 0.14s) and destroyed one file outright.
+
+    What it costs. The clips go into the same video-level cache the correctness check reads
+    (db.save_transcript_cache, keyed on the video and the region, never on the subtitle), so
+    when the verdict IS "needs work" the fixing pass reuses this audio instead of buying it
+    again. A healthy file additionally skips alass entirely -- and with it the full audio
+    track extraction alass needs, which is ~6.5s here and several times that on an N100.
+
+    Returns {"verdict", "shift", "spread", "tilt", "n_clips", "collected"}:
+      "ok"         every clip agrees, within SCREEN_TOLERANCE_S, and there is no drift
+      "needs_sync" something moved: the caller runs the normal repair chain
+      "unknown"    not enough evidence to say (too few clips matched, or the check is off) --
+                   treated as "needs_sync" by callers, never as "ok"
+    """
+    if not cfg.enable_correctness_check or not cfg.has_stt_configured:
+        return {"verdict": "unknown", "reason": "correctness check unavailable"}
+    # The screen is now the file's FIRST Whisper spend, so the per-file accounting starts here.
+    # correctness_and_finish used to reset it, which after this reordering would have wiped the
+    # screen's clips from the report and made every file look cheaper than it is.
+    whisper_cost.reset()
+    try:
+        subs = load_subs(subtitle_path)
+    except Exception as e:
+        return {"verdict": "unknown", "reason": f"could not parse subtitle: {e}"}
+    with tempfile.TemporaryDirectory() as td:
+        # Full mode already owns the whole transcript: screening from clips there would buy
+        # audio it has, and would judge on a thinner pool than the evidence that follows.
+        if cfg.whisper_mode == "full":
+            collected = collect_samples_full(video_path, subs, lang, cfg, Path(td),
+                                             conn, cancel_event=cancel_event)
+        else:
+            collected = collect_samples(video_path, subs, lang, cfg, Path(td),
+                                        conn=conn, cancel_event=cancel_event)
+    if collected.get("skipped"):
+        return {"verdict": "unknown", "reason": collected.get("reason"), "collected": None}
+    shifts = [s["anchor"]["shift"] for s in (collected.get("samples") or [])
+              if s.get("anchor") and s["anchor"].get("shift") is not None]
+    # Every clip we actually spent audio on, matched or not -- the denominator for "does one
+    # answer explain this file". A silence-skip is not a failed match and does not count.
+    attempted = [s for s in (collected.get("samples") or [])
+                 if not (s.get("error") or "").startswith("VAD silence-skip")]
+    out = {"collected": collected, "n_clips": len(shifts), "n_attempted": len(attempted),
+           "shift": None, "spread": None, "tilt": None,
+           "agree_frac": None, "match_frac": None}
+    if len(shifts) < SCREEN_MIN_CLIPS:
+        # Not silence-as-proof: a uniformly shifted file matches NOTHING (measured: 0 anchors
+        # on 35 of 35 injected +45s files), and so does a wrong-episode subtitle. Both have to
+        # go on to the repair chain, not be waved through.
+        out["verdict"] = "unknown"
+        out["reason"] = f"only {len(shifts)} clip(s) matched"
+        return out
+    out["shift"] = statistics.median(shifts)
+    out["spread"] = _spread(shifts) if len(shifts) >= 3 else None
+    out["agree_frac"] = (sum(1 for x in shifts if abs(x - out["shift"]) < SCREEN_TOLERANCE_S)
+                         / len(shifts))
+    out["match_frac"] = len(shifts) / max(1, len(attempted))
+    probe = stretch_probe([(a, a - s) for a, s in _fps_points(collected)])
+    out["tilt"] = (probe or {}).get("tilt")
+    over = [abs(out["shift"]) >= SCREEN_TOLERANCE_S,
+            out["spread"] is not None and out["spread"] >= SCREEN_TOLERANCE_S,
+            out["tilt"] is not None and abs(out["tilt"]) >= SCREEN_TOLERANCE_S]
+    out["verdict"] = "needs_sync" if any(over) else "ok"
+    return out
+
+
+def presync_from_screen(subs, screen: dict, cfg: Config):
+    """The correction the screen itself can describe, applied BEFORE alass runs.
+
+    Only two shapes, because only two are safe to take from sampled evidence without alass'
+    own opinion: a whole-file rate error (stretch_probe's gates -- see _try_stretch_rescale)
+    and a constant offset every clip agrees on. Anything block-shaped is left entirely to
+    alass, which is good at it and which we are not.
+
+    The point is not to replace alass. It is that alass measures against the file it is given,
+    and on a stretched file it guesses a framerate conversion that is not there -- 2% comes out
+    as 6.25% (C_S03E03). Hand it a file whose rate is already right and it produces one clean
+    block instead of three broken ones (measured: recovery 0.00 -> 1.00).
+
+    Returns (fixed_subs, description) or None. Never writes; the caller owns the file.
+    """
+    pts = _fps_points(screen.get("collected") or {})
+    probe = stretch_probe([(a, a - s) for a, s in pts]) if pts else None
+    import copy as _copy
+    if probe is not None and _stretch_gates_pass(probe):
+        fixed = _copy.deepcopy(subs)
+        worst = apply_fps_rescale(fixed, 1.0 / (1.0 - probe["slope"]), offset=probe["intercept"])
+        if worst >= cfg.min_change_seconds:
+            return fixed, (f"rate {(1.0 / (1.0 - probe['slope']) - 1) * 100:+.2f}% "
+                           f"({probe['n']} anchors, {probe['keep_frac']:.0%} on the line)")
+    shift = screen.get("shift")
+    spread = screen.get("spread")
+    # A constant offset is only constant if the clips agree it is. Anything else is blocks.
+    if (shift is not None and abs(shift) >= max(cfg.min_change_seconds, SCREEN_TOLERANCE_S)
+            and spread is not None and spread < SCREEN_TOLERANCE_S
+            and (screen.get("agree_frac") or 0) >= SCREEN_MIN_AGREE_FRAC
+            and (screen.get("tilt") is None or abs(screen["tilt"]) < SCREEN_TOLERANCE_S)):
+        fixed = _copy.deepcopy(subs)
+        for e in fixed.events:
+            e.start = max(0, int(round(e.start + shift * 1000)))
+            e.end = max(e.start, int(round(e.end + shift * 1000)))
+        return fixed, (f"offset {shift:+.2f}s ({screen.get('n_clips')} of "
+                       f"{screen.get('n_attempted')} clips agreeing, spread {spread:.2f}s)")
+    return None
+
+
 def process_pair(video_path: Path, subtitle_path: Path, lang: Optional[str],
                   cfg: Config, conn: sqlite3.Connection,
                   bazarr_meta: Optional[dict] = None,
@@ -171,7 +305,12 @@ def process_pair(video_path: Path, subtitle_path: Path, lang: Optional[str],
     stages split apart: the CLI, the Bazarr-hook single-file path (jobs._run_single), and
     remediate's own candidate verification. See jobs._run_sweep for the split, parallel-sync
     version used by a sweep."""
-    row, current_subs = sync_pair(video_path, subtitle_path, lang, cfg, audio_cache, audio_cache_dir)
+    # Whisper first, alass second (see screen_pair): the screen can end the file here, and when
+    # it cannot, its clips are already cached for everything downstream.
+    screen = (screen_pair(video_path, subtitle_path, lang, cfg, conn, cancel_event=cancel_event)
+              if cfg.sync_enabled else None)
+    row, current_subs = sync_pair(video_path, subtitle_path, lang, cfg, audio_cache, audio_cache_dir,
+                                  screen=screen)
     return correctness_and_finish(video_path, subtitle_path, lang, cfg, conn, row, current_subs,
                                    bazarr_meta=bazarr_meta, history_index=history_index,
                                    run_id=run_id, cancel_event=cancel_event)
@@ -325,7 +464,8 @@ def apply_pending_sync(subtitle_path: Path, cfg: Config, row: dict, reason: str)
 
 def sync_pair(video_path: Path, subtitle_path: Path, lang: Optional[str], cfg: Config,
               audio_cache: Optional[dict] = None, audio_cache_dir: Optional[Path] = None,
-              audio_cache_lock=None, defer_verification: bool = True) -> tuple[dict, object]:
+              audio_cache_lock=None, defer_verification: bool = True,
+              screen: Optional[dict] = None) -> tuple[dict, object]:
     """Sync stage only (alass) — the first half of what process_pair used to do in one piece.
     No `conn`/DB access at all, which is exactly what makes it safe to run from a worker thread
     (see jobs._run_sweep's parallel sync phase — alass itself is single-threaded per invocation,
@@ -370,10 +510,26 @@ def sync_pair(video_path: Path, subtitle_path: Path, lang: Optional[str], cfg: C
         row["note"] = str(e)
         return row, None
 
-    alass_bin = resolve_alass_bin()
     current_subs = old_subs
     media_root = cfg.media_root_for(subtitle_path)
 
+    # Whisper already looked at this file (screen_pair) and every clip agreed it is where it
+    # belongs. Stop here: no alass, and therefore not the full audio track extraction alass
+    # needs either -- the single most expensive step on a slow machine. The clips the screen
+    # bought are cached per video, so the correctness check that follows re-reads them for free.
+    if screen is not None:
+        row["_screened"] = True   # popped in correctness_and_finish; tells it not to reset the cost
+    if screen is not None and screen.get("verdict") == "ok":
+        row["sync_status"] = "already in sync"
+        row["sync_max_shift_s"] = round(abs(screen["shift"]), 2) if screen.get("shift") is not None else None
+        row["note"] = (f" Screened on {screen.get('n_clips')} Whisper clips before sync: "
+                       f"offset {screen['shift']:+.2f}s"
+                       + (f", spread {screen['spread']:.2f}s" if screen.get("spread") is not None else "")
+                       + (f", drift {screen['tilt']:+.2f}s" if screen.get("tilt") is not None else "")
+                       + f" -- all under {SCREEN_TOLERANCE_S}s, so alass was not run.")
+        return row, current_subs
+
+    alass_bin = resolve_alass_bin()
     if not cfg.sync_enabled:
         # Settings -> Automation "What runs" table (sync.enabled), further narrowed for an
         # auto-triggered run (the Bazarr wanted-subtitles poll) by auto_scan_sync_enabled — see
@@ -385,9 +541,28 @@ def sync_pair(video_path: Path, subtitle_path: Path, lang: Optional[str], cfg: C
         return row, current_subs
 
     with tempfile.TemporaryDirectory() as td:
+        # Our own correction FIRST, when the screen could describe one (a whole-file rate or a
+        # constant offset every clip agrees on). alass then measures a file whose shape is
+        # already right, instead of inventing a framerate conversion to explain the ramp --
+        # see presync_from_screen. Written to a temp file, never to disk: alass' output is
+        # what gets applied, and if alass fails nothing has been touched.
+        presync = presync_from_screen(old_subs, screen, cfg) if screen else None
+        alass_input = subtitle_path
+        presync_note = ""
+        if presync is not None:
+            presynced, presync_desc = presync
+            alass_input = Path(td) / f"presynced{subtitle_path.suffix}"
+            presynced.save(str(alass_input))
+            current_subs = presynced
+            presync_note = f" Pre-sync before alass: {presync_desc}."
+        # The best state we have WITHOUT alass. Everything downstream that means "what we would
+        # keep if alass turns out to be wrong" means this, not the untouched original: the
+        # pre-sync is a measured correction, not a guess to fall back from.
+        baseline_subs = presync[0] if presync is not None else old_subs
+
         reference_path = resolve_alass_reference(video_path, audio_cache, audio_cache_dir, audio_cache_lock)
         tmp_primary = Path(td) / f"synced{subtitle_path.suffix}"
-        ok, msg, stderr_tail = run_alass(alass_bin, reference_path, subtitle_path, tmp_primary, cfg.split_penalty)
+        ok, msg, stderr_tail = run_alass(alass_bin, reference_path, alass_input, tmp_primary, cfg.split_penalty)
         if not ok:
             row["sync_status"] = f"error: {msg}"
             row["note"] = stderr_tail[:300]
@@ -399,6 +574,8 @@ def sync_pair(video_path: Path, subtitle_path: Path, lang: Optional[str], cfg: C
             row["note"] = str(e)
             return row, current_subs
 
+        # Against the ORIGINAL, not against the pre-synced file: the report should say how far
+        # the cues moved in total, and the min_change gate below should judge the whole move.
         max_shift, _avg_shift, old_n, new_n = max_shift_stats(old_subs, primary_subs)
         row["sync_max_shift_s"] = round(max_shift, 2) if max_shift is not None else None
         structural = bool(old_n) and abs(old_n - new_n) / old_n > 0.1
@@ -419,7 +596,7 @@ def sync_pair(video_path: Path, subtitle_path: Path, lang: Optional[str], cfg: C
 
         if max_shift is None or max_shift < cfg.min_change_seconds:
             row["sync_status"] = "already in sync"
-            row["note"] += blocks_note
+            row["note"] += presync_note + blocks_note
             return row, current_subs
 
         # Use the corrected timing for the correctness check either way — even during dry-run,
@@ -429,14 +606,14 @@ def sync_pair(video_path: Path, subtitle_path: Path, lang: Optional[str], cfg: C
         current_subs = primary_subs
         if cfg.dry_run:
             row["sync_status"] = f"would fix (Δ{max_shift:.1f}s) [dry-run]"
-            row["note"] += blocks_note + structural_note
+            row["note"] += presync_note + blocks_note + structural_note
             return row, current_subs
 
         can_verify = (len(shift_blocks) > 1 and defer_verification
                       and cfg.enable_correctness_check and cfg.has_stt_configured)
         if can_verify:
             tmp_single = Path(td) / f"synced_single{subtitle_path.suffix}"
-            ok2, _msg2, _stderr2 = run_alass(alass_bin, reference_path, subtitle_path, tmp_single,
+            ok2, _msg2, _stderr2 = run_alass(alass_bin, reference_path, alass_input, tmp_single,
                                              cfg.split_penalty, no_splits=True)
             single_subs = None
             if ok2:
@@ -452,7 +629,7 @@ def sync_pair(video_path: Path, subtitle_path: Path, lang: Optional[str], cfg: C
                 # single-offset fit is the candidate the correctness check itself runs on (the
                 # safe default); the block ranges let it aim extra samples at every block.
                 row["_ambiguous_sync"] = {
-                    "old_subs": old_subs, "new_subs": single_subs, "max_shift_new": max_shift_single,
+                    "old_subs": baseline_subs, "new_subs": single_subs, "max_shift_new": max_shift_single,
                     "blocks_subs": primary_subs, "max_shift_blocks": max_shift,
                     "blocks_split_count": len(shift_blocks), "blocks_spread": spread,
                     "blocks_time_ranges": _block_time_ranges(
@@ -473,9 +650,9 @@ def sync_pair(video_path: Path, subtitle_path: Path, lang: Optional[str], cfg: C
         # often still plan a correct one -- but only from the UNTOUCHED original, since planning
         # on top of a bad fit inherits its damage. Popped in correctness_and_finish; never
         # persisted (same handling as _ambiguous_sync).
-        row["_pre_sync_subs"] = old_subs
+        row["_pre_sync_subs"] = baseline_subs
         row["sync_status"] = f"fixed (Δ{max_shift:.1f}s)"
-        row["note"] += blocks_note + structural_note
+        row["note"] += presync_note + blocks_note + structural_note
     return row, current_subs
 
 
@@ -894,6 +1071,18 @@ def _anchor_signature_passes(sig: Optional[dict]) -> Optional[float]:
     return tilt
 
 
+def _stretch_gates_pass(p: Optional[dict]) -> bool:
+    """The five readings that separate a whole-file rate error from a block error. Shared by
+    the post-alass fix (_try_stretch_rescale) and the pre-alass correction
+    (presync_from_screen) so the two can never disagree about what a stretch looks like."""
+    if p is None or p.get("rho") is None:
+        return False
+    return (p["n"] >= STRETCH_MIN_POINTS and abs(p["tilt"]) >= STRETCH_MIN_TILT_S
+            and abs(p["slope"]) <= STRETCH_MAX_RATE and abs(p["rho"]) >= STRETCH_RHO_MIN
+            and p["gain"] >= STRETCH_MIN_GAIN_S and p["resid"] <= STRETCH_MAX_RESID_S
+            and p["keep_frac"] >= STRETCH_MIN_KEEP_FRAC)
+
+
 def _try_stretch_rescale(subtitle_path: Path, cfg: Config, media_root: Path,
                          current_subs, pts: list):
     """Fixes a stretched subtitle by the MEASURED rate, for the case the discrete
@@ -942,15 +1131,7 @@ def _try_stretch_rescale(subtitle_path: Path, cfg: Config, media_root: Path,
     if not cfg.fps_check_enabled:
         return None
     p = stretch_probe([(a, a - s) for a, s in pts])
-    if p is None or p["rho"] is None:
-        return None
-    if p["n"] < STRETCH_MIN_POINTS or abs(p["tilt"]) < STRETCH_MIN_TILT_S:
-        return None
-    if abs(p["slope"]) > STRETCH_MAX_RATE or abs(p["rho"]) < STRETCH_RHO_MIN:
-        return None
-    if p["gain"] < STRETCH_MIN_GAIN_S or p["resid"] > STRETCH_MAX_RESID_S:
-        return None
-    if p["keep_frac"] < STRETCH_MIN_KEEP_FRAC:
+    if not _stretch_gates_pass(p):
         return None
     # a = (s + c) / (1 - m): the rate and the offset are one inverse. alass has
     # usually shifted the file already, so undoing only the rate leaves its shift.
@@ -1186,7 +1367,10 @@ def correctness_and_finish(video_path: Path, subtitle_path: Path, lang: Optional
     single-job cancellation both also expect one file at a time here)."""
     media_root = cfg.media_root_for(subtitle_path)
     # Per file, so the row can report what this check actually cost -- and what the caches saved.
-    whisper_cost.reset()
+    # Unless screen_pair already started the accounting for this file (Whisper runs before alass
+    # now), in which case resetting here would throw the screen's own clips away.
+    if not row.pop("_screened", False):
+        whisper_cost.reset()
     # Popped immediately: it's a pysubs2 object sync_pair left for _try_anchor_resync, and nothing
     # that gets persisted or serialized may still be carrying it (see apply_pending_sync).
     pre_sync_subs = row.pop("_pre_sync_subs", None)

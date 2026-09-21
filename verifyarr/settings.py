@@ -585,7 +585,16 @@ SETTING_DEFS: dict = {
     # rewritten), while a silent pass is a subtitle the viewer has to notice themselves. 8x20
     # also rewrote 2 healthy files in full mode; 16x15 rewrites none in either mode.
     "sync.sample_count":        ("sync", "int", 16),
-    "sync.clip_seconds":        ("sync", "int", 15),
+    # 30, not 15: Whisper's window is a FIXED 30 seconds -- a shorter clip is padded with
+    # silence and costs the same. Measured (tiny.en, 3 runs each): 10s 0.66s, 15s 0.67s,
+    # 25s 0.74s, 30s 0.74s, then 35s jumps to 1.00s as it spills into a second window. So
+    # 15s paid for 30 and used 15. Measured on 24 real clip positions across 5 episodes,
+    # same starts, real Whisper: 30s clips yield a confident anchor on 24/24 against 18/24,
+    # 7.5 anchors per clip against 4.0, identical accuracy on the shared positions (median
+    # |shift| 0.090s vs 0.085s), and there is no position where 15s finds an anchor and 30s
+    # does not. This also corrects finding 2 ("coverage beats clip length"), whose trade-off
+    # was priced in audio SECONDS -- 16x15 and 16x30 cost the same, so it never existed.
+    "sync.clip_seconds":        ("sync", "int", 30),
     "sync.window_minutes":      ("sync", "float", 0.5),
     "sync.overlap_threshold":   ("sync", "float", 0.25),
     # sampled | full -- see Config.whisper_mode.

@@ -326,14 +326,20 @@ def run_one(work, video, subs, lang, segments, cfg, conn, tag, mode="full",
     if audio_cache is None:
         audio_cache = {}
     try:
+        def _run():
+            # Same order as pipeline.process_pair: Whisper screens the file BEFORE alass, and
+            # can end it there. Calling sync_pair directly here is what made the first framerate
+            # build look dead -- the harness must exercise the real chain, not a shortcut.
+            screen = pipeline.screen_pair(video, tmp, "en", cfg, conn)
+            r, c = pipeline.sync_pair(video, tmp, "en", cfg, audio_cache, work, screen=screen)
+            return pipeline.correctness_and_finish(video, tmp, "en", cfg, conn, r, c), c
+
         with patch_whisper_full(lang, segments):
             if mode == "sampled":
                 with patch_sampled_transcription(lang, segments):
-                    row, cur = pipeline.sync_pair(video, tmp, "en", cfg, audio_cache, work)
-                    row = pipeline.correctness_and_finish(video, tmp, "en", cfg, conn, row, cur)
+                    row, cur = _run()
             else:
-                row, cur = pipeline.sync_pair(video, tmp, "en", cfg, audio_cache, work)
-                row = pipeline.correctness_and_finish(video, tmp, "en", cfg, conn, row, cur)
+                row, cur = _run()
     finally:
         pipeline.finalize_line_order = real_finalize
         pipeline._apply_line_order = real_apply
