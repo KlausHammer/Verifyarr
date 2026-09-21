@@ -10,17 +10,44 @@ Episodes (10: 9 user-confirmed + timing-trusted, plus C_S03E04):
   C_S03E04 (documented real drift case: user-confirmed correct content
   but -0.048 s/min genuine drift -- see DRIFT_CASE_SLUGS).
 
-Scenarios (6 + 1 opt-in extra):
-  clean      no corruption; control group measuring false positives
-             ("already in sync", no flag, no rewritten timings).
-  uniform    global +45s shift (the old e2e_after.py scenario).
-  drift      progressive 2% stretch (25<->23.976fps style).
-  piecewise  6 blocks, each seeded random +/-5..15s.
-  swap       in-cue L1/L2 line reversal -- see corrupt_swap docstring.
-  gap        5-minute middle chunk deleted (cut version).
-  drift_swap COMBINED drift (2%) + swap -- a frame-rate-converted file can
-             carry both, and the drift fix and the line-order fix must not
-             interfere with each other.
+Scenarios (23, all in the default set):
+  clean          no corruption; control group measuring false positives
+                 ("already in sync", no flag, no rewritten timings).
+  CONSTANT OFFSET
+  uniform        global +45s shift (the old e2e_after.py scenario).
+  uniform_neg    -45s: the same size the other way, which the anchor window
+                 does NOT see symmetrically (+clip_seconds+30s vs -30s).
+  uniform_p03    +0.3s -- under the 0.5s decision bar; nothing may move.
+  uniform_m07    -0.7s -- just over it, and negative.
+  uniform_p15    +1.5s, uniform_m5  -5s: the rest of the boundary sweep.
+  RATE
+  fps_late/early 1001/1000 (+/-0.1%): the only rate error measured on the
+                 real corpus, in both directions (rapport 9.1).
+  drift          generic 2% stretch; matches no named conversion (see its
+                 docstring) -- the mid-magnitude point.
+  drift_offset   2% stretch PLUS an 8s delay: real conversions carry both,
+                 and this is the only scenario that exercises the fitted
+                 intercept (corrupt_drift pivots at t=0).
+  pal_late/early 25/24 (+/-4.167%): the real PAL speed-up, both directions.
+  BLOCK STRUCTURE
+  piecewise      6 blocks, each seeded random +/-5..15s.
+  piecewise_b/c  the same shape on two further independent draws -- one draw
+                 per episode is one draw, and block layout drives outcomes.
+  cut_version    the real cut mismatch: middle cues gone AND everything after
+                 300s too early. Doing nothing is the WRONG answer here.
+  missing_middle 5-minute middle chunk of cues deleted, surviving timings
+                 correct. Doing nothing IS the right answer. (Was called
+                 "gap"; the old name still resolves.)
+  ROBUSTNESS AND SAFETY -- nothing to fix, everything to not break
+  dropdup        5% of cues dropped, 5% duplicated in place.
+  jitter         per-cue +/-1..3s noise. Pass = no worse, not recovery.
+  wrong_episode  another episode's subtitle. Pass = SUSPECT + untouched
+                 file; recovery is not scored.
+  LINE ORDER
+  swap           in-cue L1/L2 line reversal -- see corrupt_swap docstring.
+  drift_swap     COMBINED drift (2%) + swap -- a frame-rate-converted file can
+                 carry both, and the drift fix and the line-order fix must not
+                 interfere with each other.
 
 Model axis: "turbo" is tests/fixtures/whisper_full/<slug>.json
 (large-v3-turbo, the baseline); the rest is
@@ -108,14 +135,34 @@ def scores_recovery(slug, scenario):
     """Timing recovery is meaningless on drift-case episodes (own timings off)."""
     return (scenario in TIMING_SCENARIOS or scenario == "clean") \
         and slug not in DRIFT_CASE_SLUGS
-TIMING_SCENARIOS = {"uniform", "drift", "piecewise", "gap", "drift_swap",
-                    "fps_late", "fps_early"}
-# fps_late/fps_early are deliberately NOT in the default set: alass' own framerate guessing
-# already fixes an injected clean rescale (measured: recovery 1.000, a constant 0.273s residual),
-# so they test alass, not this code. Kept as an opt-in guard that alass keeps doing it --
-# --scenarios fps_late,fps_early.
-DEFAULT_SCENARIOS = ["clean", "uniform", "drift", "piecewise", "swap", "gap",
-                     "drift_swap"]
+TIMING_SCENARIOS = {"uniform", "uniform_neg", "uniform_p03", "uniform_m07", "uniform_p15",
+                    "uniform_m5", "drift", "drift_offset", "pal_late", "pal_early",
+                    "piecewise", "piecewise_b", "piecewise_c", "cut_version",
+                    "missing_middle", "gap", "drift_swap", "fps_late", "fps_early",
+                    "dropdup", "jitter"}
+# Everything runs by default. Nothing is opt-in any more: fps_late/fps_early used to be
+# held out on the grounds that alass already fixed them, but "alass still does it" is
+# exactly the kind of assumption that goes stale silently -- and they are the only rate
+# error actually measured on the real corpus (rapport 9.1).
+#
+# Two scenarios are NOT scored on recovery and must not be read as timing failures:
+# wrong_episode (pass = SUSPECT + untouched) and swap (pass = lines restored). jitter IS
+# scored, but its pass mark is `recovered` no worse than `injected_p50` -- there is no
+# systematic error in it to remove.
+# Doing nothing is the correct outcome here, so `untouched` is the measurement.
+# wrong_episode and jitter are the sharp ones: there is no correction to make, and
+# inventing one is worse than reporting the file.
+NO_CHANGE_SCENARIOS = {"clean", "missing_middle", "gap", "dropdup", "jitter",
+                       "wrong_episode", "uniform_p03"}
+DEFAULT_SCENARIOS = ["clean",
+                     "uniform", "uniform_neg", "uniform_p03", "uniform_m07",
+                     "uniform_p15", "uniform_m5",
+                     "fps_late", "fps_early", "drift", "drift_offset",
+                     "pal_late", "pal_early",
+                     "piecewise", "piecewise_b", "piecewise_c",
+                     "cut_version", "missing_middle",
+                     "dropdup", "jitter", "wrong_episode",
+                     "swap", "drift_swap"]
 MODES = ["full", "sampled"]
 AUDIOS = ["on", "off"]
 
@@ -363,11 +410,24 @@ def corrupt_clean(subs, rng):
 
 
 def corrupt_uniform(subs, rng, shift_s=45.0):
+    """Global constant shift. A negative shift DROPS the cues it would push before
+    zero rather than clamping them there: an SRT cannot hold a negative timestamp
+    (pysubs2 raises TimestampUnderflow), and clamping would quietly turn a constant
+    offset into a piecewise one at the head of the file -- a different scenario
+    measuring a different thing. Dropped cues come back as kept indices."""
     out = copy.deepcopy(subs)
-    for e in out.events:
-        e.start = int(e.start + shift_s * 1000)
-        e.end = int(e.end + shift_s * 1000)
-    return out, None, {"shift_s": shift_s}
+    kept, events = [], []
+    for i, e in enumerate(out.events):
+        start = int(e.start + shift_s * 1000)
+        if start < 0:
+            continue
+        e.start, e.end = start, int(e.end + shift_s * 1000)
+        kept.append(i)
+        events.append(e)
+    out.events = events
+    dropped = len(subs.events) - len(kept)
+    return (out, (kept if dropped else None),
+            {"shift_s": shift_s, "dropped_before_zero": dropped})
 
 
 def corrupt_piecewise(subs, rng, n_blocks=6, lo=5.0, hi=15.0):
@@ -387,7 +447,13 @@ def corrupt_piecewise(subs, rng, n_blocks=6, lo=5.0, hi=15.0):
 
 
 def corrupt_drift(subs, rng, rate=0.02):
-    """Progressive stretch t -> t*(1+rate): framerate-conversion style drift."""
+    """Progressive stretch t -> t*(1+rate): a generic rate error, 25s end-to-end on a
+    21-minute episode.
+
+    2% matches no named conversion -- it was once labelled "25<->23.976fps style", which
+    is +4.27%, not 2%. The real conversions are corrupt_pal_late/early (25/24, +4.167%)
+    and corrupt_fps_late/early (1001/1000, +0.1%); this one is kept as the mid-magnitude
+    point between them, not as a claim about any real pipeline."""
     out = copy.deepcopy(subs)
     for e in out.events:
         e.start = int(e.start * (1 + rate))
@@ -420,8 +486,14 @@ def corrupt_fps_early(subs, rng):
     return _rescale(subs, 1 / NTSC_RATIO)
 
 
-def corrupt_gap(subs, rng, gap_seconds=300.0):
-    """Delete a contiguous middle chunk (cut version). Returns kept indices."""
+def corrupt_missing_middle(subs, rng, gap_seconds=300.0):
+    """Delete a contiguous middle chunk of CUES, leaving every surviving timing correct.
+
+    Named for what it is. It was called "gap (cut version)", which it is not: a cut
+    version also moves everything after the cut (see corrupt_cut_version). Here the
+    right answer is to do nothing, and the thing under test is robustness to a subtitle
+    with a hole in it -- 5 minutes where Whisper hears dialogue and the file has none.
+    Returns kept indices."""
     out = copy.deepcopy(subs)
     dur = max(e.end for e in out.events) / 1000.0
     g0, g1 = dur * 0.4, dur * 0.4 + gap_seconds
@@ -447,19 +519,22 @@ def corrupt_swap(subs, rng, n=6):
     whose SWAPPED form trips _cap_signal (so each injected swap is actually
     testable -- swapping already-lowercase/uppercase pairs would be invisible
     by construction, not a detection failure), excluding cues the heuristic
-    already flags in the original. First n in file order: deterministic
-    without needing rng.
+    already flags in the original. Targets are spread evenly across the whole
+    candidate list rather than taken as the first n: the first n are all in the
+    opening minutes, so every swap landed in one clump and nothing tested whether
+    detection holds up late in a file. Still deterministic, no rng needed.
     """
     from verifyarr.line_order import _split_two_lines, _cap_signal, heuristic_candidates
     out = copy.deepcopy(subs)
     already = {c[0] for c in heuristic_candidates(out)}
-    targets = []
-    for i, e in enumerate(out.events):
-        parts = _split_two_lines(e.text)
-        if parts and _cap_signal(parts[1], parts[0]) and i not in already:
-            targets.append(i)
-            if len(targets) >= n:
-                break
+    cands = [i for i, e in enumerate(out.events)
+             if (p := _split_two_lines(e.text)) and _cap_signal(p[1], p[0])
+             and i not in already]
+    if len(cands) > n:
+        step = len(cands) / n
+        targets = [cands[int(k * step)] for k in range(n)]
+    else:
+        targets = cands
     for i in targets:
         l1, l2 = _split_two_lines(out.events[i].text)
         out.events[i].text = f"{l2}\\N{l1}"
@@ -469,10 +544,125 @@ def corrupt_swap(subs, rng, n=6):
 def corrupt_drift_swap(subs, rng, rate=0.02, n=6):
     """Combined drift + in-cue swap: a frame-rate-converted file can carry both
     at once (timing skewed AND lines misordered), so the two fixes must not
-    fight each other. Kept out of the default set; run explicitly."""
+    fight each other."""
     drifted, _, d_detail = corrupt_drift(subs, rng, rate=rate)
     out, kept, s_detail = corrupt_swap(drifted, rng, n=n)
     return out, kept, {"rate": rate, "swapped": s_detail["swapped"]}
+
+
+# The real PAL speed-up: 24fps film run at 25fps, +4.167%. This is the most common
+# rate error in the wild and the one alass guesses at unprompted (it applied 25/24 to a
+# 2% stretch and turned it into 6.25% -- rapport 10.5). corrupt_drift's 2% matches no
+# named conversion; these two do, and they sit under STRETCH_MAX_RATE (0.08) so the
+# measured-rate fix has to reach them.
+PAL_RATIO = 25 / 24.0
+
+
+def corrupt_pal_late(subs, rng):
+    """24fps subtitle on a 25fps (PAL) video: t -> t*25/24, +4.167%."""
+    return _rescale(subs, PAL_RATIO)
+
+
+def corrupt_pal_early(subs, rng):
+    """The reverse: a PAL subtitle on the 24fps master, t -> t*24/25."""
+    return _rescale(subs, 1 / PAL_RATIO)
+
+
+def corrupt_drift_offset(subs, rng, rate=0.02, offset_s=8.0):
+    """Stretch AND a constant delay, which is what a real conversion carries: the file
+    was re-timed and then muxed against a differently-trimmed master.
+
+    corrupt_drift pivots exactly at t=0, so its fitted intercept is always ~0 and the
+    intercept half of the correction is never exercised. It is not decoration: leaving
+    it out left a late cue 19s off on C_S02E01 (see pipeline._try_stretch_rescale)."""
+    out = copy.deepcopy(subs)
+    for e in out.events:
+        e.start = int(e.start * (1 + rate) + offset_s * 1000)
+        e.end = int(e.end * (1 + rate) + offset_s * 1000)
+    return out, None, {"rate": rate, "offset_s": offset_s}
+
+
+def corrupt_cut_version(subs, rng, cut_seconds=300.0):
+    """A subtitle from a CUT broadcast against the uncut video -- the real cut-version
+    mismatch, which corrupt_missing_middle only looks like.
+
+    Two things go wrong at once, and the second is the hard one: the cues covering the
+    cut are absent, AND every cue after it sits cut_seconds too EARLY, because in the
+    broadcast that material started that much sooner. So this is a genuine two-block
+    problem with a 300s step in the middle -- alass' home ground, and a case where
+    doing nothing (the right answer for missing_middle) is the wrong answer."""
+    out = copy.deepcopy(subs)
+    dur = max(e.end for e in out.events) / 1000.0
+    c0, c1 = dur * 0.4, dur * 0.4 + cut_seconds
+    kept, events = [], []
+    for i, e in enumerate(out.events):
+        if c0 * 1000 <= e.start and e.end <= c1 * 1000:
+            continue
+        if e.start / 1000.0 >= c1:
+            e.start = max(0, int(e.start - cut_seconds * 1000))
+            e.end = max(e.start + 200, int(e.end - cut_seconds * 1000))
+        kept.append(i)
+        events.append(e)
+    out.events = events
+    return out, kept, {"cut_start_s": round(c0, 1), "cut_end_s": round(c1, 1),
+                       "removed_lines": len(subs.events) - len(kept),
+                       "post_cut_shift_s": -cut_seconds}
+
+
+def corrupt_dropdup(subs, rng, frac=0.05):
+    """5% of cues dropped and 5% duplicated in place -- merge/OCR damage. The timings
+    that survive are CORRECT, so the pass mark is that nothing is broken: no crash, no
+    index drift, and no correction invented for a file that needs none.
+
+    `kept` carries the reference index of every surviving cue in OUTPUT order, so a
+    duplicate scores against the line it copies instead of shifting everything after
+    it by one (timing_errors pairs after_events[j] with ref_events[kept[j]])."""
+    out = copy.deepcopy(subs)
+    kept, events, dropped, duped = [], [], 0, 0
+    for i, e in enumerate(out.events):
+        r = rng.random()
+        if r < frac:
+            dropped += 1
+            continue
+        events.append(e)
+        kept.append(i)
+        if r > 1 - frac:
+            events.append(copy.deepcopy(e))
+            kept.append(i)
+            duped += 1
+    out.events = events
+    return out, kept, {"dropped": dropped, "duplicated": duped}
+
+
+def corrupt_jitter(subs, rng, lo=1.0, hi=3.0):
+    """Per-cue random +/-1..3s with no systematic shape: OCR and live-caption noise.
+
+    Nothing here is recoverable -- there is no single offset, rate or block structure to
+    find. The pass mark is therefore NOT recovery: it is that `recovered` comes back no
+    worse than `injected_p50`. A pipeline that chases this noise into pieces has failed
+    even if some cues improve."""
+    out = copy.deepcopy(subs)
+    for e in out.events:
+        d = rng.uniform(lo, hi) * rng.choice((-1, 1))
+        e.start = max(0, int(e.start + d * 1000))
+        e.end = max(e.start + 200, int(e.end + d * 1000))
+    return out, None, {"jitter_s": [lo, hi]}
+
+
+def corrupt_wrong_episode(subs, rng, slug):
+    """Another episode's subtitle against this video. Nothing to recover and nothing to
+    score on timing -- the pass mark is a SUSPECT flag and an UNTOUCHED file.
+
+    tests/test_sync_verification.py::WrongEpisodeTests covers the property once; here it
+    gets the model x mode variation, because "we never rewrite a file we cannot verify"
+    is a safety property and safety properties are where model strength matters most."""
+    others = [s for s in SLUGS if s != slug]
+    for other in (others[rng.randrange(len(others)):] + others):
+        try:
+            return copy.deepcopy(subs_for(other, fixture(other))), None, {"from_slug": other}
+        except Exception:   # a slug whose fixture is missing must not kill the row
+            continue
+    raise RuntimeError("no other episode available for wrong_episode")
 
 
 def timing_errors(ref_events, after_events, kept=None):
@@ -570,10 +760,38 @@ def dedupe_rows(rows):
     return [best[k] for k in order]
 
 
-SCENARIOS = {"clean": corrupt_clean, "uniform": corrupt_uniform, "drift": corrupt_drift,
-             "piecewise": corrupt_piecewise, "swap": corrupt_swap, "gap": corrupt_gap,
-             "drift_swap": corrupt_drift_swap,
-             "fps_late": corrupt_fps_late, "fps_early": corrupt_fps_early}
+def _uniform(shift_s):
+    return lambda subs, rng: corrupt_uniform(subs, rng, shift_s=shift_s)
+
+
+SCENARIOS = {
+    "clean": corrupt_clean,
+    # Constant offsets. uniform (+45s) is the alass smoke test; uniform_neg is the same
+    # size the other way, which is NOT symmetric for us -- the anchor window reaches
+    # clip_seconds + 30s forward but only 30s back (line_order.py), so a late subtitle
+    # is visible to the screen where an early one of the same size is not.
+    "uniform": corrupt_uniform, "uniform_neg": _uniform(-45.0),
+    # The decision boundary is 0.5s (min_change_seconds = SCREEN_TOLERANCE_S): below it
+    # nothing should move at all. Both signs, both sides, deliberately small.
+    "uniform_p03": _uniform(0.3), "uniform_m07": _uniform(-0.7),
+    "uniform_p15": _uniform(1.5), "uniform_m5": _uniform(-5.0),
+    # Rate errors, smallest to largest: 0.1% (measured real), 2% (generic), 4.167% (PAL).
+    "fps_late": corrupt_fps_late, "fps_early": corrupt_fps_early,
+    "drift": corrupt_drift, "drift_offset": corrupt_drift_offset,
+    "pal_late": corrupt_pal_late, "pal_early": corrupt_pal_early,
+    # Block structure. Three seeds because one draw per episode is one draw: the rng is
+    # keyed on slug+scenario, so distinct names give independent block layouts.
+    "piecewise": corrupt_piecewise, "piecewise_b": corrupt_piecewise,
+    "piecewise_c": corrupt_piecewise,
+    "cut_version": corrupt_cut_version,
+    "missing_middle": corrupt_missing_middle,
+    # Robustness and safety: nothing to fix, everything to not break.
+    "dropdup": corrupt_dropdup, "jitter": corrupt_jitter,
+    "wrong_episode": corrupt_wrong_episode,
+    "swap": corrupt_swap, "drift_swap": corrupt_drift_swap,
+    # Old name kept so historical commands and jsonl comparisons still resolve.
+    "gap": corrupt_missing_middle,
+}
 
 
 def rows_done(path):
@@ -747,7 +965,12 @@ def main(argv=None):
                         if key in done:
                             continue
                         s_rng = random.Random(f"matrix-v1:{slug}:{name}")
-                        corrupted, kept, detail = SCENARIOS[name](subs, s_rng)
+                        # wrong_episode is the one corruption that needs a second
+                        # episode, so it takes the slug to know which one NOT to use.
+                        corrupted, kept, detail = (
+                            corrupt_wrong_episode(subs, s_rng, slug)
+                            if name == "wrong_episode"
+                            else SCENARIOS[name](subs, s_rng))
                         rec = dict(status="ok", model=model, slug=slug, scenario=name,
                                    mode=mode, audio_confirm=audio, detail=detail,
                                    drift_case=slug in DRIFT_CASE_SLUGS)
@@ -773,11 +996,20 @@ def main(argv=None):
                                 # meaningless (ref itself drifts from audio).
                                 if scores_recovery(slug, name):
                                     rec["recovered"] = summarize(timing_errors(ref, after_ev, kept))
-                                if name == "clean":
-                                    rec["untouched"] = (
-                                        rec["sync"] == "already in sync" and rec["flag"] == "ok"
-                                        and rec["lo_fixed"] in (None, 0)
-                                        and "SUSPECT" not in (row.get("correctness_flag") or ""))
+                            if name in NO_CHANGE_SCENARIOS:
+                                # Scenarios where doing nothing is the right answer, so
+                                # "was the file left alone" is the measurement -- not just
+                                # for clean: a wrong-episode subtitle we rewrite is worse
+                                # than one we merely fail to fix.
+                                # "left unchanged" counts as untouched too: it is what a
+                                # rejected alass fit leaves behind, and on wrong_episode
+                                # it is the CORRECT outcome alongside a SUSPECT flag. So
+                                # the flag is reported separately rather than folded in.
+                                _s = rec["sync"] or ""
+                                rec["untouched"] = (
+                                    (_s.startswith("already in sync")
+                                     or _s.startswith("left unchanged"))
+                                    and rec["lo_fixed"] in (None, 0))
                             if name in ("swap", "drift_swap"):
                                 rec["swap"] = swap_recovery(ref, after_ev, detail.get("swapped", []))
                                 rec["swap_detail"] = swap_index_detail(

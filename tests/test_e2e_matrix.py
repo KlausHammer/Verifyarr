@@ -68,10 +68,118 @@ class CorruptionTests(unittest.TestCase):
     def test_uniform_shifts_everything_45s(self):
         subs = _subs(["Hello world.", "Second line here."])
         out, kept, detail = M.corrupt_uniform(subs, random.Random(0))
-        self.assertEqual(detail, {"shift_s": 45.0})
+        self.assertEqual(detail["shift_s"], 45.0)
+        self.assertEqual(detail["dropped_before_zero"], 0)
+        self.assertIsNone(kept, "a positive shift drops nothing, so there is nothing to map")
         for a, b in zip(out.events, subs.events):
             self.assertEqual(a.start - b.start, 45000)
             self.assertEqual(a.end - b.end, 45000)
+
+    def test_negative_uniform_drops_cues_it_would_push_before_zero(self):
+        """An SRT cannot hold a negative timestamp, so they are dropped, not clamped --
+        clamping would turn a constant offset into a piecewise one at the head."""
+        subs = _subs(["Hello world.", "Second line here."])
+        out, kept, detail = M.corrupt_uniform(subs, random.Random(0), shift_s=-45.0)
+        self.assertEqual(detail["shift_s"], -45.0)
+        self.assertEqual(detail["dropped_before_zero"], len(subs.events) - len(out.events))
+        self.assertTrue(all(e.start >= 0 for e in out.events))
+        if detail["dropped_before_zero"]:
+            self.assertEqual(len(kept), len(out.events))
+            for j, i in enumerate(kept):
+                self.assertEqual(out.events[j].start - subs.events[i].start, -45000)
+
+    def test_pal_ratios_are_the_real_conversion(self):
+        """25/24 = +4.167%, and it has to stay under STRETCH_MAX_RATE to be fixable."""
+        from verifyarr.subtitles import STRETCH_MAX_RATE
+        self.assertAlmostEqual(M.PAL_RATIO, 25 / 24.0)
+        self.assertLess(M.PAL_RATIO - 1, STRETCH_MAX_RATE)
+        subs = _subs(["a", "b", "c"])
+        late, _, d_late = M.corrupt_pal_late(subs, random.Random(0))
+        early, _, _ = M.corrupt_pal_early(subs, random.Random(0))
+        self.assertAlmostEqual(d_late["ratio"], 1.041667, places=5)
+        for a, b, c in zip(late.events, early.events, subs.events):
+            self.assertGreater(a.start, c.start)
+            self.assertLess(b.start, c.start)
+
+    def test_drift_offset_carries_both_rate_and_intercept(self):
+        """The only scenario where the fitted intercept is non-zero: corrupt_drift
+        pivots at t=0, so on its own it never exercises that half of the fix."""
+        subs = _subs(["a", "b", "c"])
+        out, _, detail = M.corrupt_drift_offset(subs, random.Random(0))
+        self.assertEqual((detail["rate"], detail["offset_s"]), (0.02, 8.0))
+        for a, b in zip(out.events, subs.events):
+            self.assertAlmostEqual(a.start, b.start * 1.02 + 8000, delta=2)
+        # the gap between first and last error is the rate; the floor is the offset
+        first = out.events[0].start - subs.events[0].start
+        last = out.events[-1].start - subs.events[-1].start
+        self.assertGreater(last, first)
+        self.assertGreater(first, 7900)
+
+    def test_cut_version_moves_what_missing_middle_leaves_alone(self):
+        """The distinction the rename is about: both delete the middle, only one is a
+        cut. A cut also pulls everything after it earlier."""
+        subs = _subs([f"line {i}" for i in range(40)])
+        cut, cut_kept, _ = M.corrupt_cut_version(subs, random.Random(0), cut_seconds=20.0)
+        miss, miss_kept, _ = M.corrupt_missing_middle(subs, random.Random(0), gap_seconds=20.0)
+        self.assertLess(len(cut.events), len(subs.events))
+        # missing_middle: every survivor keeps its original time
+        for j, i in enumerate(miss_kept):
+            self.assertEqual(miss.events[j].start, subs.events[i].start)
+        # cut_version: survivors after the cut are earlier, and none is negative
+        moved = [j for j, i in enumerate(cut_kept)
+                 if cut.events[j].start != subs.events[i].start]
+        self.assertTrue(moved, "a cut must move the cues after it")
+        for j in moved:
+            self.assertLess(cut.events[j].start, subs.events[cut_kept[j]].start)
+        self.assertTrue(all(e.start >= 0 for e in cut.events))
+
+    def test_dropdup_kept_maps_duplicates_back_to_their_original(self):
+        """A duplicate must score against the line it copies, not shift every later
+        cue by one -- timing_errors pairs after_events[j] with ref_events[kept[j]]."""
+        subs = _subs([f"line {i}" for i in range(200)])
+        out, kept, detail = M.corrupt_dropdup(subs, random.Random(7), frac=0.05)
+        self.assertEqual(len(kept), len(out.events))
+        self.assertGreater(detail["dropped"], 0)
+        self.assertGreater(detail["duplicated"], 0)
+        self.assertEqual(len(out.events),
+                         len(subs.events) - detail["dropped"] + detail["duplicated"])
+        # every surviving timing is untouched, so the error against the reference is 0
+        errs = M.timing_errors(list(subs.events), list(out.events), kept)
+        self.assertEqual(max(errs), 0.0)
+
+    def test_jitter_has_no_systematic_shape(self):
+        """If it had one, a single offset would fix it and it would not be a noise test."""
+        subs = _subs([f"line {i}" for i in range(300)])
+        out, kept, _ = M.corrupt_jitter(subs, random.Random(3))
+        self.assertIsNone(kept)
+        deltas = [(a.start - b.start) / 1000.0 for a, b in zip(out.events, subs.events)]
+        self.assertLess(abs(sum(deltas) / len(deltas)), 0.5, "jitter drifted one way")
+        self.assertTrue(all(1.0 <= abs(d) <= 3.0 for d in deltas[1:]))
+
+    def test_swap_targets_are_spread_not_clumped(self):
+        """First-n-in-file-order put every swap in the opening minutes."""
+        subs = _subs(["ALICE\\NThat is mine.", "BOB\\NNo it is not."] * 60)
+        _, _, detail = M.corrupt_swap(subs, random.Random(0), n=6)
+        targets = detail["swapped"]
+        if len(targets) >= 6:
+            self.assertGreater(max(targets), len(subs.events) // 2,
+                               "no swap landed in the second half of the file")
+
+    def test_every_default_scenario_is_registered_and_sane(self):
+        """A name in DEFAULT_SCENARIOS that is not in SCENARIOS fails only at row 1 of a
+        long run; and a corruption that emits a negative or inverted cue corrupts the
+        measurement rather than the file."""
+        subs = _subs([f"line {i}" for i in range(120)])
+        for name in M.DEFAULT_SCENARIOS:
+            self.assertIn(name, M.SCENARIOS, name)
+            if name == "wrong_episode":
+                continue   # needs real fixtures, covered by the matrix itself
+            out, kept, _ = M.SCENARIOS[name](subs, random.Random(f"t:{name}"))
+            with self.subTest(scenario=name):
+                self.assertTrue(all(e.start >= 0 and e.end > e.start for e in out.events))
+                if kept is not None:
+                    self.assertEqual(len(kept), len(out.events))
+                    self.assertTrue(all(0 <= i < len(subs.events) for i in kept))
 
     def test_drift_stretches_progressively(self):
         subs = _subs(["Hello world.", "Second line here."])
@@ -86,7 +194,7 @@ class CorruptionTests(unittest.TestCase):
         for k, e in enumerate(subs.events):
             e.start = k * 30_000
             e.end = e.start + 2000
-        out, kept, detail = M.corrupt_gap(subs, random.Random(0))
+        out, kept, detail = M.corrupt_missing_middle(subs, random.Random(0))
         self.assertTrue(0 < detail["removed_lines"] < 40)
         self.assertEqual(len(out.events), len(kept))
         self.assertEqual([subs.events[i].text for i in kept],
