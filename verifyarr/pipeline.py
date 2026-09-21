@@ -642,6 +642,11 @@ def sync_pair(video_path: Path, subtitle_path: Path, lang: Optional[str], cfg: C
                 row["sync_max_shift_s"] = round(max_shift_single, 2) if max_shift_single is not None else None
                 row["sync_split_blocks"] = 1
                 row["sync_block_spread_s"] = None
+                # The pre-sync already corrected alass' input file (all three candidates
+                # below build on it) -- without this the note never says so whenever
+                # alass goes multi-block (measured: SH_S01E06 full drift fixed by an
+                # invisible presync, note reads as alass-only).
+                row["note"] += presync_note
                 return row, current_subs
             blocks_note += " (alass's --no-split alternative failed, so this multi-block fit was applied unverified.)"
 
@@ -661,6 +666,17 @@ def sync_pair(video_path: Path, subtitle_path: Path, lang: Optional[str], cfg: C
 # (alass's evidence that a shift is needed, but structurally the riskier one) over leaving the
 # original alone (alass measured a real offset, so "untouched" is not the neutral choice).
 _CANDIDATE_PREFERENCE = {"new": 0, "blocks": 1, "old": 2}
+
+# A lone anchor this far out is a different phenomenon than the jitter the
+# min_samples rule was measured against (1-2 samples at 2.5-5s on 5 of 52 real
+# episodes): at 4x the noise floor and content-matched, it is a whole block off,
+# witnessed once because sparse sampling only landed one clip there -- a wrong
+# region gets NO anchor at all, never a small one. Only trusted on the
+# block-error shape (multi-block spread), where it routes to the anchor branch:
+# resync either fixes-verified or the file warns. Never a verdict on its own.
+# Measured: SH_S01E01 sampled keeps a 4-block fit 25s off in one range,
+# witnessed by a lone 25.27s anchor (rec 0.855, was silent).
+ANCHOR_HUGE_SINGLE_S = 10.0
 
 # How close two "ok" candidates' CONTENT scores (avg_score -- fraction of matching words) have
 # to be before timing/preference gets to break the tie, once content has actually been scored
@@ -1534,6 +1550,22 @@ def correctness_and_finish(video_path: Path, subtitle_path: Path, lang: Optional
                         "heuristic_indices": collected.get("heuristic_indices"),
                     })
 
+            # Shared by the safety net and the anchor branch below: a file the
+            # anchors condemn always gets the resync ATTEMPT first -- the net only
+            # fires when the anchors have nothing to plan from.
+            anchor_bad = (significant_anchor_residuals(
+                result.get("samples") or [], ANCHOR_SUSPECT_THRESHOLD_S,
+                min_samples=cfg.anchor_suspect_min_samples)
+                if cfg.anchor_check_enabled else [])
+            if (cfg.anchor_check_enabled and not anchor_bad
+                    and row["sync_block_spread_s"] is not None
+                    and row["sync_block_spread_s"] >= cfg.block_spread_suspect_threshold_s
+                    and (resolved_winner is None or resolved_winner == "blocks")):
+                anchor_bad = [s for s in result.get("samples") or []
+                              if s.get("anchor")
+                              and abs(s["anchor"]["shift"]) >= ANCHOR_HUGE_SINGLE_S
+                              and s.get("score") is not None
+                              and s["score"] >= cfg.overlap_threshold]
             if result["flag"] == "SUSPECT":
                 row["correctness_flag"] = "SUSPECT"
                 excerpts = " || ".join(
@@ -1544,15 +1576,20 @@ def correctness_and_finish(video_path: Path, subtitle_path: Path, lang: Optional
                 row["auto_action"] = handle_suspect(subtitle_path, video_path, cfg, media_root, lang,
                                                      bazarr_meta, history_index, cfg.correctness_auto_action,
                                                      conn=conn, run_id=run_id, cancel_event=cancel_event)
-            elif (resolved_winner is None
-                  and row["sync_block_spread_s"] is not None
+            elif (row["sync_block_spread_s"] is not None
                   and row["sync_block_spread_s"] >= cfg.block_spread_suspect_threshold_s
+                  and not anchor_bad
+                  and (resolved_winner is None or resolved_winner == "blocks")
                   and any(s.get("score") is not None and s["score"] < cfg.overlap_threshold
                           for s in result["samples"])):
-                # A safety net for the one case that skips the {original, single-offset,
-                # multi-block} comparison above entirely: sync_pair applied a multi-block fix
-                # directly (its --no-split alternative failed, or the comparison couldn't run)
-                # with nothing to verify it against.
+                # A safety net for a multi-block sync the evidence can't confirm: either
+                # sync_pair applied it directly (its --no-split alternative failed, or the
+                # comparison couldn't run), or the {original, single-offset, multi-block}
+                # comparison above KEPT 'blocks' -- a relative win ("best of three") that
+                # still leaves whole stretches unconfirmed. The resolved-winner half is
+                # symmetry, not a measured case: no matrix row fires it (kept-'blocks'
+                # rows either carry anchor evidence, which defers to the anchor branch,
+                # or match their windows everywhere).
                 # The majority-vote check alone (_aggregate_correctness) said "ok" -- but alass
                 # itself needed wildly different offsets in different parts of this file to line
                 # up the audio TIMING (real cuts can cause that on their own), AND at least one
@@ -1563,17 +1600,18 @@ def correctness_and_finish(video_path: Path, subtitle_path: Path, lang: Optional
                 row["correctness_flag"] = "SUSPECT"
                 failing = [s for s in result["samples"]
                            if s.get("score") is not None and s["score"] < cfg.overlap_threshold]
+                kept = ("kept 'blocks' over its single-offset fit, but "
+                        if resolved_winner == "blocks" else "needed ")
                 row["note"] = (row["note"] +
-                                f" Escalated to SUSPECT: alass needed a {row['sync_block_spread_s']:.1f}s-spread "
+                                f" Escalated to SUSPECT: alass {kept}a {row['sync_block_spread_s']:.1f}s-spread "
                                 f"multi-block sync AND {len(failing)}/{len(result['samples'])} Whisper sample(s) "
                                 "didn't match their window on their own -- majority-vote alone wasn't enough to "
                                 "trust this file.").strip()
                 row["auto_action"] = handle_suspect(subtitle_path, video_path, cfg, media_root, lang,
                                                      bazarr_meta, history_index, cfg.correctness_auto_action,
                                                      conn=conn, run_id=run_id, cancel_event=cancel_event)
-            elif cfg.anchor_check_enabled and (bad := significant_anchor_residuals(
-                    result.get("samples") or [], ANCHOR_SUSPECT_THRESHOLD_S,
-                    min_samples=cfg.anchor_suspect_min_samples)):
+            elif anchor_bad:
+                bad = anchor_bad
                 # A Whisper anchor (subtitles.clip_anchor_shift) is a CONTENT-verified point
                 # estimate of the true timing offset at one exact instant -- not the bag-of-
                 # words window score every other branch here relies on, which can be fooled by
@@ -1611,7 +1649,44 @@ def correctness_and_finish(video_path: Path, subtitle_path: Path, lang: Optional
                     collected, result, swap_severity = _recheck_after_resync(
                         video_path, current_subs, lang, cfg, conn, collected, result,
                         cancel_event=cancel_event)
-                    if act_on_line_order:
+                    # The resync verified itself on its own sparse anchors, excluding
+                    # +-clip_seconds around every planned cut -- but that check passes
+                    # while whole cue bands around misplaced cuts are still mistimed
+                    # (measured: C_S03E03/C_S03E08 full land at rec 0.87-0.88 with
+                    # 3-4 bad recheck anchors, flag ok). Re-judge the CORRECTED file
+                    # on the fresh recheck evidence -- the same significance rule that
+                    # condemned it, with no cut exclusions. The improvement stays on
+                    # disk either way; only the verdict changes.
+                    resync_still_bad = significant_anchor_residuals(
+                        result.get("samples") or [], ANCHOR_SUSPECT_THRESHOLD_S,
+                        min_samples=cfg.anchor_suspect_min_samples)
+                    if result.get("flag") != "ok" or resync_still_bad:
+                        if result.get("flag") not in ("ok", "SUSPECT"):
+                            row["correctness_flag"] = "unknown"
+                            row["note"] = (row["note"] + " Correctness could not be "
+                                           "determined after anchor resync: "
+                                           f"{result['flag']}.").strip()
+                        else:
+                            row["correctness_flag"] = "SUSPECT"
+                            if resync_still_bad:
+                                worst = max(abs(s["anchor"]["shift"])
+                                            for s in resync_still_bad)
+                                where = ", ".join(
+                                    f"{s['start']}s (Δ{s['anchor']['shift']:.1f}s)"
+                                    for s in resync_still_bad)
+                                row["note"] = (row["note"] +
+                                               f" Timing mismatch REMAINS after anchor resync: "
+                                               f"{len(resync_still_bad)} Whisper anchor(s) still show "
+                                               f"up to {worst:.1f}s at [{where}] on the corrected "
+                                               f"file.").strip()
+                            else:
+                                row["note"] = (row["note"] + " Correctness check failed "
+                                               "on the resynced file.").strip()
+                            row["auto_action"] = handle_suspect(
+                                subtitle_path, video_path, cfg, media_root, lang,
+                                bazarr_meta, history_index, cfg.correctness_auto_action,
+                                conn=conn, run_id=run_id, cancel_event=cancel_event)
+                    elif act_on_line_order:
                         _apply_line_order(row, result, swap_severity, current_subs,
                                            subtitle_path, cfg, media_root)
                     # Cache under the CORRECTED subtitle's own fingerprint, so the next run
