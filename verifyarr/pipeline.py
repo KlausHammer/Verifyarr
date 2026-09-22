@@ -160,11 +160,13 @@ def handle_suspect(subtitle_path: Path, video_path: Path, cfg: Config, media_roo
 
 
 # Below this nothing is worth rewriting a file for. A subtitle that is off by less than
-# half a second everywhere is in sync as far as a viewer is concerned, and the user's rule
-# is explicit: a small drift, or a couple of cues off by under 0.5s, is not worth fixing.
-# Every screen threshold is this same number -- offset, block spread and accumulated drift --
-# because they are all "how far is a cue from where it belongs", just measured differently.
-SCREEN_TOLERANCE_S = 0.5
+# a quarter of a second everywhere is in sync as far as a viewer is concerned, and the
+# user's rule is explicit: a small drift, or a couple of cues off by under 0.25s, is not
+# worth fixing. Every screen threshold is this same number -- offset, block spread and
+# accumulated drift -- because they are all "how far is a cue from where it belongs", just
+# measured differently. Same value as sync.min_change_seconds' default: the screen and the
+# write gate are one rule, coded in two places (see tests/test_sync_threshold.py).
+SCREEN_TOLERANCE_S = 0.25
 SCREEN_MIN_CLIPS = 3          # fewer confident clips than this is not evidence, it is silence
 # Of the clips that produced a match, how many land on the SAME answer. The gate on applying
 # a global offset before alass, and the reason is a measured near-miss: piecewise seed 0 read
@@ -207,7 +209,7 @@ def _screen_pair(video_path: Path, subtitle_path: Path, lang: Optional[str], cfg
     added nothing (median 0.30s against 0.14s) and destroyed one file outright.
 
     What it costs. The clips go into the same video-level cache the correctness check reads
-    (db.save_transcript_cache, keyed on the video and the region, never on the subtitle), so
+    (db.save_transcript_cache, keyed on video+region+STT model, never on the subtitle), so
     when the verdict IS "needs work" the fixing pass reuses this audio instead of buying it
     again. A healthy file additionally skips alass entirely -- and with it the full audio
     track extraction alass needs, which is ~6.5s here and several times that on an N100.

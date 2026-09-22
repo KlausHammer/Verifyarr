@@ -185,6 +185,10 @@ CREATE INDEX IF NOT EXISTS ix_library_videos_title ON library_videos(title);
 -- specific to that one subtitle's own claimed line timing, not a video-level sample point, so
 -- there's nothing generic to reuse across different subtitles for it. Pruned by age, not row
 -- count -- see scheduler._prune_transcript_cache_job (once/day, default 30 days).
+-- Keyed on (video, slot, STT provider, STT model): a clip transcribed under one model is
+-- never served as another's (see _load_video_cache_rows), and two models' rows coexist
+-- per slot instead of overwriting each other, so switching back and forth costs no
+-- re-transcription. Same reasoning as video_full_transcript_cache below.
 CREATE TABLE IF NOT EXISTS video_transcript_cache (
     video_path    TEXT NOT NULL,
     region_index  INTEGER NOT NULL,  -- which of the n evenly-spread samples this is
@@ -207,8 +211,12 @@ CREATE TABLE IF NOT EXISTS video_transcript_cache (
                                       -- prune age -- see _load_video_cache_rows. NULL on rows
                                       -- saved before these columns existed (accepted as-is
                                       -- until they age out).
+    stt_provider  TEXT,              -- which STT backend transcribed this clip (see
+    stt_model     TEXT,              -- full_transcript_cache_key): NULL on rows saved before
+                                      -- these columns existed (accepted as-is until they age
+                                      -- out, like video_mtime/video_size above).
     created_at    TEXT NOT NULL,
-    PRIMARY KEY (video_path, region_index)
+    PRIMARY KEY (video_path, region_index, stt_provider, stt_model)
 );
 CREATE INDEX IF NOT EXISTS ix_video_transcript_cache_created ON video_transcript_cache(created_at);
 
@@ -376,8 +384,56 @@ def connect(path: Optional[Path] = None) -> sqlite3.Connection:
             conn.commit()
         except sqlite3.OperationalError:
             pass  # column already exists
+    for col, coltype in (("stt_provider", "TEXT"), ("stt_model", "TEXT")):
+        try:
+            conn.execute(f"ALTER TABLE video_transcript_cache ADD COLUMN {col} {coltype}")
+            conn.commit()
+        except sqlite3.OperationalError:
+            pass  # column already exists
+    _migrate_clip_cache_key(conn)
     conn.commit()
     return conn
+
+
+def _migrate_clip_cache_key(conn: sqlite3.Connection) -> None:
+    """Widens video_transcript_cache's key from (video, slot) to (video, slot, STT
+    provider, STT model) on a pre-existing table -- a no-op on a fresh one. SQLite can't
+    change a primary key in place, so this is the standard rebuild: new table, copy,
+    swap. The copy is explicit-column (ALTER TABLE appended the new columns AFTER
+    created_at), and every old row survives with a NULL key, accepted as-is until it
+    ages out (see _load_video_cache_rows)."""
+    info = conn.execute("PRAGMA table_info(video_transcript_cache)").fetchall()
+    if [r[1] for r in sorted(info, key=lambda r: r[5]) if r[5]] == \
+            ["video_path", "region_index", "stt_provider", "stt_model"]:
+        return  # already the wide key (fresh table, or migrated earlier)
+    conn.execute("""
+        CREATE TABLE video_transcript_cache_new (
+            video_path    TEXT NOT NULL,
+            region_index  INTEGER NOT NULL,
+            clip_start    REAL NOT NULL,
+            audio_lang    TEXT,
+            transcript    TEXT NOT NULL,
+            segments_json TEXT,
+            clip_seconds  REAL,
+            video_mtime   REAL,
+            video_size    INTEGER,
+            stt_provider  TEXT,
+            stt_model     TEXT,
+            created_at    TEXT NOT NULL,
+            PRIMARY KEY (video_path, region_index, stt_provider, stt_model)
+        )""")
+    conn.execute("""
+        INSERT INTO video_transcript_cache_new
+            (video_path, region_index, clip_start, audio_lang, transcript, segments_json,
+             clip_seconds, video_mtime, video_size, stt_provider, stt_model, created_at)
+        SELECT video_path, region_index, clip_start, audio_lang, transcript, segments_json,
+             clip_seconds, video_mtime, video_size, stt_provider, stt_model, created_at
+        FROM video_transcript_cache""")
+    conn.execute("DROP TABLE video_transcript_cache")
+    conn.execute("ALTER TABLE video_transcript_cache_new RENAME TO video_transcript_cache")
+    conn.execute("CREATE INDEX IF NOT EXISTS ix_video_transcript_cache_created "
+                 "ON video_transcript_cache(created_at)")
+    conn.commit()
 
 
 def init_db(path: Path) -> sqlite3.Connection:
@@ -985,6 +1041,21 @@ def extra_slot_index(start_sec: float) -> int:
     return EXTRA_SLOT_INDEX_BASE + int(round(start_sec))
 
 
+def full_transcript_cache_key(cfg) -> tuple[str, str]:
+    """(provider, model) the transcript caches are keyed on -- BOTH the full-track cache
+    and the per-clip cache below take their STT identity from here. One function so a
+    writer and a reader can't disagree about the key -- a mismatch looks like an empty
+    cache, and the caller silently goes and transcribes the whole file again. (Lives here
+    rather than in correctness.py so vad.py can key its reads too without a circular
+    import; correctness re-exports it, so existing `correctness.full_transcript_cache_key`
+    references keep working.)"""
+    if cfg.use_local_whisper:
+        return "local", Path(cfg.local_whisper_model).name
+    if cfg.stt_provider == "openrouter":
+        return cfg.stt_provider, cfg.openrouter_stt_model
+    return cfg.stt_provider, cfg.groq_model
+
+
 def _video_signature(video_path: Path) -> tuple[Optional[float], Optional[int]]:
     """A video file's identity for cache-validity checks: (mtime, size). A different
     cut/release at the same path is a different video, and any cached audio/ transcript
@@ -1005,7 +1076,9 @@ def _cache_row_to_dict(row: sqlite3.Row) -> dict:
             "segments": json.loads(row["segments_json"]) if row["segments_json"] else None}
 
 
-def _load_video_cache_rows(conn: sqlite3.Connection, video_path: Path) -> list[dict]:
+def _load_video_cache_rows(conn: sqlite3.Connection, video_path: Path,
+                           stt_provider: Optional[str] = None,
+                           stt_model: Optional[str] = None) -> list[dict]:
     """Every cached transcript row for this video, oldest region first -- AFTER checking they
     still belong to the video file that's on disk now. A row that recorded a video_mtime/size
     which no longer matches means the video was replaced since (other release, different cut),
@@ -1013,10 +1086,18 @@ def _load_video_cache_rows(conn: sqlite3.Connection, video_path: Path) -> list[d
     is returned, rather than scoring/anchoring a subtitle against audio that no longer exists.
     Rows with NULL signature (saved before the columns existed) can't be checked and are
     accepted. If the video can't be stat()ed right now (share offline), the rows are kept --
-    nothing can be transcribed to replace them anyway."""
+    nothing can be transcribed to replace them anyway.
+
+    stt_provider/stt_model (from full_transcript_cache_key): only rows transcribed under
+    this backend are returned -- a clip from model A is never served as model B's. A
+    mismatch is a plain miss, NEVER a delete: the other model's rows stay cached, so
+    switching back and forth costs no re-transcription. Rows with a NULL key (saved
+    before the columns existed) are accepted as-is until they age out; where one shares
+    a slot with a keyed row, the keyed row wins."""
     rows = conn.execute(
         "SELECT region_index, clip_start, audio_lang, transcript, segments_json, video_mtime, video_size, "
-        "clip_seconds FROM video_transcript_cache WHERE video_path = ? ORDER BY region_index",
+        "clip_seconds, stt_provider, stt_model FROM video_transcript_cache WHERE video_path = ? "
+        "ORDER BY region_index",
         (str(video_path),),
     ).fetchall()
     if not rows:
@@ -1030,11 +1111,18 @@ def _load_video_cache_rows(conn: sqlite3.Connection, video_path: Path) -> list[d
                 conn.execute("DELETE FROM video_transcript_cache WHERE video_path = ?", (str(video_path),))
                 conn.commit()
                 return []
+    if stt_provider is not None or stt_model is not None:
+        rows = [r for r in rows if r["stt_provider"] is None or r["stt_model"] is None
+                or (r["stt_provider"] == stt_provider and r["stt_model"] == stt_model)]
+        keyed_slots = {r["region_index"] for r in rows if r["stt_provider"] is not None}
+        rows = [r for r in rows if r["stt_provider"] is not None or r["region_index"] not in keyed_slots]
     return [_cache_row_to_dict(r) for r in rows]
 
 
 def get_cached_transcript(conn: sqlite3.Connection, video_path: Path, region_index: int,
-                          within: Optional[tuple[float, float]] = None) -> Optional[dict]:
+                          within: Optional[tuple[float, float]] = None,
+                          stt_provider: Optional[str] = None,
+                          stt_model: Optional[str] = None) -> Optional[dict]:
     """{"start", "audio_lang", "transcript", "segments"} for the region_index-th sample slot of
     this video, if one was transcribed recently enough to still be cached (see
     prune_transcript_cache) and still belongs to the video on disk (see _load_video_cache_rows)
@@ -1049,7 +1137,7 @@ def get_cached_transcript(conn: sqlite3.Connection, video_path: Path, region_ind
 
     `segments` is Whisper's own [{"start","end","text"}, ...] (relative to `start`), decoded
     from JSON, or None for a row saved before that column existed."""
-    for r in _load_video_cache_rows(conn, video_path):
+    for r in _load_video_cache_rows(conn, video_path, stt_provider, stt_model):
         if r["region_index"] != region_index:
             continue
         if within is not None and not (within[0] <= r["start"] < within[1]):
@@ -1059,42 +1147,54 @@ def get_cached_transcript(conn: sqlite3.Connection, video_path: Path, region_ind
 
 
 def find_cached_transcript_between(conn: sqlite3.Connection, video_path: Path,
-                                   lo_sec: float, hi_sec: float) -> Optional[dict]:
+                                   lo_sec: float, hi_sec: float,
+                                   stt_provider: Optional[str] = None,
+                                   stt_model: Optional[str] = None) -> Optional[dict]:
     """Any cached transcript (see get_cached_transcript for the shape) whose clip starts in
     [lo_sec, hi_sec) -- regardless of which slot index saved it. For the block-targeted extra
     samples (line_order.collect_samples' extra_target_ranges) the only thing that matters is
     that the audio sample actually lies inside the block being verified, not which run or
     language produced it."""
-    for r in _load_video_cache_rows(conn, video_path):
+    for r in _load_video_cache_rows(conn, video_path, stt_provider, stt_model):
         if lo_sec <= r["start"] < hi_sec:
             return r
     return None
 
 
-def get_cached_transcripts_for_video(conn: sqlite3.Connection, video_path: Path) -> list[dict]:
+def get_cached_transcripts_for_video(conn: sqlite3.Connection, video_path: Path,
+                                     stt_provider: Optional[str] = None,
+                                     stt_model: Optional[str] = None) -> list[dict]:
     """Every still-valid cached transcript for this video (see get_cached_transcript for the
     row shape, plus "region_index"), normal and extra slots alike -- the common evidence set
     correctness.evaluate_against_cached_transcripts scores every sync candidate on."""
-    return _load_video_cache_rows(conn, video_path)
+    return _load_video_cache_rows(conn, video_path, stt_provider, stt_model)
 
 
 def save_transcript_cache(conn: sqlite3.Connection, video_path: Path, region_index: int, start_sec: float,
                            audio_lang: Optional[str], transcript: str,
                            segments: Optional[list[dict]] = None,
-                           clip_seconds: Optional[float] = None) -> None:
+                           clip_seconds: Optional[float] = None,
+                           *, stt_provider: Optional[str],
+                           stt_model: Optional[str]) -> None:
+    """Caches one transcribed clip. stt_provider/stt_model (from full_transcript_cache_key)
+    identify which backend produced it -- two models' rows coexist per slot instead of
+    overwriting each other. Required, not defaulted: NULL != NULL in SQLite, so a NULL key
+    never matches ON CONFLICT and every save inserts a duplicate instead of updating --
+    silent, unbounded cache growth. A forgotten key must fail at the call site."""
     mtime, size = _video_signature(video_path)
     conn.execute(
         "INSERT INTO video_transcript_cache (video_path, region_index, clip_start, audio_lang, "
-        "transcript, segments_json, video_mtime, video_size, clip_seconds, created_at) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
-        "ON CONFLICT(video_path, region_index) DO UPDATE SET "
+        "transcript, segments_json, video_mtime, video_size, clip_seconds, stt_provider, stt_model, "
+        "created_at) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
+        "ON CONFLICT(video_path, region_index, stt_provider, stt_model) DO UPDATE SET "
         "clip_start=excluded.clip_start, audio_lang=excluded.audio_lang, "
         "transcript=excluded.transcript, segments_json=excluded.segments_json, "
         "video_mtime=excluded.video_mtime, video_size=excluded.video_size, "
         "clip_seconds=excluded.clip_seconds, created_at=excluded.created_at",
         (str(video_path), region_index, start_sec, audio_lang, transcript,
          json.dumps(segments) if segments is not None else None, mtime, size, clip_seconds,
-         datetime.now(timezone.utc).isoformat()),
+         stt_provider, stt_model, datetime.now(timezone.utc).isoformat()),
     )
     conn.commit()
 

@@ -491,12 +491,22 @@ class ExtendedSummaryTests(unittest.TestCase):
         self.assertEqual(s["escalation"]["full"]["escalated"], 0)
 
 
+def _wav_bytes(n_frames=16):
+    import struct
+    data = b"\x00\x00" * n_frames
+    fmt = struct.pack("<HHIIHH", 1, 1, 16000, 32000, 2, 16)
+    riff_size = 4 + 8 + 16 + 8 + len(data)
+    return (b"RIFF" + struct.pack("<I", riff_size) + b"WAVE"
+            + b"fmt " + struct.pack("<I", 16) + fmt
+            + b"data" + struct.pack("<I", len(data)) + data)
+
+
 class AudioCacheTests(unittest.TestCase):
     def test_seed_points_at_existing_wav(self):
         import tempfile
         with tempfile.TemporaryDirectory() as td:
             wav = Path(td) / "C_S03E03.wav"
-            wav.write_bytes(b"fake-wav")
+            wav.write_bytes(_wav_bytes())
             old = M.WAV_DIR
             M.WAV_DIR = Path(td)
             try:
@@ -512,6 +522,19 @@ class AudioCacheTests(unittest.TestCase):
             M.WAV_DIR = Path(td)
             try:
                 self.assertEqual(M.audio_cache_for("NOPE", Path("/media/x.mkv")), {})
+            finally:
+                M.WAV_DIR = old
+
+    def test_invalid_wav_falls_back_to_empty_cache(self):
+        # En afkortet WAV paa disken maa ikke seedes som gyldig lyd -- samme
+        # validering som extract_audio_wav bruger paa sin egen output.
+        import tempfile
+        with tempfile.TemporaryDirectory() as td:
+            (Path(td) / "C_S03E03.wav").write_bytes(b"fake-wav")
+            old = M.WAV_DIR
+            M.WAV_DIR = Path(td)
+            try:
+                self.assertEqual(M.audio_cache_for("C_S03E03", Path("/media/episode.mkv")), {})
             finally:
                 M.WAV_DIR = old
 

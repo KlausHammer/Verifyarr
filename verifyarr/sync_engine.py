@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import os
 import re
 import shutil
 import subprocess
@@ -29,19 +30,50 @@ def resolve_alass_bin() -> Optional[str]:
     return None
 
 
+def wav_complete(path: Path) -> bool:
+    """Whether `path` is a structurally complete WAV: RIFF/WAVE magic plus a declared size
+    the file actually holds. A truncated file (ffmpeg killed mid-write, full disk) fails
+    even when the process itself exited 0 -- "exists and non-empty" is not enough."""
+    try:
+        size = Path(path).stat().st_size
+        with open(path, "rb") as f:
+            head = f.read(12)
+    except OSError:
+        return False
+    if len(head) < 12 or head[:4] != b"RIFF" or head[8:12] != b"WAVE":
+        return False
+    declared = int.from_bytes(head[4:8], "little")
+    return size == declared + 8 or size == declared + 9  # trailing pad byte, per spec
+
+
 def extract_audio_wav(video_path: Path, out_path: Path, timeout: int = 180) -> bool:
     """Extracts the full audio track as 16kHz mono WAV — used to cache alass' expensive
     audio decoding across multiple subtitle files for the same video (see audio_cache in
     process_pair/cmd_sweep). alass-cli accepts a WAV just as well as a video file as its
     reference and gives an identical result, but much faster once audio is already decoded
-    (~16x in practice) — the benefit disappears if it's only used once, though."""
+    (~16x in practice) — the benefit disappears if it's only used once, though.
+
+    Atomic: ffmpeg writes to a temp file beside out_path, which is only moved into place
+    (os.replace) once it validates as a complete WAV. A failed run leaves no partial file
+    behind and never truncates a previous good one (ffmpeg's -y used to do both)."""
+    out_path = Path(out_path)
+    tmp_path = out_path.with_name(out_path.name + ".part")
     cmd = ["ffmpeg", "-y", "-i", str(video_path), "-vn", "-ac", "1", "-ar", "16000",
-           "-f", "wav", str(out_path)]
+           "-f", "wav", str(tmp_path)]
     try:
         proc = subprocess.run(wrap_low_priority(cmd), capture_output=True, text=True, timeout=timeout)
     except (subprocess.TimeoutExpired, OSError):
+        tmp_path.unlink(missing_ok=True)
         return False
-    return proc.returncode == 0 and out_path.exists() and out_path.stat().st_size > 0
+    if proc.returncode != 0 or not wav_complete(tmp_path):
+        tmp_path.unlink(missing_ok=True)
+        return False
+    try:
+        os.replace(tmp_path, out_path)
+    except OSError:
+        tmp_path.unlink(missing_ok=True)
+        return False
+    return True
 
 
 def _shift_seconds(sign: str, magnitude: str) -> float:

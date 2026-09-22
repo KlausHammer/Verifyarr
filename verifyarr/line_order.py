@@ -473,6 +473,7 @@ def collect_samples(video_path: Path, subs, sub_lang: Optional[str], cfg: Config
 
     window_before = cfg.window_minutes * 60
     window_after = cfg.clip_seconds + cfg.window_minutes * 60
+    stt_provider, stt_model = correctness.full_transcript_cache_key(cfg)
 
     for idx, (kind, slot, bounds) in enumerate(slots):
         cached = None
@@ -487,7 +488,9 @@ def collect_samples(video_path: Path, subs, sub_lang: Optional[str], cfg: Config
                 # STT call, and a cache hit spends none. Discarding a paid-for transcript as
                 # silence is pure loss -- and the cache lookup used to sit below this branch,
                 # so it never ran for a region VAD had nulled.
-                cached_silent = (db.find_cached_transcript_between(conn, video_path, bounds[0], bounds[1])
+                cached_silent = (db.find_cached_transcript_between(conn, video_path, bounds[0], bounds[1],
+                                                                   stt_provider=stt_provider,
+                                                                   stt_model=stt_model)
                                  if conn is not None and bounds else None)
                 if cached_silent is None:
                     # non-evidence at the region middle, no STT call (same {"start", "error"}
@@ -514,9 +517,12 @@ def collect_samples(video_path: Path, subs, sub_lang: Optional[str], cfg: Config
                 pass
             elif conn is not None and kind == "filler":
                 cache_index = idx
-                cached = db.get_cached_transcript(conn, video_path, idx, within=bounds)
+                cached = db.get_cached_transcript(conn, video_path, idx, within=bounds,
+                                                  stt_provider=stt_provider, stt_model=stt_model)
             elif conn is not None:
-                cached = db.find_cached_transcript_between(conn, video_path, bounds[0], bounds[1])
+                cached = db.find_cached_transcript_between(conn, video_path, bounds[0], bounds[1],
+                                                           stt_provider=stt_provider,
+                                                           stt_model=stt_model)
 
         if cached is not None:
             correctness.whisper_cost.cached_s += clip_duration
@@ -550,7 +556,8 @@ def collect_samples(video_path: Path, subs, sub_lang: Optional[str], cfg: Config
                 if cache_index is None:
                     cache_index = db.extra_slot_index(start)
                 db.save_transcript_cache(conn, video_path, cache_index, start, audio_lang, transcript_text,
-                                          segments=segments, clip_seconds=clip_duration)
+                                          segments=segments, clip_seconds=clip_duration,
+                                          stt_provider=stt_provider, stt_model=stt_model)
 
         if kind == "heuristic":
             window_text = _window_subtitle_text(subs, cluster["clip_start"], cluster["clip_end"])

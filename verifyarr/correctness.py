@@ -694,7 +694,9 @@ def evaluate_against_cached_transcripts(conn, video_path: Path, subs: "pysubs2.S
 
     Returns {"avg_score", "flag", "samples"} (avg_score/flag None when score=False), or None if
     nothing at all is cached -- "not enough data to compare", not a pass or a fail."""
-    rows = db.get_cached_transcripts_for_video(conn, video_path)
+    stt_provider, stt_model = full_transcript_cache_key(cfg)
+    rows = db.get_cached_transcripts_for_video(conn, video_path, stt_provider=stt_provider,
+                                               stt_model=stt_model)
     if not rows:
         return None
     window_before = cfg.window_minutes * 60
@@ -773,15 +775,9 @@ class WhisperCost:
 whisper_cost = WhisperCost()
 
 
-def full_transcript_cache_key(cfg: Config) -> tuple[str, str]:
-    """(provider, model) the full-transcript cache is keyed on. One function so a writer and a
-    reader can't disagree about the key -- a mismatch looks like an empty cache, and the caller
-    silently goes and transcribes the whole file again."""
-    if cfg.use_local_whisper:
-        return "local", Path(cfg.local_whisper_model).name
-    if cfg.stt_provider == "openrouter":
-        return cfg.stt_provider, cfg.openrouter_stt_model
-    return cfg.stt_provider, cfg.groq_model
+# Re-exported from db (where it lives so vad.py can use it too) -- the (provider,
+# model) pair BOTH transcript caches are keyed on; see db.full_transcript_cache_key.
+full_transcript_cache_key = db.full_transcript_cache_key
 
 
 def evaluate_against_full_transcript(conn, video_path: Path, subs: "pysubs2.SSAFile",
@@ -855,7 +851,8 @@ def correctness_check(video_path: Path, subs: "pysubs2.SSAFile", sub_lang: Optio
     line_order.py's module docstring.
 
     conn: optional sqlite3 connection — when given, each of the n sample slots is looked up in
-    video_transcript_cache (keyed on video + slot index, not subtitle) before calling Whisper,
+    video_transcript_cache (keyed on video + slot index + STT provider/model, not subtitle)
+    before calling Whisper,
     and saved there after a fresh call. The audio doesn't change with the subtitle, so this
     benefits ANY later check of the same video: a remediation candidate tried right after
     another (see bazarr.verify_subtitle_candidate), a different language, or a normal Scan of
@@ -889,13 +886,15 @@ def correctness_check(video_path: Path, subs: "pysubs2.SSAFile", sub_lang: Optio
     # any subtitle -- cached segments, else an optional Silero run, else None). None keeps
     # today's dialogue-density behavior bit-for-bit (see vad.pick_sample_time).
     timeline, timeline_whole = vad.timeline_for_video(conn, video_path, cfg)
+    stt_provider, stt_model = full_transcript_cache_key(cfg)
     built = []
     for idx, (region_start, region_end) in enumerate(regions):
         # The audio at a given point in this video doesn't depend on which subtitle is being
         # checked against it -- ANY earlier check of THIS video (a remediation candidate, a
         # different language, an earlier normal Scan, ...) may already have transcribed this
         # region's slot; reuse it and skip both pick_dialogue_dense_time and Whisper entirely.
-        cached = (db.get_cached_transcript(conn, video_path, idx, within=(region_start, region_end))
+        cached = (db.get_cached_transcript(conn, video_path, idx, within=(region_start, region_end),
+                                           stt_provider=stt_provider, stt_model=stt_model)
                   if conn is not None else None)
         if cached is not None:
             start = cached["start"]
@@ -945,7 +944,8 @@ def correctness_check(video_path: Path, subs: "pysubs2.SSAFile", sub_lang: Optio
             segments = [s for s in segments if not is_nonspeech_annotation(s.get("text", ""))]
             if conn is not None:
                 db.save_transcript_cache(conn, video_path, idx, start, audio_lang, transcript, segments=segments,
-                                         clip_seconds=cfg.clip_seconds)
+                                         clip_seconds=cfg.clip_seconds,
+                                         stt_provider=stt_provider, stt_model=stt_model)
 
         if cfg.require_audio_lang and audio_lang and audio_lang != cfg.require_audio_lang:
             reason = f"speech is '{audio_lang}', not '{cfg.require_audio_lang}' — skipped"

@@ -99,7 +99,7 @@ import os as _os
 VWORK = _os.environ.get("VERIFYARR_UNDER_TEST", str(Path(__file__).resolve().parent.parent))
 sys.path.insert(0, VWORK)
 
-from verifyarr import db, generate, line_order, pipeline
+from verifyarr import db, generate, line_order, pipeline, sync_engine
 from verifyarr.correctness import full_transcript_cache_key
 from verifyarr.settings import Config
 from verifyarr.subtitles import load_subs
@@ -236,10 +236,12 @@ def audio_cache_for(slug, video):
     """Pre-seeded alass audio cache for one episode shard.
 
     The staging WAV is the same 16kHz mono PCM ffmpeg would extract, so
-    resolve_alass_reference reuses it with no ffmpeg call. Missing WAV
-    falls back to an empty cache (ffmpeg extraction, as before)."""
+    resolve_alass_reference reuses it with no ffmpeg call. Missing or
+    structurally incomplete WAV falls back to an empty cache (ffmpeg
+    extraction, as before) -- a truncated staging file must never seed
+    a measurement as valid audio."""
     wav = WAV_DIR / f"{slug}.wav"
-    if wav.exists():
+    if wav.exists() and sync_engine.wav_complete(wav):
         return {video: wav}
     return {}
 
@@ -789,8 +791,9 @@ SCENARIOS = {
     # clip_seconds + 30s forward but only 30s back (line_order.py), so a late subtitle
     # is visible to the screen where an early one of the same size is not.
     "uniform": corrupt_uniform, "uniform_neg": _uniform(-45.0),
-    # The decision boundary is 0.5s (min_change_seconds = SCREEN_TOLERANCE_S): below it
-    # nothing should move at all. Both signs, both sides, deliberately small.
+    # The decision boundary is 0.25s (min_change_seconds = SCREEN_TOLERANCE_S):
+    # below it nothing should move at all. Both signs, both sides, deliberately
+    # small. uniform_p03 (+0.3s) sits just ABOVE it, so it is expected to move.
     "uniform_p03": _uniform(0.3), "uniform_m07": _uniform(-0.7),
     "uniform_p15": _uniform(1.5), "uniform_m5": _uniform(-5.0),
     # Rate errors, smallest to largest: 0.1% (measured real), 2% (generic), 4.167% (PAL).
@@ -871,12 +874,13 @@ def main(argv=None):
     # --fresh-db: one throwaway DB per ROW instead of one per (model, mode) shard.
     #
     # The shared DB is not a detail. The clip cache is keyed on (video_path,
-    # region_index), so every row for an episode inherits the clips its predecessors
-    # bought -- and a sampled row that would see 18 anchors on its own sees 46 after a
-    # dozen earlier scenarios primed the same video. Measured: SH_S01E06 drift sampled
-    # flips from warned (fresh) to fixed (primed). Production meets each file once.
-    # So the shared-DB number is the optimistic one and this is the honest one; keep
-    # both, and never quote the primed figure as what a first run will do.
+    # region_index, STT provider, STT model), so every row for an episode inherits
+    # the clips its predecessors bought -- and a sampled row that would see 18
+    # anchors on its own sees 46 after a dozen earlier scenarios primed the same
+    # video. Measured: SH_S01E06 drift sampled flips from warned (fresh) to fixed
+    # (primed). Production meets each file once. So the shared-DB number is the
+    # optimistic one and this is the honest one; keep both, and never quote the
+    # primed figure as what a first run will do.
     fresh_db = "--fresh-db" in argv
     # Escalation policy under test: how many clips must show a real residual before the whole
     # track gets transcribed (see sync.escalate_min_bad_samples), and --no-escalate to switch
@@ -915,9 +919,9 @@ def main(argv=None):
     if bad_audios:
         raise SystemExit(f"unknown audio-confirm: {bad_audios} (choose from {AUDIOS})")
 
-    # One DB per (model, mode): the video-level clip cache is keyed on
-    # video_path only, so sharing one DB across models would let one model's
-    # audio evidence leak into another's sampled runs.
+    # One DB per (model, mode): belt and braces now that the video-level clip
+    # cache is keyed on STT provider+model too -- sharing one DB across models
+    # used to let one model's audio evidence leak into another's sampled runs.
     #
     # --redo drops the DBs for what it re-runs. Without this the caches outlive the run and a
     # "before/after" comparison silently mixes fresh results with the previous run's cached

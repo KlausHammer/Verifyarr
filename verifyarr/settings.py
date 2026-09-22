@@ -563,11 +563,14 @@ SETTING_DEFS: dict = {
     # sync.alass_bin removed — alass is baked into the Docker image, nothing to pick.
     "sync.enabled":            ("sync", "bool", True),
     "sync.split_penalty":      ("sync", "int", 7),
-    # 0.5, not 0.25: the residual we can MEASURE on real files lands on a 0.25s grid (12
-    # reference episodes, 144 bins -- nothing at all between 0 and 0.25), so 0.25 is one grid
-    # step, i.e. inside the noise. 7.6% of real bins sit at 0.25-0.5s and are indistinguishable
-    # from in-sync. A +0.4s "fix" also eats more than half of the subtitle's natural ~0.7s lead.
-    "sync.min_change_seconds": ("sync", "float", 0.5),
+    # 0.25: the user's decision -- 0.5 left real 0.25-0.5s errors on the table (the
+    # overfit audit's tol 0.5 -> 0.3 step gave four changes, all improvements). The old
+    # caution still stands as a caveat: measurable residuals land on a 0.25s grid, so
+    # this writes fixes at the noise floor, and 7.6% of real bins sit at 0.25-0.5s.
+    # Only the DEFAULT changes here: installations with a stored sync.min_change_seconds
+    # keep their own value (see get_all_settings), so an upgrader stays on 0.5 until
+    # they change it, while SCREEN_TOLERANCE_S (a code constant) moves for everyone.
+    "sync.min_change_seconds": ("sync", "float", 0.25),
     # Whisper sampling parameters — the same knobs control both how well sync finds the
     # shift and how well the correctness check compares, hence grouped with sync tuning.
     # ONE count for both series and movies — a longer file isn't harder to verify, no reason

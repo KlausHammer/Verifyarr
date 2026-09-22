@@ -192,7 +192,9 @@ def timeline_for_video(conn, video_path: Path, cfg
         if full and full.get("segments"):
             return segments_to_intervals(full["segments"]), True
         try:
-            rows = db.get_cached_transcripts_for_video(conn, video_path)
+            _provider, _model = db.full_transcript_cache_key(cfg)
+            rows = db.get_cached_transcripts_for_video(conn, video_path,
+                                                       stt_provider=_provider, stt_model=_model)
         except Exception:
             rows = []
         ivs: list[tuple[float, float]] = []
