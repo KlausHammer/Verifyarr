@@ -665,6 +665,43 @@ def significant_anchor_residuals(samples: list[dict],
     return bad if len(bad) >= min_samples else []
 
 
+# Speech plays in one direction, so a correct subtitle maps audio time to cue time with slope 1.
+# Between two anchors that is |shift2 - shift1| / (t2 - t1) away from 1 -- a STEP, i.e. a block
+# boundary the fix did not resolve. It needs no missing evidence: a half-repaired file anchors
+# as densely as a healthy one (measured: 76% vs 77% of samples), so absence proves nothing and
+# this reads the anchors we do have.
+# Both bars must be cleared, and the second is what makes it safe. The slope ceiling alone is a
+# property of the subtitle's OWN local timing errors, not a noise floor (measured: one episode's
+# maximum sat on the same anchor pair in 13 of 13 scenarios), so it travels badly to new files.
+# The absolute step does not: healthy files top out at 3.3s (matrix) and 2.0s (52 real episodes)
+# while unresolved blocks sit at 11-23s. 2s through 5s catch exactly the same rows, so 5 is
+# chosen for margin, not fit. Measured: 0 false positives on 542 healthy/correctly-fixed matrix
+# rows and 60 real healthy rows (incl. the 12 Slow Horses the user confirms are correct).
+SLOPE_BREAK_MIN_DEV = 0.30
+SLOPE_BREAK_MIN_STEP_S = 5.0
+
+
+def anchor_slope_breaks(samples: list[dict],
+                        min_dev: float = SLOPE_BREAK_MIN_DEV,
+                        min_step: float = SLOPE_BREAK_MIN_STEP_S) -> list[dict]:
+    """Consecutive anchor pairs whose audio->cue mapping steps instead of running at slope 1.
+
+    Returns [{"at", "dev", "step"}, ...] in time order. Empty when fewer than two confident
+    anchors exist -- an undefined slope is not a verdict (a wrong-episode subtitle typically
+    anchors nothing at all, and that is the content check's job, not this one)."""
+    pts = sorted((s["start"], s["anchor"]["shift"]) for s in samples
+                 if s.get("anchor") and s.get("start") is not None)
+    out = []
+    for (t1, s1), (t2, s2) in zip(pts, pts[1:]):
+        if t2 <= t1:
+            continue
+        step = abs(s2 - s1)
+        dev = step / (t2 - t1)
+        if dev > min_dev and step > min_step:
+            out.append({"at": t2, "dev": round(dev, 2), "step": round(s2 - s1, 1)})
+    return out
+
+
 def evaluate_against_cached_transcripts(conn, video_path: Path, subs: "pysubs2.SSAFile",
                                         sub_lang: Optional[str], transcript_lang: Optional[str],
                                         cfg: Config, *, score: bool = True,

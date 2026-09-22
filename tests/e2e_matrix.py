@@ -1023,7 +1023,16 @@ def main(argv=None):
                                        swap_rate=row.get("line_order_swap_rate"),
                                        whisper_cost=row.get("whisper_cost"),
                                        escalated=row.get("escalated", False),
-                                       note=(row.get("note") or "")[:200])
+                                       # 200 chars cut off mid-sentence before the resync/
+                                       # re-verdict clauses, which is where a half-right fix
+                                       # explains itself. Diagnosis needs the whole note.
+                                       note=(row.get("note") or "")[:2000],
+                                       # [[sample_start, anchored?], ...] on the FINAL file.
+                                       # A half-right fix leaves its broken stretch unanchored,
+                                       # so where the gaps sit is the evidence; counts are not.
+                                       anchor_map=[[s.get("start"), int(s.get("anchor") is not None),
+                                                    round((s.get("anchor") or {}).get("shift", 0.0), 2)]
+                                                   for s in (row.get("correctness_samples") or [])])
                             if name in TIMING_SCENARIOS or name == "clean":
                                 rec["injected_p50"] = summarize(
                                     timing_errors(ref, list(corrupted.events), kept)).get("p50")

@@ -69,13 +69,29 @@ class SilentBlockTests(unittest.TestCase):
         self.assertIn("REMAINS", row.get("note") or "")
         self.assertGreater(rec.get("frac_le_1_0s"), 0.85)
 
-    def test_good_resync_stays_ok(self):
-        """SH_S01E01 full: resync naar 0.964 -- B1b's re-verdict maa ikke
-        konvertere velfungerende rettelser til advarsler."""
+    def test_good_resync_keeps_its_fix_but_says_it_is_unverified(self):
+        """SH_S01E01 full: resync naar 0.964 -- den rettelse skal BLIVE paa disken.
+
+        Verdicten advarer alligevel, og det er et bevidst policy-skifte: blokfejl
+        skal kun DETEKTERES (brugeren henter bare en ny undertekst), og en
+        halvfaerdig reparation kan ikke skelnes fra en hel paa den korrigerede fil
+        -- 0 af 22 halvt reparerede raekker stepper stadig ved de samplede punkter.
+        Prisen for at fange de 18 er at 12 velfungerende blok-rettelser ogsaa
+        advarer. En advarsel paa en rettet fil er stoej; en tavs halvrettet fil er
+        farlig. Raske filer er uberoerte: 0 flagaendringer paa clean/p03/dropdup/
+        missing_middle over 1656 raekker.
+        """
         row, rec = _run("SH_S01E01", "piecewise", mode="full")
-        self.assertEqual(row.get("correctness_flag"), "ok",
-                         f"regression: rettet -> advaret ({(row.get('note') or '')[:300]})")
-        self.assertGreaterEqual(rec.get("frac_le_1_0s"), 0.90)
+        self.assertGreaterEqual(rec.get("frac_le_1_0s"), 0.90,
+                                "the fix itself must survive -- only the verdict changes")
+        self.assertIn("anchor region(s)", row.get("sync_status") or "")
+        self.assertEqual(row.get("correctness_flag"), "SUSPECT")
+        # Either wording is the same policy: this file steps at 2587s/2653s by ~24s
+        # after the resync, so here it is the evidenced branch rather than the
+        # carried-forward one. 96% of cues are still fine -- the damage sits late.
+        note = row.get("note") or ""
+        self.assertTrue("Block boundary REMAINS" in note
+                        or "NOT verified across the whole episode" in note, note[-200:])
 
     def test_lone_huge_anchor_warns(self):
         """SH_S01E01 sampled: alass' 4-blok-fit er 25s galt i een blok, men

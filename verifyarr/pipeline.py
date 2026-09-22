@@ -39,7 +39,7 @@ from verifyarr.line_order import (
 )
 from verifyarr.correctness import (
     evaluate_against_cached_transcripts, evaluate_against_full_transcript, significant_anchor_residuals, JobCancelled,
-    whisper_cost,
+    whisper_cost, anchor_slope_breaks,
     ANCHOR_RESYNC_INTERVAL_S,
 )
 from verifyarr.fileops import backup_subtitle, quarantine_subtitle
@@ -1140,7 +1140,34 @@ def _resync_verified(plan, after, cfg: Config, subtitle_path: Path) -> Optional[
         log.info("Anchor resync for %s discarded: %d region(s) planned, but %d of %d anchor(s) "
                  "still mismatched afterwards", subtitle_path.name, len(plan), len(still_bad), len(clean))
         return None
+    # Clean anchors are not enough: a region we shifted but cannot re-measure is an UNVERIFIED
+    # correction, not neutral evidence. A region still wrong afterwards doesn't produce a bad
+    # anchor there -- it produces none at all (same blind spot _confirmed_in_every_block exists
+    # for), so "every surviving anchor is clean" passes on a half-right fix. Measured: 28 of 30
+    # silent block rows said "fixed" at rec 0.42-0.90, i.e. up to 272 of 486 cues still >1s out.
+    unverified = _regions_without_anchor(plan, clean, span)
+    if unverified:
+        log.info("Anchor resync for %s discarded: %d of %d planned region(s) had no anchor to "
+                 "verify the correction against", subtitle_path.name, len(unverified), len(plan))
+        return None
     return sum(abs(s["anchor"]["shift"]) for s in clean) / len(clean)
+
+
+def _regions_without_anchor(plan, clean, span: float) -> list[int]:
+    """Indices of planned regions wide enough to hold a non-straddling anchor that still ended
+    up with none -- the regions whose correction nothing measured. Narrow regions are exempt:
+    between two cuts less than 2*span apart every anchor straddles one by construction, and
+    rejecting on those would throw away good multi-region fixes (see the cut filter above)."""
+    edges = [r["cut_audio_s"] for r in plan if r.get("cut_audio_s") is not None]
+    out = []
+    for i in range(len(plan)):
+        lo = edges[i - 1] if i > 0 else float("-inf")
+        hi = edges[i] if i < len(edges) else float("inf")
+        if hi - lo <= 2 * span:
+            continue
+        if not any(lo <= s["start"] < hi for s in clean):
+            out.append(i)
+    return out
 
 
 
@@ -1731,6 +1758,11 @@ def correctness_and_finish(video_path: Path, subtitle_path: Path, lang: Optional
                 # The anchors just measured the error. Try to CORRECT it before giving up on the
                 # file -- see _try_anchor_resync. Only reachable with result["flag"] == "ok", i.e.
                 # the text is this episode's; a wrong-episode file never gets here.
+                # Whether the file STEPPED before the repair. Measured on the corrected
+                # file this is invisible (0 of 22 half-repaired rows still step at the
+                # sampled points, while healthy files never do), so the repair cannot be
+                # asked to disprove it afterwards -- the suspicion has to travel.
+                stepped_before = bool(anchor_slope_breaks(result.get("samples") or []))
                 resynced = None
                 if cfg.anchor_resync_enabled and result["flag"] == "ok" and not cfg.dry_run:
                     resynced = _try_anchor_resync(conn, video_path, subtitle_path, lang, cfg,
@@ -1755,6 +1787,10 @@ def correctness_and_finish(video_path: Path, subtitle_path: Path, lang: Optional
                     collected, result, swap_severity = _recheck_after_resync(
                         video_path, current_subs, lang, cfg, conn, collected, result,
                         cancel_event=cancel_event)
+                    # Set above from the PRE-resync evidence, which describes a file that
+                    # no longer exists once the resync has written. Anything reading this
+                    # row afterwards should see what was actually judged.
+                    row["correctness_samples"] = result.get("samples")
                     # The resync verified itself on its own sparse anchors, excluding
                     # +-clip_seconds around every planned cut -- but that check passes
                     # while whole cue bands around misplaced cuts are still mistimed
@@ -1766,7 +1802,20 @@ def correctness_and_finish(video_path: Path, subtitle_path: Path, lang: Optional
                     resync_still_bad = significant_anchor_residuals(
                         result.get("samples") or [], ANCHOR_SUSPECT_THRESHOLD_S,
                         min_samples=cfg.anchor_suspect_min_samples)
-                    if result.get("flag") != "ok" or resync_still_bad:
+                    # Counting BAD anchors misses a half-repaired file: the stretch still
+                    # wrong anchors fine against its own displaced text, so this rule fired
+                    # on 0 of 30 silent block rows. A step in the audio->cue mapping is the
+                    # same damage seen as a shape instead of a count.
+                    slope_breaks = anchor_slope_breaks(result.get("samples") or [])
+                    # A file that stepped before the repair has a block error, and the
+                    # repair only settles the regions its anchors reached -- a block with
+                    # no anchor of its own is absorbed into a neighbour and keeps that
+                    # neighbour's offset. The corrected file cannot show this (see
+                    # stepped_before), so an unresolved step is proven by absence of
+                    # proof, not by evidence: keep the fix, warn about the rest.
+                    unproven_step = stepped_before and not slope_breaks and not resync_still_bad
+                    if (result.get("flag") != "ok" or resync_still_bad
+                            or slope_breaks or unproven_step):
                         if result.get("flag") not in ("ok", "SUSPECT"):
                             row["correctness_flag"] = "unknown"
                             row["note"] = (row["note"] + " Correctness could not be "
@@ -1785,6 +1834,21 @@ def correctness_and_finish(video_path: Path, subtitle_path: Path, lang: Optional
                                                f"{len(resync_still_bad)} Whisper anchor(s) still show "
                                                f"up to {worst:.1f}s at [{where}] on the corrected "
                                                f"file.").strip()
+                            elif slope_breaks:
+                                where = ", ".join(f"{b['at']}s ({b['step']:+.1f}s)"
+                                                  for b in slope_breaks[:4])
+                                row["note"] = (row["note"] +
+                                               f" Block boundary REMAINS after anchor resync: the "
+                                               f"corrected file still steps at {len(slope_breaks)} "
+                                               f"point(s) [{where}] where the audio runs on -- part "
+                                               f"of the episode is still mistimed.").strip()
+                            elif unproven_step:
+                                row["note"] = (row["note"] + " Block error repaired, but NOT "
+                                               "verified across the whole episode: the file "
+                                               "stepped before the resync, and the corrected "
+                                               "file gives no anchor that proves every block "
+                                               "was moved -- check it, or fetch a fresh "
+                                               "subtitle.").strip()
                             else:
                                 row["note"] = (row["note"] + " Correctness check failed "
                                                "on the resynced file.").strip()
