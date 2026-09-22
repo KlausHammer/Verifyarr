@@ -461,12 +461,17 @@ def apply_pending_sync(subtitle_path: Path, cfg: Config, row: dict, reason: str)
         row["sync_block_spread_s"] = None
         row["note"] += (f" alass suggested Δ{max_shift_new:.2f}s, under the "
                         f"{cfg.min_change_seconds}s threshold — left as is ({reason}).")
-        return ambiguous["old_subs"]
+        # Disk holds the original when presync fired; baseline never left temp.
+        return ambiguous.get("orig_subs") or ambiguous["old_subs"]
     _write_fix(subtitle_path, cfg, cfg.media_root_for(subtitle_path), new_subs)
     row["sync_status"] = f"fixed (Δ{max_shift_new:.1f}s)"
     row["sync_max_shift_s"] = round(max_shift_new, 2) if max_shift_new is not None else None
     row["sync_split_blocks"] = 1
     row["sync_block_spread_s"] = None
+    if ambiguous.get("single_block"):
+        row["note"] += (f" Single-offset fit couldn't be verified against the audio "
+                        f"({reason}) — applied unverified.")
+        return new_subs
     spread = ambiguous.get("blocks_spread")
     row["note"] += (f" alass also found a {ambiguous.get('blocks_split_count') or '?'}-block fit"
                     + (f" (spread {spread:.1f}s)" if spread is not None else "")
@@ -486,19 +491,20 @@ def sync_pair(video_path: Path, subtitle_path: Path, lang: Optional[str], cfg: C
     than one of the NAS's cores). correctness_and_finish below picks up from here, sequentially.
 
     alass runs in its normal split-penalty mode first (the only mode there was before the
-    verified-second-opinion feature). When that comes back as ONE block, it already IS a single
-    global offset -- nothing to second-guess, applied directly. Only a MULTI-block result is
-    structurally suspicious (alass can fit mismatched content in pieces just as happily as it
-    fits real cuts -- see sync_engine.parse_alass_shift_blocks), and only then is the second,
-    --no-split run made: a single-offset fit that can't overfit in pieces. Both are then held
-    back from disk (row["_ambiguous_sync"]) for correctness_and_finish to compare against the
-    original on real audio content (_resolve_ambiguous_sync) before anything is written --
-    reusing the Whisper samples the correctness check pays for anyway. That deferral only
-    happens when the comparison can actually run (correctness check on, API key present, not a
-    dry-run, and defer_verification -- a caller that will never run correctness_and_finish
-    passes False, e.g. jobs._run_generate_single); otherwise the multi-block fit is applied
-    directly, exactly as before the feature existed, and correctness_and_finish's block-spread
-    safety net still watches it.
+    verified-second-opinion feature). A MULTI-block result is structurally suspicious (alass
+    can fit mismatched content in pieces just as happily as it fits real cuts -- see
+    sync_engine.parse_alass_shift_blocks), so a second, --no-split run is made: a single-offset
+    fit that can't overfit in pieces. Both are then held back from disk (row["_ambiguous_sync"])
+    for correctness_and_finish to compare against the pre-alass baseline on real audio content
+    (_resolve_ambiguous_sync) before anything is written -- reusing the Whisper samples the
+    correctness check pays for anyway. A single-block fit is held back the same way (it IS the
+    single-offset fit already, so no second run): content must speak before any write, since a
+    confident-looking single offset on wrong-episode text is exactly as meaningless as a
+    multi-block one. That deferral only happens when the comparison can actually run
+    (correctness check on, API key present, not a dry-run, and defer_verification -- a caller
+    that will never run correctness_and_finish passes False, e.g. jobs._run_generate_single);
+    otherwise the fit is applied directly, exactly as before the feature existed, and
+    correctness_and_finish's block-spread safety net still watches it.
 
     Returns (row, current_subs). current_subs is None only when the ORIGINAL subtitle file
     itself couldn't even be parsed — there's nothing for correctness_and_finish to check either
@@ -619,7 +625,8 @@ def sync_pair(video_path: Path, subtitle_path: Path, lang: Optional[str], cfg: C
         if max_shift is None or max_shift < cfg.min_change_seconds:
             row["sync_status"] = "already in sync"
             row["note"] += presync_note + blocks_note
-            return row, current_subs
+            # Disk still holds the original: presync never left its temp file.
+            return row, old_subs if presync is not None else current_subs
 
         # Use the corrected timing for the correctness check either way — even during dry-run,
         # where nothing is written to disk yet, but the report should still reflect what WOULD
@@ -633,6 +640,8 @@ def sync_pair(video_path: Path, subtitle_path: Path, lang: Optional[str], cfg: C
 
         can_verify = (len(shift_blocks) > 1 and defer_verification
                       and cfg.enable_correctness_check and cfg.has_stt_configured)
+        can_verify_single = (len(shift_blocks) == 1 and defer_verification
+                             and cfg.enable_correctness_check and cfg.has_stt_configured)
         if can_verify:
             tmp_single = Path(td) / f"synced_single{subtitle_path.suffix}"
             ok2, _msg2, _stderr2 = run_alass(alass_bin, reference_path, alass_input, tmp_single,
@@ -645,13 +654,16 @@ def sync_pair(video_path: Path, subtitle_path: Path, lang: Optional[str], cfg: C
                     single_subs = None
             if single_subs is not None:
                 max_shift_single, *_ = max_shift_stats(old_subs, single_subs)
-                # Held back from disk: correctness_and_finish decides which of {original, this
+                # Held back from disk: correctness_and_finish decides which of {baseline, this
                 # single-offset fit, the multi-block fit} actually scores best against the real
                 # audio (see _resolve_ambiguous_sync) before anything gets written. The
                 # single-offset fit is the candidate the correctness check itself runs on (the
                 # safe default); the block ranges let it aim extra samples at every block.
+                # orig_subs is the bytes on disk (baseline is presynced when presync fired).
                 row["_ambiguous_sync"] = {
-                    "old_subs": baseline_subs, "new_subs": single_subs, "max_shift_new": max_shift_single,
+                    "old_subs": baseline_subs, "orig_subs": old_subs,
+                    "had_presync": presync is not None,
+                    "new_subs": single_subs, "max_shift_new": max_shift_single,
                     "blocks_subs": primary_subs, "max_shift_blocks": max_shift,
                     "blocks_split_count": len(shift_blocks), "blocks_spread": spread,
                     "blocks_time_ranges": _block_time_ranges(
@@ -671,6 +683,20 @@ def sync_pair(video_path: Path, subtitle_path: Path, lang: Optional[str], cfg: C
                 row["note"] += presync_note
                 return row, current_subs
             blocks_note += " (alass's --no-split alternative failed, so this multi-block fit was applied unverified.)"
+        if can_verify_single:
+            # Primary IS the single-offset fit: no second alass run, candidates are
+            # {baseline, primary}. Empty ranges force the content branch below.
+            row["_ambiguous_sync"] = {
+                "old_subs": baseline_subs, "orig_subs": old_subs,
+                "had_presync": presync is not None,
+                "new_subs": primary_subs, "max_shift_new": max_shift,
+                "blocks_split_count": 1, "blocks_spread": None,
+                "blocks_time_ranges": [],
+                "structural": structural, "single_block": True,
+            }
+            row["sync_status"] = f"fixed (Δ{max_shift:.1f}s) [pending verification]"
+            row["note"] += presync_note
+            return row, current_subs
 
         _write_fix(subtitle_path, cfg, media_root, tmp_primary)
         # Kept for _try_anchor_resync: when alass's own fit turns out to be wrong, the anchors can
@@ -714,13 +740,13 @@ CONTENT_SCORE_TIE_MARGIN = 0.1
 def _resolve_ambiguous_sync(conn: sqlite3.Connection, video_path: Path, subtitle_path: Path,
                              lang: Optional[str], cfg: Config, media_root: Path,
                              ambiguous: dict, result: dict, row: dict, cancel_event=None) -> tuple:
-    """Decides which of {alass's --no-split single-global-offset fit ("new", the candidate the
-    correctness check `result` was run on), its multi-block split-penalty fit ("blocks"), the
-    ORIGINAL subtitle ("old")} to actually keep -- see sync_pair for when this arises. Every
-    candidate is judged on the SAME cached Whisper samples (correctness.evaluate_against_cached_
-    transcripts -- the ones the correctness check just paid for, plus any older ones for this
-    video), so no new Whisper calls, and no candidate gets an easier or harder sample set than
-    another.
+    """Decides which of {alass's single-offset fit ("new", the candidate the correctness
+    check `result` was run on), its multi-block split-penalty fit ("blocks", absent for a
+    single-block deferral), the pre-alass BASELINE ("old", presynced when presync fired)} to
+    actually keep -- see sync_pair for when this arises. Every candidate is judged on the SAME
+    cached Whisper samples (correctness.evaluate_against_cached_transcripts -- the ones the
+    correctness check just paid for, plus any older ones for this video), so no new Whisper
+    calls, and no candidate gets an easier or harder sample set than another.
 
     Two questions, answered by two different kinds of evidence -- keeping them apart is the
     whole point:
@@ -766,6 +792,9 @@ def _resolve_ambiguous_sync(conn: sqlite3.Connection, video_path: Path, subtitle
     cached."""
     old_subs, new_subs = ambiguous["old_subs"], ambiguous["new_subs"]
     blocks_subs = ambiguous.get("blocks_subs")
+    orig_subs = ambiguous.get("orig_subs") or old_subs
+    had_presync = bool(ambiguous.get("had_presync"))
+    single_block = bool(ambiguous.get("single_block"))
     transcript_lang = result.get("audio_lang")
     subs_by_key = {"new": new_subs, "blocks": blocks_subs, "old": old_subs}
     subs_by_key = {k: v for k, v in subs_by_key.items() if v is not None}
@@ -855,6 +884,7 @@ def _resolve_ambiguous_sync(conn: sqlite3.Connection, video_path: Path, subtitle
         doesn't get a bad anchor in a region it's wrong about -- it gets NO anchor there at all
         (see _confirmed_in_every_block's own docstring) -- so those minutes contributed zero
         evidence against it, and it won a comparison that never actually looked at them."""
+        # No single-block exception: measured 10 new silent rows (fix2 ablation).
         return (not any_anchor_evidence) or _confirmed_in_every_block("old")
 
     def _reject_unproven_old(winner: str, pool) -> str:
@@ -894,7 +924,7 @@ def _resolve_ambiguous_sync(conn: sqlite3.Connection, video_path: Path, subtitle
                 scored[key] = ev
         content_ok = [k for k, v in scored.items() if v.get("flag") == "ok" and v.get("avg_score") is not None]
         if not content_ok:
-            # NOTHING matched the audio's content -- not alass's two fits, not the original. That
+            # NOTHING matched the audio's content -- not alass's fit(s), not the baseline. That
             # is a wrong-subtitle verdict, not a sync problem, and re-timing text that isn't this
             # episode's is meaningless. Leave the file exactly as it is and let the caller flag it
             # SUSPECT: picking a "best" fit here overwrote the original on the strength of scores
@@ -922,9 +952,15 @@ def _resolve_ambiguous_sync(conn: sqlite3.Connection, video_path: Path, subtitle
         return f"{key}: " + (", ".join(parts) if parts else "no evidence")
 
     n_blocks = ambiguous.get("blocks_split_count") or "?"
-    note_suffix = (f" Verified alass's {n_blocks}-block fit against its single-offset fit and the original "
-                   f"on the same Whisper samples before applying anything — kept '{winner}' ["
-                   + "; ".join(_describe(k) for k in subs_by_key) + "].")
+    base_name = "presynced baseline" if had_presync else "original"
+    if single_block:
+        note_suffix = (f" Verified alass's single-offset fit against the {base_name} "
+                       f"on the same Whisper samples before applying anything — kept '{winner}' ["
+                       + "; ".join(_describe(k) for k in subs_by_key) + "].")
+    else:
+        note_suffix = (f" Verified alass's {n_blocks}-block fit against its single-offset fit and the {base_name} "
+                       f"on the same Whisper samples before applying anything — kept '{winner}' ["
+                       + "; ".join(_describe(k) for k in subs_by_key) + "].")
     structural_note = " line count changed significantly — check the file manually." if ambiguous.get("structural") else ""
 
     def _synthetic(key: str) -> dict:
@@ -947,6 +983,11 @@ def _resolve_ambiguous_sync(conn: sqlite3.Connection, video_path: Path, subtitle
         row["note"] += structural_note + note_suffix + (
             f" Not written: Δ{abs(winner_shift):.2f}s is under the "
             f"{cfg.min_change_seconds}s threshold.")
+        if had_presync:
+            # Disk holds the original; baseline never left temp. Winner is within the
+            # threshold of the original, so its verdict proxies the original's.
+            w = _synthetic(winner)
+            return orig_subs, w, w.get("swap_severity"), "old"
         # _synthetic("old"), not `result`: what stays on disk is the original, so the verdict
         # handed back has to be the original's. The two are close here by construction (the
         # move was under the threshold), which is exactly why the mismatch could sit unnoticed.
@@ -974,6 +1015,30 @@ def _resolve_ambiguous_sync(conn: sqlite3.Connection, video_path: Path, subtitle
         row["line_order_flagged"] = None
         return blocks_subs, _synthetic("blocks"), None, winner
 
+    if had_presync and content_matched:
+        # Baseline won and it never reached disk: presync only ever touched temp.
+        _write_fix(subtitle_path, cfg, media_root, old_subs)
+        presync_shift, *_ = max_shift_stats(orig_subs, old_subs)
+        shift_txt = f"{presync_shift:.1f}s" if presync_shift is not None else "?"
+        row["sync_status"] = f"fixed (Δ{shift_txt}, presync)"
+        row["sync_max_shift_s"] = round(presync_shift, 2) if presync_shift is not None else None
+        row["sync_split_blocks"] = 1
+        row["sync_block_spread_s"] = None
+        row["note"] += note_suffix
+        row["line_order_fixed"] = None
+        row["line_order_flagged"] = None
+        return old_subs, _synthetic("old"), None, winner
+    if had_presync and not content_matched:
+        # Wrong text: re-timing it is meaningless, disk stays the original.
+        shift_txt = f"{max_shift_new:.1f}s" if max_shift_new is not None else "?"
+        row["sync_status"] = (
+            f"left unchanged (alass suggested Δ{shift_txt}; no candidate matched the audio's content)")
+        row["sync_split_blocks"] = None
+        row["sync_block_spread_s"] = None
+        row["note"] += note_suffix
+        row["line_order_fixed"] = None
+        row["line_order_flagged"] = None
+        return orig_subs, _synthetic("old"), None, winner
     # winner == "old" -- nothing to write, the file was never touched on disk in the first place.
     # sync_max_shift_s deliberately keeps the offset alass measured: it's the one fact worth
     # seeing in the UI about a file whose re-sync was rejected.
@@ -1533,14 +1598,14 @@ def correctness_and_finish(video_path: Path, subtitle_path: Path, lang: Optional
             row["correctness_samples"] = result.get("samples")
             swap_severity = result.get("swap_severity")
 
-            # A fix sync_pair deferred writing (a multi-block alass result held back together
-            # with its single-offset alternative — see its own docstring) gets resolved HERE,
+            # A fix sync_pair deferred writing (an alass result held back together
+            # with its alternative — see its own docstring) gets resolved HERE,
             # before any of the branches
             # below act on `result` -- the winner might not even be "new" (the candidate
             # `result` currently describes), so nothing downstream should judge/act on "new"
             # until this has had a chance to replace it.
             ambiguous = row.pop("_ambiguous_sync", None)
-            # The deferred path keeps the untouched original here instead of in _pre_sync_subs
+            # The deferred path keeps the pre-alass baseline here instead of in _pre_sync_subs
             # (sync_pair returns before it gets that far) -- either way it is what
             # _try_anchor_resync falls back to when alass's own fit can't be planned from.
             if ambiguous is not None and pre_sync_subs is None:
