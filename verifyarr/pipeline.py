@@ -40,7 +40,7 @@ from verifyarr.line_order import (
 )
 from verifyarr.correctness import (
     evaluate_against_cached_transcripts, evaluate_against_full_transcript, significant_anchor_residuals, JobCancelled,
-    whisper_cost, anchor_slope_breaks, anchor_run_offsets,
+    whisper_cost, anchor_slope_breaks, anchor_run_offsets, get_duration_seconds,
     ANCHOR_RESYNC_INTERVAL_S,
 )
 from verifyarr.fileops import backup_subtitle, quarantine_subtitle
@@ -178,6 +178,10 @@ SCREEN_MIN_CLIPS = 3          # fewer confident clips than this is not evidence,
 # Deliberately NOT applied to the "ok" verdict: that rests on offset, spread and drift all
 # being small, which caught 109 of 109 damaged files in a separate 1070-measurement sweep.
 SCREEN_MIN_AGREE_FRAC = 0.80
+# A subtitle that ends this long before the audio is not vouched for by clips that all fell
+# before its end: 52 real episodes end at most 55s early (credits); a cut broadcast's
+# subtitle ends the cut's length sooner. Defers to the normal chain, never a flag.
+SCREEN_MAX_TAIL_GAP_S = 150.0
 
 
 def screen_pair(video_path: Path, subtitle_path: Path, lang: Optional[str], cfg: Config,
@@ -265,6 +269,12 @@ def _screen_pair(video_path: Path, subtitle_path: Path, lang: Optional[str], cfg
             out["spread"] is not None and out["spread"] >= SCREEN_TOLERANCE_S,
             out["tilt"] is not None and abs(out["tilt"]) >= SCREEN_TOLERANCE_S]
     out["verdict"] = "needs_sync" if any(over) else "ok"
+    if out["verdict"] == "ok" and subs.events:
+        duration = get_duration_seconds(video_path)
+        tail = duration - max(e.end for e in subs.events) / 1000.0 if duration else None
+        if tail is not None and tail > SCREEN_MAX_TAIL_GAP_S:
+            out["verdict"] = "unknown"
+            out["reason"] = f"subtitle ends {tail:.0f}s before the audio"
     return out
 
 
