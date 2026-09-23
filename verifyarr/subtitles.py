@@ -583,6 +583,11 @@ def stretch_probe(points, resid_s: float = STRETCH_RESID_TRIM_S,
             "keep_frac": on_line / fit["n_raw"], "span": span}
 
 
+# A quartile with fewer points abstains: 1-2 stray mismatches in a quarter a steep
+# rate emptied vetoed a good fix (one -160s point read as 150s left).
+QUARTILE_MIN_POINTS = 5
+
+
 def max_quartile_residual_after(points, ratio: float, offset: float = 0.0,
                                   nreg: int = 4) -> float:
     """Largest quartile median |offset| left after new_t = ratio * (t + offset).
@@ -605,7 +610,7 @@ def max_quartile_residual_after(points, ratio: float, offset: float = 0.0,
         regs[min(nreg - 1, int((a - lo) / span * nreg))].append(a - ratio * (s + offset))
     worst = 0.0
     for r in regs:
-        if r:
+        if len(r) >= QUARTILE_MIN_POINTS:
             worst = max(worst, abs(statistics.median(r)))
     return worst
 

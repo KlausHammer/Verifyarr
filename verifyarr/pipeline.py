@@ -750,6 +750,46 @@ ANCHOR_HUGE_SINGLE_S = 10.0
 CONTENT_SCORE_TIE_MARGIN = 0.1
 
 
+# Ramp rescue only: keep 0.85 when the line is overwhelmingly linear and flat -- block
+# pools reach rho <= 0.95 at gain <= 6.7. Calibrated on 2 configs (C_S02E04); revert
+# this path if it ever moves a non-drift cell.
+RAMP_RESCUE_KEEP_FRAC = 0.85
+RAMP_RESCUE_RHO_MIN = 0.99
+RAMP_RESCUE_GAIN_MIN_S = 10.0
+
+
+def _ramp_overwhelming(p: Optional[dict]) -> bool:
+    """The stretch gates with keep eased to 0.85, for an overwhelming line only."""
+    if p is None or p.get("rho") is None:
+        return False
+    return (p["n"] >= STRETCH_MIN_POINTS and abs(p["tilt"]) >= STRETCH_MIN_TILT_S
+            and abs(p["slope"]) <= STRETCH_MAX_RATE and abs(p["rho"]) >= RAMP_RESCUE_RHO_MIN
+            and p["gain"] >= RAMP_RESCUE_GAIN_MIN_S and p["resid"] <= STRETCH_MAX_RESID_S
+            and p["keep_frac"] >= RAMP_RESCUE_KEEP_FRAC)
+
+
+def _ramp_rescue_probe(result: dict, new_subs, cfg: Config) -> Optional[dict]:
+    """The stretch probe when 'new's full pool is one clean rate line, else None.
+
+    alass staircases a drifted file and the staircase wins the comparison (it fits
+    better locally); the ramp survives only in the full pool. Checks the same guards
+    as the downstream fix, so a rescue always lands in a write. No Whisper."""
+    if not result.get("full_coverage") or not cfg.fps_check_enabled:
+        return None
+    pts = _fps_points(result)
+    probe = stretch_probe([(a, a - s) for a, s in pts]) if pts else None
+    if not _stretch_gates_pass(probe) and not _ramp_overwhelming(probe):
+        return None
+    ratio = 1.0 / (1.0 - probe["slope"])
+    if max_quartile_residual_after(pts, ratio, probe["intercept"]) > FPS_RESID_MAX_S:
+        return None
+    import copy as _copy
+    trial = _copy.deepcopy(new_subs)
+    if apply_fps_rescale(trial, ratio, offset=probe["intercept"]) < cfg.min_change_seconds:
+        return None
+    return probe
+
+
 def _resolve_ambiguous_sync(conn: sqlite3.Connection, video_path: Path, subtitle_path: Path,
                              lang: Optional[str], cfg: Config, media_root: Path,
                              ambiguous: dict, result: dict, row: dict, cancel_event=None) -> tuple:
@@ -924,35 +964,56 @@ def _resolve_ambiguous_sync(conn: sqlite3.Connection, video_path: Path, subtitle
     scored: dict[str, dict] = {"new": {"avg_score": result.get("avg_score"), "flag": result.get("flag"),
                                        "samples": result.get("samples") or []}}
     content_matched = True
+    # A clean rate line in the full pool outranks the comparison. Text must still
+    # verify (on new, else on old -- a cut file's fake ramp dies there), and a
+    # baseline that already verifies (0.2-0.3s; drift sits 12-30s out) is not rescued.
+    old_t = timing.get("old")
+    old_verifies = (old_t is not None and old_t["mean_abs_shift"] <= ANCHOR_PREFER_MARGIN_S
+                    and len(old_t["regions"]) >= SCREEN_MIN_CLIPS)
+    ramp_probe = None if old_verifies else _ramp_rescue_probe(result, new_subs, cfg)
+    ramp_via_old = False
+    ramp_decided = False
+    old_scored = False
     new_confirmed = _confirmed_in_every_block("new") if any_anchor_evidence else True
-    if result.get("flag") == "ok" and pick(subs_by_key) == "new" and new_confirmed:
+    if ramp_probe is not None and result.get("flag") == "ok":
+        winner, ramp_decided = "new", True
+    elif result.get("flag") == "ok" and pick(subs_by_key) == "new" and new_confirmed:
         winner = "new"
     else:
-        for key, subs in subs_by_key.items():
-            if key == "new":
-                continue
-            ev = _evaluate(conn, video_path, subs, lang, transcript_lang, cfg,
-                           score=True, cancel_event=cancel_event)
-            if ev is not None:
-                scored[key] = ev
-        content_ok = [k for k, v in scored.items() if v.get("flag") == "ok" and v.get("avg_score") is not None]
-        if not content_ok:
-            # NOTHING matched the audio's content -- not alass's fit(s), not the baseline. That
-            # is a wrong-subtitle verdict, not a sync problem, and re-timing text that isn't this
-            # episode's is meaningless. Leave the file exactly as it is and let the caller flag it
-            # SUSPECT: picking a "best" fit here overwrote the original on the strength of scores
-            # like 0.07 -- see C_S02E15, whose subtitle turned out to be the NEXT episode's text
-            # entirely, and which the pipeline "fixed" by 30.4s before this branch existed.
-            winner, content_matched = "old", False
-        else:
-            # CONTENT decides first among candidates that passed it -- it's the evidence this
-            # branch just paid for, and a real gap between two "ok" scores is exactly what it
-            # exists to catch (see CONTENT_SCORE_TIE_MARGIN). Anchors/preference (pick()) only
-            # get a say among whichever candidates are within that margin of the best score --
-            # a genuine tie, not a decisive difference silently thrown away.
-            best = max(scored[k]["avg_score"] for k in content_ok)
-            near_best = [k for k in content_ok if scored[k]["avg_score"] >= best - CONTENT_SCORE_TIE_MARGIN]
-            winner = _reject_unproven_old(pick(near_best), near_best)
+        if ramp_probe is not None and result.get("flag") != "ok":
+            ev_old = _evaluate(conn, video_path, old_subs, lang, transcript_lang, cfg,
+                               score=True, cancel_event=cancel_event)
+            old_scored = True
+            if ev_old is not None:
+                scored["old"] = ev_old
+            if ev_old is not None and ev_old.get("flag") == "ok" and ev_old.get("avg_score") is not None:
+                winner, ramp_via_old, ramp_decided = "new", True, True
+        if not ramp_via_old:
+            for key, subs in subs_by_key.items():
+                if key == "new" or (key == "old" and old_scored):
+                    continue
+                ev = _evaluate(conn, video_path, subs, lang, transcript_lang, cfg,
+                               score=True, cancel_event=cancel_event)
+                if ev is not None:
+                    scored[key] = ev
+            content_ok = [k for k, v in scored.items() if v.get("flag") == "ok" and v.get("avg_score") is not None]
+            if not content_ok:
+                # NOTHING matched the audio's content -- not alass's fit(s), not the baseline. That
+                # is a wrong-subtitle verdict, not a sync problem, and re-timing text that isn't this
+                # episode's is meaningless. Leave the file exactly as it is and let the caller flag it
+                # SUSPECT: picking a "best" fit here overwrote the original on the strength of scores
+                # like 0.07 -- see C_S02E15, whose subtitle turned out to be the NEXT episode's text
+                # entirely, and which the pipeline "fixed" by 30.4s before this branch existed.
+                winner, content_matched = "old", False
+            else:
+                # CONTENT decides first among candidates that passed it -- it's the evidence this
+                # branch just paid for, and a real gap between two "ok" scores is exactly what it
+                # exists to catch (see CONTENT_SCORE_TIE_MARGIN). Anchors/preference (pick()) only
+                # get a say among whichever candidates are within that margin of the best score --
+                # a genuine tie, not a decisive difference silently thrown away.
+                best = max(scored[k]["avg_score"] for k in content_ok)
+                near_best = [k for k in content_ok if scored[k]["avg_score"] >= best - CONTENT_SCORE_TIE_MARGIN]
+                winner = _reject_unproven_old(pick(near_best), near_best)
 
     def _describe(key: str) -> str:
         parts = []
@@ -974,6 +1035,13 @@ def _resolve_ambiguous_sync(conn: sqlite3.Connection, video_path: Path, subtitle
         note_suffix = (f" Verified alass's {n_blocks}-block fit against its single-offset fit and the {base_name} "
                        f"on the same Whisper samples before applying anything — kept '{winner}' ["
                        + "; ".join(_describe(k) for k in subs_by_key) + "].")
+    if ramp_decided:
+        via = " (text verified on the original; new's own content misses its windows)" if ramp_via_old else ""
+        note_suffix += (f" Ramp rescue: the full anchor pool shows one clean rate line "
+                        f"(tilt {ramp_probe['tilt']:+.1f}s over {ramp_probe['n']} anchors, "
+                        f"rho {ramp_probe['rho']:+.2f}, {ramp_probe['keep_frac']:.0%} on the line), "
+                        f"so the single-offset fit was kept for the rate fix below{via}.")
+        row["_ramp_rescued"] = ramp_probe
     structural_note = " line count changed significantly — check the file manually." if ambiguous.get("structural") else ""
 
     def _synthetic(key: str) -> dict:
@@ -1285,6 +1353,12 @@ def _try_stretch_rescale(subtitle_path: Path, cfg: Config, media_root: Path,
     p = stretch_probe([(a, a - s) for a, s in pts])
     if not _stretch_gates_pass(p):
         return None
+    return _apply_stretch_fix(subtitle_path, cfg, media_root, current_subs, pts, p)
+
+
+def _apply_stretch_fix(subtitle_path: Path, cfg: Config, media_root: Path,
+                       current_subs, pts: list, p: dict):
+    """Applies a stretch probe that already passed its gates (quartile, threshold, write)."""
     # a = (s + c) / (1 - m): the rate and the offset are one inverse. alass has
     # usually shifted the file already, so undoing only the rate leaves its shift.
     ratio = 1.0 / (1.0 - p["slope"])
@@ -1423,13 +1497,11 @@ def _fps_says_needs_full(collected: dict, cfg: Config) -> bool:
     if len(pts) < FPS_MIN_ANCHORS:
         return False
     sig = anchor_drift_signature([(a, a - s) for a, s in pts])
-    if cfg.fps_require_full_coverage:
-        return _anchor_signature_passes(sig) is not None
-    # A lower bar than the fix: this only buys the look, the fix re-checks every gate on
-    # the full pool. The fix's own gates missed 2 real 24->23.976 files here (C_S02E04
-    # binned -0.88 vs 0.90, C_S02E06 one leave-out tilt) that full mode repairs.
-    tilt = (sig or {}).get("tilt")
-    return tilt is not None and abs(tilt) >= FPS_ANCHOR_TILT_MIN_S
+    if not cfg.fps_require_full_coverage:
+        return False  # sampled evidence is allowed to fix on its own; nothing to buy
+    # The fix's own gates, not a lower bar: the two "real 24->23.976" files a plain-tilt
+    # trigger sent to full (C_S02E04, C_S02E06) are correct per the user -- full was wrong.
+    return _anchor_signature_passes(sig) is not None
 
 
 def _screen_says_needs_full(collected: dict, cfg: Config, sync_blocks: Optional[int] = None) -> bool:
@@ -1683,10 +1755,12 @@ def correctness_and_finish(video_path: Path, subtitle_path: Path, lang: Optional
             if ambiguous is not None and pre_sync_subs is None:
                 pre_sync_subs = ambiguous.get("old_subs")
             resolved_winner = None
+            # Resolution below may hand back sparse samples; the step test needs these.
+            escalated_samples = result.get("samples") if result.get("full_coverage") else None
             if ambiguous is not None:
                 current_subs, result, swap_severity, resolved_winner = _resolve_ambiguous_sync(
-                    # cfg, not ev_cfg: the full evaluator finds no evidence for the 'blocks'
-                    # and 'old' candidates, so 'new' wins by default (36 good repairs lost).
+                    # cfg, not ev_cfg: on the full evaluator it destroyed 4 good block
+                    # repairs (0.98 -> 0.74). stepped_before keeps the full samples instead.
                     conn, video_path, subtitle_path, lang, cfg, media_root, ambiguous, result, row,
                     cancel_event=cancel_event)
                 row["correctness_avg_score"] = round(result["avg_score"], 3) if result["avg_score"] is not None else None
@@ -1700,8 +1774,16 @@ def correctness_and_finish(video_path: Path, subtitle_path: Path, lang: Optional
             # agree on the tilt; like the anchor resync below, the evidence above was
             # gathered against cue times this fix just changed, so re-gather before
             # the verdict chain judges the corrected file.
+            ramp_probe_saved = row.pop("_ramp_rescued", None)
             fps_fix = _try_fps_rescale(conn, video_path, subtitle_path, lang, cfg,
                                        media_root, current_subs, result)
+            if fps_fix is None and ramp_probe_saved is not None:
+                # The normal path cannot fire here (new's SUSPECT flag, or a
+                # second-path pool under the strict keep bar) -- but the rescue
+                # already verified this probe end to end, so apply it directly.
+                fps_fix = _apply_stretch_fix(subtitle_path, cfg, media_root,
+                                             current_subs, _fps_points(result),
+                                             ramp_probe_saved)
             if fps_fix is not None:
                 current_subs, fps_note, fps_info = fps_fix
                 row["fps_ratio"] = fps_info["name"]
@@ -1809,7 +1891,8 @@ def correctness_and_finish(video_path: Path, subtitle_path: Path, lang: Optional
                 # file this is invisible (0 of 22 half-repaired rows still step at the
                 # sampled points, while healthy files never do), so the repair cannot be
                 # asked to disprove it afterwards -- the suspicion has to travel.
-                stepped_before = bool(anchor_slope_breaks(result.get("samples") or []))
+                stepped_before = bool(anchor_slope_breaks(result.get("samples") or [])
+                                      or anchor_slope_breaks(escalated_samples or []))
                 resynced = None
                 if cfg.anchor_resync_enabled and result["flag"] == "ok" and not cfg.dry_run:
                     resynced = _try_anchor_resync(conn, video_path, subtitle_path, lang, ev_cfg,

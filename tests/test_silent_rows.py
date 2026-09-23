@@ -106,9 +106,10 @@ class SilentBlockTests(unittest.TestCase):
         """C_S03E09 sampled piecewise_c: alass saa een offset, men eet anker stod
         +20s ude. Uden flerbloksfit eskalerede den aldrig og gik stille (0.425)."""
         row, rec = _run("C_S03E09", "piecewise_c", mode="sampled")
-        self.assertLess(rec.get("frac_le_1_0s"), 0.90)
-        self.assertEqual(row.get("correctness_flag"), "SUSPECT",
-                         f"silent again (note: {(row.get('note') or '')[:300]})")
+        # Escalated, the anchor resync can now fix it (0.903); either outcome is fine.
+        self.assertTrue(rec.get("frac_le_1_0s") >= 0.90
+                        or row.get("correctness_flag") == "SUSPECT",
+                        f"silent again (note: {(row.get('note') or '')[:300]})")
 
     def test_screen_does_not_vouch_for_a_subtitle_that_ends_early(self):
         """C_S03E08 sampled cut_version: 300s cut out, everything after sits 300s early.
@@ -123,12 +124,12 @@ class SilentBlockTests(unittest.TestCase):
     def test_lone_huge_anchor_warns(self):
         """SH_S01E01 sampled: alass' 4-blok-fit er 25s galt i een blok, men
         sparsom sampling giver kun EET vidne -- min_samples undertrykker det,
-        saa filen gik stille igennem (0.855). Et 10s+ vidne paa multiblok-form
-        skal route til anker-grenen (fix-verificeret eller advarsel)."""
+        saa filen gik stille igennem (0.855). Nu eskalerer den, og resyncen paa
+        det fulde transskript retter den (0.964). Stille er det eneste forbudte."""
         row, rec = _run("SH_S01E01", "piecewise", mode="sampled")
-        self.assertEqual(row.get("correctness_flag"), "SUSPECT",
-                         f"silent again (note: {(row.get('note') or '')[:300]})")
-        self.assertLess(rec.get("frac_le_1_0s"), 0.90)
+        self.assertTrue(rec.get("frac_le_1_0s") >= 0.90
+                        or row.get("correctness_flag") == "SUSPECT",
+                        f"silent again (note: {(row.get('note') or '')[:300]})")
 
 
 @_needs_staging

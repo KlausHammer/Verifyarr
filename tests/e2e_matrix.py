@@ -251,6 +251,11 @@ def patch_whisper_full(lang, segments):
     real = generate.full_transcript_for_check
 
     def fake(cfg, video_path, tmp_dir, conn, cancel_event=None):
+        # Stored like production's _transcribe_or_reuse does: evaluate_against_full_transcript
+        # reads the cache, and without this an escalated sampled row could never plan a resync.
+        provider, model = full_transcript_cache_key(cfg)
+        db.save_full_transcript_cache(conn, video_path, lang, segments,
+                                      stt_provider=provider, stt_model=model)
         return lang, segments
 
     generate.full_transcript_for_check = fake
