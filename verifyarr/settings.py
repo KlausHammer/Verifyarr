@@ -628,11 +628,12 @@ SETTING_DEFS: dict = {
     # 93% but drops drift detection from 70% to 45%, which is too much: escalation doesn't repair
     # drift, but it is what NOTICES it.
     "sync.escalate_min_bad_samples": ("sync", "int", 2),
-    # How many clips must disagree before the FILE is called SUSPECT. An absolute count is a
-    # much harder bar on 5 sampled clips (60%) than on a full transcript's ~21 windows (14%),
-    # which is most of what escalating actually bought. 2, not 3: on 14 real healthy episodes not
-    # one has even a SINGLE clip over ANCHOR_SUSPECT_THRESHOLD_S (worst is 1.52s), and 600 clean
-    # matrix rows give zero false SUSPECT at 2 -- so the second clip is free evidence.
+    # How many clips must disagree before the FILE is called SUSPECT -- sampled evidence,
+    # plus any resolved old/blocks winner. Dense full evidence uses 3 (see the trigger in
+    # correctness_and_finish): 2 of ~51 anchors is noise, and fired a false rewrite on
+    # SH_S01E04. 2, not 3, here: on 14 real healthy episodes not one has even a SINGLE clip
+    # over ANCHOR_SUSPECT_THRESHOLD_S (worst is 1.52s), and 600 clean matrix rows give zero
+    # false SUSPECT at 2 -- so the second clip is free evidence.
     "sync.anchor_suspect_min_samples": ("sync", "int", 2),
     "sync.escalate_only_multi_block": ("sync", "bool", True),
     # Framerate tilt check (see pipeline._try_fps_rescale): rescale a 24fps subtitle

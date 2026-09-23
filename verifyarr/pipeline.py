@@ -41,7 +41,7 @@ from verifyarr.line_order import (
 from verifyarr.correctness import (
     evaluate_against_cached_transcripts, evaluate_against_full_transcript, significant_anchor_residuals, JobCancelled,
     whisper_cost, anchor_slope_breaks, anchor_run_offsets, get_duration_seconds,
-    ANCHOR_RESYNC_INTERVAL_S,
+    ANCHOR_RESYNC_INTERVAL_S, ANCHOR_SUSPECT_MIN_SAMPLES,
 )
 from verifyarr.fileops import backup_subtitle, quarantine_subtitle
 from verifyarr.bazarr import (
@@ -1815,9 +1815,17 @@ def correctness_and_finish(video_path: Path, subtitle_path: Path, lang: Optional
             # Shared by the safety net and the anchor branch below: a file the
             # anchors condemn always gets the resync ATTEMPT first -- the net only
             # fires when the anchors have nothing to plan from.
+            # 2 of ~51 full anchors is noise (SH_S01E04 fired on exactly that),
+            # so dense evidence needs 3. A resolved old/blocks winner keeps 2:
+            # block structure is already proven there, and a sampled resolution
+            # judges on sparse cached clips anyway.
+            dense = (ev_cfg.whisper_mode == "full"
+                     and resolved_winner in (None, "new"))
+            suspect_min = (ANCHOR_SUSPECT_MIN_SAMPLES if dense
+                           else cfg.anchor_suspect_min_samples)
             anchor_bad = (significant_anchor_residuals(
                 result.get("samples") or [], ANCHOR_SUSPECT_THRESHOLD_S,
-                min_samples=cfg.anchor_suspect_min_samples)
+                min_samples=suspect_min)
                 if cfg.anchor_check_enabled else [])
             if (cfg.anchor_check_enabled and not anchor_bad
                     and row["sync_block_spread_s"] is not None
