@@ -102,6 +102,14 @@ class SilentBlockTests(unittest.TestCase):
         self.assertEqual(row.get("correctness_flag"), "SUSPECT",
                          f"silent again (note: {(row.get('note') or '')[:300]})")
 
+    def test_lone_huge_anchor_without_block_fit_escalates(self):
+        """C_S03E09 sampled piecewise_c: alass saa een offset, men eet anker stod
+        +20s ude. Uden flerbloksfit eskalerede den aldrig og gik stille (0.425)."""
+        row, rec = _run("C_S03E09", "piecewise_c", mode="sampled")
+        self.assertLess(rec.get("frac_le_1_0s"), 0.90)
+        self.assertEqual(row.get("correctness_flag"), "SUSPECT",
+                         f"silent again (note: {(row.get('note') or '')[:300]})")
+
     def test_lone_huge_anchor_warns(self):
         """SH_S01E01 sampled: alass' 4-blok-fit er 25s galt i een blok, men
         sparsom sampling giver kun EET vidne -- min_samples undertrykker det,

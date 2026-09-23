@@ -1405,8 +1405,6 @@ def _fps_says_needs_full(collected: dict, cfg: Config) -> bool:
     measured trigger rate on 35 files: 4/4 drifting, 0/31 others (the four
     confusing healthy files each fail one anchor gate: binned vetoes C_S02E13
     and C_S03E16, leave-one-out vetoes C_S03E09 and C_S03E12)."""
-    if not cfg.fps_require_full_coverage:
-        return False  # sampled evidence is allowed to fix on its own; nothing to buy
     if not cfg.fps_check_enabled or cfg.whisper_mode != "sampled":
         return False
     if collected.get("full_coverage") or collected.get("skipped"):
@@ -1415,7 +1413,13 @@ def _fps_says_needs_full(collected: dict, cfg: Config) -> bool:
     if len(pts) < FPS_MIN_ANCHORS:
         return False
     sig = anchor_drift_signature([(a, a - s) for a, s in pts])
-    return _anchor_signature_passes(sig) is not None
+    if cfg.fps_require_full_coverage:
+        return _anchor_signature_passes(sig) is not None
+    # A lower bar than the fix: this only buys the look, the fix re-checks every gate on
+    # the full pool. The fix's own gates missed 2 real 24->23.976 files here (C_S02E04
+    # binned -0.88 vs 0.90, C_S02E06 one leave-out tilt) that full mode repairs.
+    tilt = (sig or {}).get("tilt")
+    return tilt is not None and abs(tilt) >= FPS_ANCHOR_TILT_MIN_S
 
 
 def _screen_says_needs_full(collected: dict, cfg: Config, sync_blocks: Optional[int] = None) -> bool:
@@ -1442,6 +1446,12 @@ def _screen_says_needs_full(collected: dict, cfg: Config, sync_blocks: Optional[
     # one offset. Measured over 2086 sampled rows, multi-block fires on 75% of piecewise files
     # and 0% of clean, gap, swap and uniform ones. Detection does not need this branch at all
     # (see anchor_suspect_min_samples).
+    samples = collected.get("samples") or []
+    # One confident anchor 10s+ out is reason to look too, block fit or not: none of
+    # 283 sampled files that end correct and unflagged carry one.
+    if any(s.get("anchor") and abs(s["anchor"]["shift"]) >= ANCHOR_HUGE_SINGLE_S
+           for s in samples):
+        return True
     if cfg.escalate_only_multi_block and not (sync_blocks or 0) > 1:
         return False
     # The multi-block fit IS the suspicion. A half-repaired block file's sampled
@@ -1449,7 +1459,6 @@ def _screen_says_needs_full(collected: dict, cfg: Config, sync_blocks: Optional[
     # asking them to disagree too let those files through silently.
     if (sync_blocks or 0) > 1:
         return True
-    samples = collected.get("samples") or []
     spread = anchor_spread(samples)
     if spread is not None and spread > ANCHOR_SCREEN_SPREAD_S:
         return True
