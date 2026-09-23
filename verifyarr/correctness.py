@@ -4,6 +4,7 @@ subtitle's word content. See `correctness_check` for the main flow and scoring l
 from __future__ import annotations
 
 import json
+import statistics
 import re
 import subprocess
 import tempfile
@@ -699,6 +700,39 @@ def anchor_slope_breaks(samples: list[dict],
         dev = step / (t2 - t1)
         if dev > min_dev and step > min_step:
             out.append({"at": t2, "dev": round(dev, 2), "step": round(s2 - s1, 1)})
+    return out
+
+
+# A block remainder: k consecutive anchors whose median sits min_dev off the file's.
+# Measured on full-mode matrix rows: correct unflagged files peak at 0.86s (k=10),
+# the three silent half-repaired ones sit at 1.54-2.14s.
+ANCHOR_RUN_K = 10
+ANCHOR_RUN_MIN_DEV_S = 1.2
+
+
+def anchor_run_offsets(samples: list[dict], k: int = ANCHOR_RUN_K,
+                       min_dev: float = ANCHOR_RUN_MIN_DEV_S) -> list[dict]:
+    """Stretches of k consecutive anchors that agree with each other but not with the file.
+
+    A repair that settled most of a block leaves its remainder 1.5-2.5s off -- under every
+    per-anchor threshold, and without a step big enough for anchor_slope_breaks. Jitter
+    averages out over k anchors; a remainder keeps its sign. Empty under k anchors."""
+    pts = sorted((s["start"], s["anchor"]["shift"]) for s in samples
+                 if s.get("anchor") and s.get("start") is not None)
+    if len(pts) < k:
+        return []
+    ref = statistics.median(sh for _, sh in pts)
+    out = []
+    for i in range(len(pts) - k + 1):
+        dev = statistics.median(sh for _, sh in pts[i:i + k]) - ref
+        if abs(dev) < min_dev:
+            continue
+        if out and pts[i][0] <= out[-1]["to"]:
+            out[-1]["to"] = pts[i + k - 1][0]
+            if abs(dev) > abs(out[-1]["dev"]):
+                out[-1]["dev"] = round(dev, 1)
+        else:
+            out.append({"from": pts[i][0], "to": pts[i + k - 1][0], "dev": round(dev, 1)})
     return out
 
 

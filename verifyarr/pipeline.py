@@ -40,7 +40,7 @@ from verifyarr.line_order import (
 )
 from verifyarr.correctness import (
     evaluate_against_cached_transcripts, evaluate_against_full_transcript, significant_anchor_residuals, JobCancelled,
-    whisper_cost, anchor_slope_breaks,
+    whisper_cost, anchor_slope_breaks, anchor_run_offsets,
     ANCHOR_RESYNC_INTERVAL_S,
 )
 from verifyarr.fileops import backup_subtitle, quarantine_subtitle
@@ -1706,6 +1706,8 @@ def correctness_and_finish(video_path: Path, subtitle_path: Path, lang: Optional
                 collected, result, swap_severity = _recheck_after_resync(
                     video_path, current_subs, lang, ev_cfg, conn, collected, result,
                     cancel_event=cancel_event)
+                # The row must describe the rescaled file, not the one before it.
+                row["correctness_samples"] = result.get("samples")
                 # Same staleness guard as the anchor-resync path: only cache under the
                 # corrected fingerprint when the recheck actually re-gathered evidence
                 # (on failure/skip it returns the SAME pre-fix object).
@@ -1849,8 +1851,11 @@ def correctness_and_finish(video_path: Path, subtitle_path: Path, lang: Optional
                     # stepped_before), so an unresolved step is proven by absence of
                     # proof, not by evidence: keep the fix, warn about the rest.
                     unproven_step = stepped_before and not slope_breaks and not resync_still_bad
+                    # The remainder a repair leaves under every threshold: a run of anchors
+                    # 1.5-2.5s off, silent on 3 of 3 such matrix rows before this.
+                    run_offsets = anchor_run_offsets(result.get("samples") or [])
                     if (result.get("flag") != "ok" or resync_still_bad
-                            or slope_breaks or unproven_step):
+                            or slope_breaks or unproven_step or run_offsets):
                         if result.get("flag") not in ("ok", "SUSPECT"):
                             row["correctness_flag"] = "unknown"
                             row["note"] = (row["note"] + " Correctness could not be "
@@ -1877,6 +1882,14 @@ def correctness_and_finish(video_path: Path, subtitle_path: Path, lang: Optional
                                                f"corrected file still steps at {len(slope_breaks)} "
                                                f"point(s) [{where}] where the audio runs on -- part "
                                                f"of the episode is still mistimed.").strip()
+                            elif run_offsets:
+                                where = ", ".join(f"{r['from']:.0f}-{r['to']:.0f}s ({r['dev']:+.1f}s)"
+                                                  for r in run_offsets[:4])
+                                row["note"] = (row["note"] +
+                                               f" Block remainder after anchor resync: a run of "
+                                               f"anchors still sits off the rest of the file at "
+                                               f"[{where}] -- part of the episode is still "
+                                               f"mistimed.").strip()
                             elif unproven_step:
                                 row["note"] = (row["note"] + " Block error repaired, but NOT "
                                                "verified across the whole episode: the file "
