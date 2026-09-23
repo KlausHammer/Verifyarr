@@ -1497,11 +1497,14 @@ def _fps_says_needs_full(collected: dict, cfg: Config) -> bool:
     if len(pts) < FPS_MIN_ANCHORS:
         return False
     sig = anchor_drift_signature([(a, a - s) for a, s in pts])
-    if not cfg.fps_require_full_coverage:
-        return False  # sampled evidence is allowed to fix on its own; nothing to buy
-    # The fix's own gates, not a lower bar: the two "real 24->23.976" files a plain-tilt
-    # trigger sent to full (C_S02E04, C_S02E06) are correct per the user -- full was wrong.
-    return _anchor_signature_passes(sig) is not None
+    if cfg.fps_require_full_coverage:
+        return _anchor_signature_passes(sig) is not None
+    # A lower bar than the fix: this only buys the look, the fix re-checks every gate on
+    # the full pool. The fix's gates missed C_S02E04/C_S02E06 (binned -0.88 vs 0.90; one
+    # leave-out tilt) -- real 0.1% drift in the English file: VAD tilt -1.06s, while the
+    # Danish file the user watched sits at 0.00-0.14s.
+    tilt = (sig or {}).get("tilt")
+    return tilt is not None and abs(tilt) >= FPS_ANCHOR_TILT_MIN_S
 
 
 def _screen_says_needs_full(collected: dict, cfg: Config, sync_blocks: Optional[int] = None) -> bool:
