@@ -93,6 +93,15 @@ class SilentBlockTests(unittest.TestCase):
         self.assertTrue("Block boundary REMAINS" in note
                         or "NOT verified across the whole episode" in note, note[-200:])
 
+    def test_escalated_block_file_is_judged_on_the_full_transcript(self):
+        """C_S02E12 sampled piecewise_b: alass' 3-blok-fit eskalerer, men resync og
+        recheck faldt tilbage til 16 samplede klip, og den halvt reparerede fil
+        gik stille igennem (0.440, ok). Dommen skal tages paa det koebte transskript."""
+        row, rec = _run("C_S02E12", "piecewise_b", mode="sampled")
+        self.assertLess(rec.get("frac_le_1_0s"), 0.90)
+        self.assertEqual(row.get("correctness_flag"), "SUSPECT",
+                         f"silent again (note: {(row.get('note') or '')[:300]})")
+
     def test_lone_huge_anchor_warns(self):
         """SH_S01E01 sampled: alass' 4-blok-fit er 25s galt i een blok, men
         sparsom sampling giver kun EET vidne -- min_samples undertrykker det,

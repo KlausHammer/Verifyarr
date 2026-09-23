@@ -615,14 +615,11 @@ SETTING_DEFS: dict = {
     "sync.block_spread_suspect_threshold_s": ("sync", "float", 20.0),
     "sync.anchor_check_enabled": ("sync", "bool", True),
     "sync.anchor_resync_enabled": ("sync", "bool", True),
-    # Off: transcribing the whole track costs ~10x a sampled run (517 vs 52 audio seconds per
-    # file, measured) and buys almost nothing. What it actually did was make the SUSPECT rule
-    # easier to satisfy -- 3 bad clips out of ~21 full-mode windows instead of out of 5 -- so
-    # lowering anchor_suspect_min_samples to 2 gets the same detection for free. Measured over
-    # 700 sampled rows per policy: drift 69->62%, drift_swap 68->71%, piecewise 17->24%, zero
-    # false SUSPECT on clean either way, recovery 0.631 -> 0.629. Still a setting, because a
-    # library with very long episodes may want the denser evidence.
-    "sync.escalate_sampled_to_full": ("sync", "bool", False),
+    # On, gated by escalate_only_multi_block: only files alass could not fit with one offset
+    # buy the full transcript. Measured (tiny.en, 1656 cells): arm-1 fixed 856 -> 864, silent
+    # block files 14 -> 10, no good repair lost, +12% Whisper audio; 6 of 52 real episodes
+    # escalate, all already broken, no Slow Horses file touched.
+    "sync.escalate_sampled_to_full": ("sync", "bool", True),
     # How many clips must show a real residual before the whole track is transcribed.
     # 2, not 1: measured over 700 sampled rows per policy, going from 1 to 2 cuts fresh Whisper
     # audio 30% (739 -> 517 s/file) for -0.001 recovery and -1pp detection. At 2 the

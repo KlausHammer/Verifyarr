@@ -7,6 +7,7 @@ them split (CLI, the Bazarr-hook single-file path, remediate's own candidate ver
 
 from __future__ import annotations
 
+import dataclasses
 import json
 import shutil
 import statistics
@@ -1443,6 +1444,11 @@ def _screen_says_needs_full(collected: dict, cfg: Config, sync_blocks: Optional[
     # (see anchor_suspect_min_samples).
     if cfg.escalate_only_multi_block and not (sync_blocks or 0) > 1:
         return False
+    # The multi-block fit IS the suspicion. A half-repaired block file's sampled
+    # anchors agree with each other -- the displaced text never anchors -- so
+    # asking them to disagree too let those files through silently.
+    if (sync_blocks or 0) > 1:
+        return True
     samples = collected.get("samples") or []
     spread = anchor_spread(samples)
     if spread is not None and spread > ANCHOR_SCREEN_SPREAD_S:
@@ -1558,6 +1564,9 @@ def correctness_and_finish(video_path: Path, subtitle_path: Path, lang: Optional
         # the user has since turned line-order on, which then only has to pay for the LLM
         # confirmation step below, not for Whisper again.
         cache_key = cache_key_for(current_subs, cfg)
+        # Evidence config: becomes full-mode once an escalation has bought the transcript.
+        # Cache keys stay on cfg, so the next sampled run still hits.
+        ev_cfg = cfg
         cached = db.get_line_order_cache(conn, subtitle_path)
         reused_cache = bool(cached and cached["key"] == cache_key)
         try:
@@ -1609,6 +1618,9 @@ def correctness_and_finish(video_path: Path, subtitle_path: Path, lang: Optional
                                                  conn, cancel_event=cancel_event)
                 if not full.get("skipped"):
                     collected = full
+                    # Resync and recheck must use it too -- they fell back to the 16
+                    # sampled clips and judged the repair on those.
+                    ev_cfg = dataclasses.replace(cfg, whisper_mode="full")
         except JobCancelled:
             raise  # a cancelled job is not a "skipped" check -- let jobs.py end the run cleanly
         except Exception as e:
@@ -1654,6 +1666,8 @@ def correctness_and_finish(video_path: Path, subtitle_path: Path, lang: Optional
             resolved_winner = None
             if ambiguous is not None:
                 current_subs, result, swap_severity, resolved_winner = _resolve_ambiguous_sync(
+                    # cfg, not ev_cfg: the full evaluator finds no evidence for the 'blocks'
+                    # and 'old' candidates, so 'new' wins by default (36 good repairs lost).
                     conn, video_path, subtitle_path, lang, cfg, media_root, ambiguous, result, row,
                     cancel_event=cancel_event)
                 row["correctness_avg_score"] = round(result["avg_score"], 3) if result["avg_score"] is not None else None
@@ -1681,7 +1695,7 @@ def correctness_and_finish(video_path: Path, subtitle_path: Path, lang: Optional
                 row["note"] = (row["note"] + fps_note).strip()
                 pre_recheck_collected = collected
                 collected, result, swap_severity = _recheck_after_resync(
-                    video_path, current_subs, lang, cfg, conn, collected, result,
+                    video_path, current_subs, lang, ev_cfg, conn, collected, result,
                     cancel_event=cancel_event)
                 # Same staleness guard as the anchor-resync path: only cache under the
                 # corrected fingerprint when the recheck actually re-gathered evidence
@@ -1777,7 +1791,7 @@ def correctness_and_finish(video_path: Path, subtitle_path: Path, lang: Optional
                 stepped_before = bool(anchor_slope_breaks(result.get("samples") or []))
                 resynced = None
                 if cfg.anchor_resync_enabled and result["flag"] == "ok" and not cfg.dry_run:
-                    resynced = _try_anchor_resync(conn, video_path, subtitle_path, lang, cfg,
+                    resynced = _try_anchor_resync(conn, video_path, subtitle_path, lang, ev_cfg,
                                                    media_root, current_subs, result.get("audio_lang"),
                                                    fallback_subs=pre_sync_subs,
                                                    cancel_event=cancel_event)
@@ -1797,7 +1811,7 @@ def correctness_and_finish(video_path: Path, subtitle_path: Path, lang: Optional
                     # token overlap, not a new Whisper call.
                     pre_recheck_collected = collected
                     collected, result, swap_severity = _recheck_after_resync(
-                        video_path, current_subs, lang, cfg, conn, collected, result,
+                        video_path, current_subs, lang, ev_cfg, conn, collected, result,
                         cancel_event=cancel_event)
                     # Set above from the PRE-resync evidence, which describes a file that
                     # no longer exists once the resync has written. Anything reading this

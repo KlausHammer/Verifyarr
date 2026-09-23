@@ -62,10 +62,15 @@ class FpsGuardTests(unittest.TestCase):
 
         Before: post-alass stretch -4.01% applied to alass' broken 2-block fit,
         rec 0.847 with flag ok (silent). The presync offset was already right;
-        the rate must be rejected and the broken file warned about, not fixed."""
+        the rate must be rejected and the broken file warned about, not fixed.
+
+        With escalation on, the full transcript's pool is clean end to end and the
+        stretch then undoes alass' ramp correctly (rec 1.0) -- so a stretch is allowed,
+        but only one that actually fixes the file."""
         row, rec = _run("C_S02E12", "uniform_neg")
-        self.assertNotIn("stretch", (row.get("sync_status") or "") + (row.get("note") or ""),
-                         f"rate applied to a pure shift (rec={rec.get('frac_le_1_0s')})")
+        if "stretch" in (row.get("sync_status") or ""):
+            self.assertGreaterEqual(rec.get("frac_le_1_0s"), 0.90,
+                                    "a stretch was applied and left the file wrong")
         self.assertTrue(rec.get("frac_le_1_0s") >= 0.90
                         or row.get("correctness_flag") == "SUSPECT",
                         f"still silent: rec={rec.get('frac_le_1_0s')} flag={row.get('correctness_flag')}")
