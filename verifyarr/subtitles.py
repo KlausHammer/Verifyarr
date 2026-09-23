@@ -316,6 +316,10 @@ STRETCH_MAX_RESID_S = 0.40
 # (STRETCH_KEEP_TRIM_S) is the jitter-tolerant one; this bar stays strict.
 STRETCH_MIN_KEEP_FRAC = 0.90
 
+# Post-rate guard: a correction that fixes the file leaves every quarter quiet.
+# True 0.1%/4% fixes peak at 1.0s per quarter; false tilts leave 1.9s or more.
+FPS_RESID_MAX_S = 1.5
+
 
 def anchors_applicable(sub_lang: Optional[str], audio_lang: Optional[str]) -> bool:
     """Anchor matching is plain token overlap between what Whisper heard and what the subtitle
@@ -577,6 +581,33 @@ def stretch_probe(points, resid_s: float = STRETCH_RESID_TRIM_S,
             "rho": spearman_rho(kept), "gain": before - after, "resid": after,
             "n": len(kept), "n_raw": fit["n_raw"],
             "keep_frac": on_line / fit["n_raw"], "span": span}
+
+
+def max_quartile_residual_after(points, ratio: float, offset: float = 0.0,
+                                  nreg: int = 4) -> float:
+    """Largest quartile median |offset| left after new_t = ratio * (t + offset).
+
+    `points` are (audio, subtitle) anchor points as pooled by the caller. The
+    correction must leave the file quiet EVERYWHERE: a true rate fix collapses
+    every quarter to the jitter floor, while a false one either ramps a healthy
+    file (late quarters 2-3s) or fits 94% of a stepped pool and leaves the tail
+    (5s). Global spread sees neither -- the ramp starts inside the noise and the
+    tail is 6% of the pool. 0.0 when unjudgeable (under 4 points, no span)."""
+    pts = [(float(a), float(s)) for a, s in points]
+    if len(pts) < 4:
+        return 0.0
+    lo = min(a for a, _ in pts)
+    span = max(a for a, _ in pts) - lo
+    if span <= 0:
+        return 0.0
+    regs: list[list[float]] = [[] for _ in range(nreg)]
+    for a, s in pts:
+        regs[min(nreg - 1, int((a - lo) / span * nreg))].append(a - ratio * (s + offset))
+    worst = 0.0
+    for r in regs:
+        if r:
+            worst = max(worst, abs(statistics.median(r)))
+    return worst
 
 
 def anchor_drift_signature(points, trim_s: float = FPS_ANCHOR_TRIM_S,

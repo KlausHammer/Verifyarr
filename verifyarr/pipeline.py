@@ -25,7 +25,7 @@ from verifyarr.subtitles import (
     tilt_from_points, vad_tilt_from_intervals, apply_fps_rescale, _spread,
     stretch_probe, STRETCH_MIN_POINTS, STRETCH_MIN_TILT_S, STRETCH_MAX_RATE,
     STRETCH_RHO_MIN, STRETCH_MIN_GAIN_S, STRETCH_MAX_RESID_S, STRETCH_MIN_KEEP_FRAC,
-    anchor_drift_signature,
+    anchor_drift_signature, max_quartile_residual_after, FPS_RESID_MAX_S,
     FPS_RATIOS, FPS_ANCHOR_TILT_MIN_S, FPS_BINNED_TILT_MIN_S, FPS_LOO_TILT_MIN_S,
     FPS_VAD_TILT_MIN_S, FPS_MIN_ANCHORS,
     FPS_MAX_BASE_SPREAD_S, FPS_ANCHOR_TRIM_S,
@@ -1277,6 +1277,11 @@ def _try_stretch_rescale(subtitle_path: Path, cfg: Config, media_root: Path,
     # a = (s + c) / (1 - m): the rate and the offset are one inverse. alass has
     # usually shifted the file already, so undoing only the rate leaves its shift.
     ratio = 1.0 / (1.0 - p["slope"])
+    left = max_quartile_residual_after(pts, ratio, p["intercept"])
+    if left > FPS_RESID_MAX_S:
+        log.info("stretch rescale %s for %s discarded: %.1fs left in one quarter",
+                 f"{(ratio - 1) * 100:+.2f}%", subtitle_path.name, left)
+        return None
     import copy as _copy
     fixed = _copy.deepcopy(current_subs)
     worst = apply_fps_rescale(fixed, ratio, offset=p["intercept"])
@@ -1319,8 +1324,10 @@ def _try_fps_rescale(conn: sqlite3.Connection, video_path: Path, subtitle_path: 
     +0.84s, double-fixing +1.4s onto it. The round-trip gate caught it.)
 
     Gates fail closed: content must verify (flag ok), base anchor spread must be
-    sane (excludes wrong-episode/block files), at least 20 anchors, and the write
-    itself must clear min_change_seconds.
+    sane (excludes wrong-episode/block files), at least 20 anchors, the write
+    itself must clear min_change_seconds, and the correction must leave every
+    quarter quiet (max_quartile_residual_after -- a fixed ratio that still leaves
+    a quarter 1.5s+ out never helped).
 
     The rescale pivots at the file start (c = 0): that is where a framerate mismatch
     pivots, so exact inversion restores the original timing -- cue lead included. A
@@ -1361,6 +1368,11 @@ def _try_fps_rescale(conn: sqlite3.Connection, video_path: Path, subtitle_path: 
     if (atilt > 0) != (vtilt > 0):
         return None
     ratio, name = FPS_RATIOS[1] if atilt > 0 else FPS_RATIOS[0]
+    left = max_quartile_residual_after(pts, ratio)
+    if left > FPS_RESID_MAX_S:
+        log.info("fps %s for %s discarded: %.1fs left in one quarter",
+                 name, subtitle_path.name, left)
+        return None
     import copy as _copy
     fixed = _copy.deepcopy(current_subs)
     worst = apply_fps_rescale(fixed, ratio)
