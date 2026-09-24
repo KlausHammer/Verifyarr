@@ -1036,7 +1036,8 @@ def main(argv=None):
                                        # A half-right fix leaves its broken stretch unanchored,
                                        # so where the gaps sit is the evidence; counts are not.
                                        anchor_map=[[s.get("start"), int(s.get("anchor") is not None),
-                                                    round((s.get("anchor") or {}).get("shift", 0.0), 2)]
+                                                    round((s.get("anchor") or {}).get("shift", 0.0), 2),
+                                                    (s.get("anchor") or {}).get("mad")]
                                                    for s in (row.get("correctness_samples") or [])])
                             if name in TIMING_SCENARIOS or name == "clean":
                                 rec["injected_p50"] = summarize(

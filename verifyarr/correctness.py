@@ -703,6 +703,26 @@ def anchor_slope_breaks(samples: list[dict],
     return out
 
 
+# Per-cue noise: each anchor's own MAD, judged on full coverage only. Measured on correct
+# SH files over 15 models: full peaks at 0.295s; sampled medians over 5-6 anchors reach
+# 0.65s (turbo) -- so sampled only buys the full transcript. Jitter caught at 0.56s.
+JITTER_MIN_MAD_S = 0.5
+JITTER_MIN_ANCHORS = 5
+# Sampled trigger: below the verdict bar, it only buys the look.
+JITTER_ESCALATE_MAD_S = 0.4
+
+
+def anchor_jitter(samples: list[dict], min_anchors: int = JITTER_MIN_ANCHORS) -> Optional[float]:
+    """Median of the anchors' own MAD, or None under min_anchors.
+
+    Random per-cue timing has no offset to find: every clip median averages it away, so the
+    anchors' shifts look healthy. It survives only inside each anchor, as disagreement
+    between that clip's own lines."""
+    mads = [s["anchor"]["mad"] for s in samples
+            if s.get("anchor") and s["anchor"].get("mad") is not None]
+    return statistics.median(mads) if len(mads) >= min_anchors else None
+
+
 # A block remainder: k consecutive anchors whose median sits min_dev off the file's.
 # Measured on full-mode matrix rows: correct unflagged files peak at 0.86s (k=10),
 # the three silent half-repaired ones sit at 1.54-2.14s.

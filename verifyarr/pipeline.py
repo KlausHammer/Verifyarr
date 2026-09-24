@@ -41,6 +41,7 @@ from verifyarr.line_order import (
 from verifyarr.correctness import (
     evaluate_against_cached_transcripts, evaluate_against_full_transcript, significant_anchor_residuals, JobCancelled,
     whisper_cost, anchor_slope_breaks, anchor_run_offsets, get_duration_seconds,
+    anchor_jitter, JITTER_MIN_MAD_S, JITTER_ESCALATE_MAD_S,
     ANCHOR_RESYNC_INTERVAL_S, ANCHOR_SUSPECT_MIN_SAMPLES,
 )
 from verifyarr.fileops import backup_subtitle, quarantine_subtitle
@@ -1507,6 +1508,16 @@ def _fps_says_needs_full(collected: dict, cfg: Config) -> bool:
     return tilt is not None and abs(tilt) >= FPS_ANCHOR_TILT_MIN_S
 
 
+def _jitter_says_needs_full(collected: dict, cfg: Config) -> bool:
+    """Noisy sampled anchors buy the full transcript; the jitter verdict needs it."""
+    if cfg.whisper_mode != "sampled" or not cfg.escalate_sampled_to_full:
+        return False
+    if collected.get("full_coverage") or collected.get("skipped"):
+        return False
+    jit = anchor_jitter(collected.get("samples") or [])
+    return jit is not None and jit >= JITTER_ESCALATE_MAD_S
+
+
 def _screen_says_needs_full(collected: dict, cfg: Config, sync_blocks: Optional[int] = None) -> bool:
     """Whether a sampled run has seen enough to justify paying for the whole transcript.
 
@@ -1700,13 +1711,17 @@ def correctness_and_finish(video_path: Path, subtitle_path: Path, lang: Optional
             blocks = deferred.get("blocks_split_count") or row.get("sync_split_blocks")
             screen_hit = _screen_says_needs_full(collected, cfg, blocks)
             fps_hit = not screen_hit and _fps_says_needs_full(collected, cfg)
+            jitter_hit = not (screen_hit or fps_hit) and _jitter_says_needs_full(collected, cfg)
             if screen_hit:
                 log.info("%s: sampled clips disagree about the timing -- re-checking against "
                          "a full transcript", subtitle_path.name)
             elif fps_hit:
                 log.info("%s: pooled anchors show a global drift signature -- confirming "
                          "against a full transcript", subtitle_path.name)
-            if screen_hit or fps_hit:
+            elif jitter_hit:
+                log.info("%s: sampled anchors are noisy -- confirming against a full "
+                         "transcript", subtitle_path.name)
+            if screen_hit or fps_hit or jitter_hit:
                 with tempfile.TemporaryDirectory() as td2:
                     full = collect_samples_full(video_path, current_subs, lang, cfg, Path(td2),
                                                  conn, cancel_event=cancel_event)
@@ -2043,6 +2058,17 @@ def correctness_and_finish(video_path: Path, subtitle_path: Path, lang: Optional
                 # fall through to the "ok" branch below and be recorded as a passed check.
                 row["correctness_flag"] = "unknown"
                 row["note"] = (row["note"] + f" Correctness could not be determined: {result['flag']}.").strip()
+            elif (jit := anchor_jitter((result.get("samples") if result.get("full_coverage")
+                                        else escalated_samples) or [])) is not None \
+                    and jit >= JITTER_MIN_MAD_S:
+                # Detection only: per-cue noise has no offset to fix. Full coverage only.
+                row["correctness_flag"] = "SUSPECT"
+                row["note"] = (row["note"] + f" Cue timing is noisy: lines within one clip "
+                               f"disagree by {jit:.2f}s (median) -- no single offset fixes that; "
+                               "fetch a fresh subtitle.").strip()
+                row["auto_action"] = handle_suspect(subtitle_path, video_path, cfg, media_root, lang,
+                                                     bazarr_meta, history_index, cfg.correctness_auto_action,
+                                                     conn=conn, run_id=run_id, cancel_event=cancel_event)
             else:
                 row["correctness_flag"] = "ok"
                 if act_on_line_order:

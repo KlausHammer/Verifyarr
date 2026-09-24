@@ -131,6 +131,22 @@ class SilentBlockTests(unittest.TestCase):
                         or row.get("correctness_flag") == "SUSPECT",
                         f"silent again (note: {(row.get('note') or '')[:300]})")
 
+    def test_per_cue_jitter_warns(self):
+        """C_S02E03 full jitter: +/-1-3s per cue averages away in every anchor's
+        shift, so it went through silently (0.082). Only the spread inside each
+        anchor shows it (0.56s median)."""
+        row, rec = _run("C_S02E03", "jitter", mode="full")
+        self.assertLess(rec.get("frac_le_1_0s"), 0.90)
+        self.assertEqual(row.get("correctness_flag"), "SUSPECT")
+        self.assertIn("Cue timing is noisy", row.get("note") or "")
+
+    def test_jitter_rule_spares_the_noisiest_healthy_file(self):
+        """SH_S01E01 sampled uniform_neg: fixed, and the highest anchor spread of
+        any healthy row (0.445s). The jitter rule must not flag it."""
+        row, _ = _run("SH_S01E01", "uniform_neg", mode="sampled")
+        self.assertTrue((row.get("sync_status") or "").startswith("fixed"))
+        self.assertEqual(row.get("correctness_flag"), "ok", (row.get("note") or "")[-300:])
+
 
 @_needs_staging
 class StretchNoteTests(unittest.TestCase):

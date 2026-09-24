@@ -81,5 +81,26 @@ class FpsTriggerTests(unittest.TestCase):
             self.assertFalse(P._fps_says_needs_full(_drift_pool(), _cfg(fps_require_full_coverage=True)))
 
 
+def _mads(*mads):
+    return {"samples": [{"start": 60.0 * i, "anchor": {"shift": 0.1, "mad": m}}
+                        for i, m in enumerate(mads)]}
+
+
+class JitterTriggerTests(unittest.TestCase):
+    # turbo SH_S01E02 sampled, a correct file: 5 anchors, median 0.65. Buys the look only.
+    def test_noisy_sampled_anchors_escalate(self):
+        self.assertTrue(P._jitter_says_needs_full(_mads(0.17, 0.48, 0.65, 0.68, 0.76), _cfg()))
+
+    def test_healthy_sampled_anchors_stay_sampled(self):
+        # tiny SH sampled p50 0.26.
+        self.assertFalse(P._jitter_says_needs_full(_mads(0.2, 0.26, 0.3, 0.25, 0.35), _cfg()))
+
+    def test_full_coverage_or_switch_off_never_escalates(self):
+        noisy = _mads(0.6, 0.6, 0.6, 0.6, 0.6)
+        self.assertFalse(P._jitter_says_needs_full(dict(noisy, full_coverage=True), _cfg()))
+        self.assertFalse(P._jitter_says_needs_full(noisy, _cfg(escalate_sampled_to_full=False)))
+        self.assertFalse(P._jitter_says_needs_full(noisy, _cfg(whisper_mode="full")))
+
+
 if __name__ == "__main__":
     unittest.main()
