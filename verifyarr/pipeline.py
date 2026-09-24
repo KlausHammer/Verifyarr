@@ -914,6 +914,8 @@ def _resolve_ambiguous_sync(conn: sqlite3.Connection, video_path: Path, subtitle
         into paying for content-scoring/translation of every candidate, for nothing -- anchors
         were never going to be available to confirm ANY candidate there."""
         block_ranges = ambiguous.get("blocks_time_ranges") or []
+        if not block_ranges and ambiguous.get("single_block"):
+            block_ranges = [(0.0, float("inf"))]
         t = timing.get(key)
         if not block_ranges or not t:
             return False
@@ -1022,6 +1024,25 @@ def _resolve_ambiguous_sync(conn: sqlite3.Connection, video_path: Path, subtitle
                 near_best = [k for k in content_ok if scored[k]["avg_score"] >= best - CONTENT_SCORE_TIE_MARGIN]
                 winner = _reject_unproven_old(pick(near_best), near_best)
 
+    # Veto a timing-disproven winner: >= 3 own anchors > 2.5 s out while old is
+    # clearly better on the same clips AND on average. Never overrules a ramp
+    # rescue, nor a decisive content gap (anchors don't outvote clearly better
+    # text matching -- see CONTENT_SCORE_TIE_MARGIN above).
+    vetoed_from = None
+    if winner in ("new", "blocks") and not ramp_decided:
+        wt, ot = timing.get(winner), timing.get("old")
+        ws = (scored.get(winner) or {}).get("avg_score")
+        os_ = (scored.get("old") or {}).get("avg_score")
+        content_tie = (ws is not None and os_ is not None
+                       and abs(ws - os_) <= CONTENT_SCORE_TIE_MARGIN)
+        if wt is not None and ot is not None and content_tie:
+            bad = sum(1 for s in wt["regions"].values()
+                      if abs(s) > ANCHOR_SUSPECT_THRESHOLD_S)
+            if (bad >= 3 and clearly_better("old", winner)
+                    and ot["mean_abs_shift"] <= wt["mean_abs_shift"]):
+                vetoed_from, winner = winner, "old"
+                row["_vetoed_bad_fit"] = True
+
     def _describe(key: str) -> str:
         parts = []
         s = scored.get(key) or {}
@@ -1049,6 +1070,10 @@ def _resolve_ambiguous_sync(conn: sqlite3.Connection, video_path: Path, subtitle
                         f"rho {ramp_probe['rho']:+.2f}, {ramp_probe['keep_frac']:.0%} on the line), "
                         f"so the single-offset fit was kept for the rate fix below{via}.")
         row["_ramp_rescued"] = ramp_probe
+    if vetoed_from is not None:
+        note_suffix += (f" Veto: '{vetoed_from}' disproven by its own anchors "
+                        f"({bad} clips > {ANCHOR_SUSPECT_THRESHOLD_S:g}s out) while the "
+                        f"{base_name} measures clearly better -- kept the original.")
     structural_note = " line count changed significantly — check the file manually." if ambiguous.get("structural") else ""
 
     def _synthetic(key: str) -> dict:
@@ -1873,6 +1898,23 @@ def correctness_and_finish(video_path: Path, subtitle_path: Path, lang: Optional
                 row["correctness_avg_score"] = round(result["avg_score"], 3) if result["avg_score"] is not None else None
                 row["correctness_audio_lang"] = result.get("audio_lang")
                 row["correctness_samples"] = result.get("samples")
+            if row.pop("_vetoed_bad_fit", False):
+                # Anchors disproved alass' fit; the original was kept unwritten.
+                # Flagged, not silently kept: the file alass moved is suspect.
+                row["correctness_flag"] = "SUSPECT"
+                row["note"] = (row["note"] + " Fetch a fresh subtitle.").strip()
+                row["line_order_fixed"] = 0
+                row["line_order_flagged"] = len(result.get("line_issues") or []) \
+                    + len(result.get("line_flagged") or []) \
+                    if isinstance(result, dict) else 0
+                row["auto_action"] = handle_suspect(
+                    subtitle_path, video_path, cfg, media_root, lang,
+                    bazarr_meta, history_index, cfg.correctness_auto_action,
+                    conn=conn, run_id=run_id, cancel_event=cancel_event)
+                row["whisper_cost"] = _row_cost(row)
+                update_state(conn, video_path, subtitle_path, row, run_id=run_id,
+                             media_root=media_root)
+                return row
 
             # A 24fps subtitle on 23.976fps audio (or the reverse) drifts ~1s per 17
             # minutes -- content-correct everywhere, so every branch below says "ok"
