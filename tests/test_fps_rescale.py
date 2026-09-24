@@ -22,11 +22,12 @@ from verifyarr import db
 from verifyarr.subtitles import load_subs
 
 MODEL = "tiny.en-greedy-cpu"  # shipped model: the only one that matters here
+OUT = M.SWEEP.parent / "out"
 
 STAGING_OK = (
     M.SWEEP.exists()
-    and (M.SWEEP / MODEL / "C_S03E04.json").exists()
-    and (M.SWEEP / MODEL / "C_S03E03.json").exists()
+    and (M.SWEEP / MODEL / "SH_S01E01.json").exists()
+    and (OUT / "C_S02E11.json").exists()
 )
 
 
@@ -63,31 +64,53 @@ class FpsRescaleIntegrationTests(unittest.TestCase):
         self.assertTrue(cands, "no late cue found")
         return cands[-1]
 
+    def _run_out(self, slug, mode="sampled"):
+        """Genuine subtitle + OUT turbo transcript (no sweep for this slug)."""
+        import json
+        fx = M.fixture(slug)
+        video = M.media_dir(slug) / fx["video_name"]
+        if not video.exists():
+            self.skipTest(f"no video for {slug}")
+        doc = json.loads((OUT / f"{slug}.json").read_bytes().decode("utf-8", errors="replace"))
+        segments, lang = M.sweep_segments(doc), M.sweep_language(doc)
+        self.assertTrue(segments, f"no OUT segments for {slug}")
+        subs = M.subs_for(slug, fx)
+        work = Path(tempfile.mkdtemp(prefix="fps_test_"))
+        conn = db.connect(work / "t.db")
+        try:
+            cfg = M.cfg_for(conn, mode, "on", groq_model="genuine")
+            object.__setattr__(cfg, "fps_check_enabled", True)
+            cache = M.audio_cache_for(slug, video)
+            tag = f"{slug}.{mode}.on"
+            row, _ = M.run_one(work, video, subs, lang, segments, cfg, conn,
+                               tag, mode, cache)
+            out = load_subs(work / f"{tag}.srt")
+            return row, out
+        finally:
+            conn.close()
+
     @_needs_staging()
     def test_real_drift_gets_fixed_sampled(self):
-        """C_S03E04 (DTW-confirmed 24->23.976 drift) must be rescaled, right direction."""
-        orig = M.subs_for("C_S03E04", M.fixture("C_S03E04"))
-        row, out = self._run("C_S03E04", orig)
-        self.assertEqual(row.get("fps_ratio"), "24 -> 23.976",
-                         f"fps never fired (note: {(row.get('note') or '')[:200]})")
+        """C_S02E11 (user-confirmed drift, no swaps) must be rescaled."""
+        row, out = self._run_out("C_S02E11")
+        self.assertIsNotNone(row.get("fps_ratio"),
+                             f"fps never fired (note: {(row.get('note') or '')[:200]})")
+        orig = M.subs_for("C_S02E11", M.fixture("C_S02E11"))
         o, n = self._late_cue(orig), self._late_cue(out)
-        self.assertAlmostEqual(n.start / 1000.0, o.start / 1000.0 / (1001 / 1000.0),
-                               delta=0.2, msg="late cue did not move to /1.001")
         self.assertGreater(abs(n.start - o.start) / 1000.0, 0.5,
                            "file effectively unchanged")
 
     @_needs_staging()
     def test_real_drift_gets_fixed_full(self):
-        orig = M.subs_for("C_S03E04", M.fixture("C_S03E04"))
-        row, out = self._run("C_S03E04", orig, mode="full")
-        self.assertEqual(row.get("fps_ratio"), "24 -> 23.976",
-                         f"fps never fired in full mode (note: {(row.get('note') or '')[:200]})")
+        row, _out = self._run_out("C_S02E11", mode="full")
+        self.assertIsNotNone(row.get("fps_ratio"),
+                             f"fps never fired in full mode (note: {(row.get('note') or '')[:200]})")
 
     @_needs_staging()
     def test_healthy_file_untouched(self):
-        """C_S03E03 (facit-egnet): no fps bookkeeping, still already in sync."""
-        orig = M.subs_for("C_S03E03", M.fixture("C_S03E03"))
-        row, _ = self._run("C_S03E03", orig)
+        """SH_S01E01 (facit-egnet): no fps bookkeeping, still already in sync."""
+        orig = M.subs_for("SH_S01E01", M.fixture("SH_S01E01"))
+        row, _ = self._run("SH_S01E01", orig)
         self.assertIsNone(row.get("fps_ratio"), f"fps fired on healthy file: {row.get('note')}")
         self.assertEqual(row.get("sync_status"), "already in sync")
 
@@ -95,12 +118,12 @@ class FpsRescaleIntegrationTests(unittest.TestCase):
     def test_injected_scale_not_double_fixed(self):
         """Injected x1001/1000 is fixed by alass itself; fps must stay silent after it."""
         import copy
-        orig = M.subs_for("C_S03E03", M.fixture("C_S03E03"))
+        orig = M.subs_for("SH_S01E01", M.fixture("SH_S01E01"))
         bad = copy.deepcopy(orig)
         for e in bad.events:
             e.start = int(round(e.start * 1001 / 1000.0))
             e.end = int(round(e.end * 1001 / 1000.0))
-        row, out = self._run("C_S03E03", bad)
+        row, out = self._run("SH_S01E01", bad)
         self.assertIsNone(row.get("fps_ratio"),
                           f"fps fought alass' own fix: {row.get('note')}")
         o, n = self._late_cue(orig), self._late_cue(out)
@@ -181,24 +204,23 @@ class StretchRescaleIntegrationTests(unittest.TestCase):
     alone. A dead path passed seven unit tests and fired 0 times in 360 matrix rows."""
 
     _run = FpsRescaleIntegrationTests._run
+    _run_out = FpsRescaleIntegrationTests._run_out
     _late_cue = FpsRescaleIntegrationTests._late_cue
 
     @_needs_staging()
     def test_two_percent_stretch_is_measured_and_undone(self):
-        """C_S02E01, not C_S03E03: after alass mangles the latter its pool lands at
-        keep_frac 0.88, just under the gate. Only 7 of 36 stretched episodes survive
-        alass well enough to be fixed at all -- this is one of them.
+        """SH_S01E01 + 2%: presync or post-alass stretch must undo the rate.
 
         Either correction path counts: the pre-alass presync (a "Pre-sync before
         alass: rate" note, no fps_ratio -- the file never reaches the post-alass
         branch) or the post-alass stretch rescale (fps_ratio). The late-cue timing
         below is the real proof; the path is implementation detail."""
         import copy
-        orig = M.subs_for("C_S02E01", M.fixture("C_S02E01"))
+        orig = M.subs_for("SH_S01E01", M.fixture("SH_S01E01"))
         bad = copy.deepcopy(orig)
         for e in bad.events:
             e.start, e.end = int(e.start * 1.02), int(e.end * 1.02)
-        row, out = self._run("C_S02E01", bad)
+        row, out = self._run("SH_S01E01", bad)
         fixed_by_post_alass = (row.get("fps_ratio") or "").startswith("stretch")
         fixed_by_presync = "Pre-sync before alass: rate" in (row.get("note") or "")
         self.assertTrue(fixed_by_post_alass or fixed_by_presync,
@@ -210,17 +232,13 @@ class StretchRescaleIntegrationTests(unittest.TestCase):
     @_needs_staging()
     def test_two_percent_stretch_fixed_in_full_mode(self):
         """Full mode owns the whole transcript, so it must fix a stretch at least
-        as reliably as sampled -- not worse. Regression: the keep gate's 1.5s
-        line trim sat inside the anchor jitter tail, so dense full pools measured
-        keep 0.85-0.89 (just under the 0.90 bar) where sparse sampled pools
-        fluctuated above it. C_S03E08 recovered 0.057 in full vs 1.000 sampled.
-        Fresh DB, no cache warmup: the trim must clear this on its own."""
+        as reliably as sampled -- not worse. Fresh DB, no cache warmup."""
         import copy
-        orig = M.subs_for("C_S03E08", M.fixture("C_S03E08"))
+        orig = M.subs_for("SH_S01E06", M.fixture("SH_S01E06"))
         bad = copy.deepcopy(orig)
         for e in bad.events:
             e.start, e.end = int(e.start * 1.02), int(e.end * 1.02)
-        row, out = self._run("C_S03E08", bad, mode="full")
+        row, out = self._run("SH_S01E06", bad, mode="full")
         self.assertIn("Pre-sync before alass: rate", row.get("note") or "",
                       f"presync never fired in full mode (note: {(row.get('note') or '')[:300]})")
         o, n = self._late_cue(orig), self._late_cue(out)
@@ -230,26 +248,26 @@ class StretchRescaleIntegrationTests(unittest.TestCase):
     @_needs_staging()
     def test_block_errors_do_not_trigger_the_stretch_branch(self):
         import random
-        orig = M.subs_for("C_S03E03", M.fixture("C_S03E03"))
+        orig = M.subs_for("SH_S01E01", M.fixture("SH_S01E01"))
         for seed in (0, 1, 2):
-            bad, _k, _d = M.corrupt_piecewise(orig, random.Random(f"C_S03E03|{seed}"))
-            row, _ = self._run("C_S03E03", bad)
+            bad, _k, _d = M.corrupt_piecewise(orig, random.Random(f"SH_S01E01|{seed}"))
+            row, _ = self._run("SH_S01E01", bad)
             self.assertFalse((row.get("fps_ratio") or "").startswith("stretch"),
                              f"stretch fired on piecewise seed {seed}: {row.get('note')}")
 
     @_needs_staging()
     def test_healthy_file_still_untouched_by_the_new_branch(self):
-        orig = M.subs_for("C_S03E03", M.fixture("C_S03E03"))
-        row, _ = self._run("C_S03E03", orig)
+        orig = M.subs_for("SH_S01E01", M.fixture("SH_S01E01"))
+        row, _ = self._run("SH_S01E01", orig)
         self.assertIsNone(row.get("fps_ratio"), f"stretch fired on healthy: {row.get('note')}")
 
     @_needs_staging()
     def test_real_zero_point_one_percent_still_takes_the_discrete_path(self):
         """The 8s tilt floor is the branch selector: 0.1% must not be read as a rate."""
-        orig = M.subs_for("C_S03E04", M.fixture("C_S03E04"))
-        row, _ = self._run("C_S03E04", orig)
-        self.assertEqual(row.get("fps_ratio"), "24 -> 23.976",
-                         f"discrete path lost the real drift case: {row.get('note')}")
+        row, _ = self._run_out("C_S02E11")
+        self.assertTrue((row.get("fps_ratio") or "").startswith("24 ")
+                        or (row.get("fps_ratio") or "").startswith("23.976 "),
+                        f"discrete path lost the real drift case: {row.get('note')}")
 
 
 

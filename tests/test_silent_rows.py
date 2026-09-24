@@ -31,7 +31,7 @@ STAGING_OK = (
 _needs_staging = unittest.skipUnless(STAGING_OK, "needs whisper_gpu_staging sweep data")
 
 
-def _run(slug, scenario, mode="sampled", audio="on"):
+def _run(slug, scenario, mode="sampled", audio="on", jitter_lo_hi=None):
     """Matrix-faithful single row: seeded corruption through M.run_one on a fresh DB."""
     fx = M.fixture(slug)
     video = M.media_dir(slug) / fx["video_name"]
@@ -40,8 +40,11 @@ def _run(slug, scenario, mode="sampled", audio="on"):
     lang, segments = M.audio_evidence(MODEL, slug, fx)
     assert segments, f"no sweep segments for {slug}"
     orig = M.subs_for(slug, fx)
-    corrupted, _, _ = M.SCENARIOS[scenario](
-        copy.deepcopy(orig), random.Random(f"matrix-v1:{slug}:{scenario}"))
+    rng = random.Random(f"matrix-v1:{slug}:{scenario}")
+    if jitter_lo_hi is not None:
+        corrupted, _, _ = M.corrupt_jitter(copy.deepcopy(orig), rng, *jitter_lo_hi)
+    else:
+        corrupted, _, _ = M.SCENARIOS[scenario](copy.deepcopy(orig), rng)
     work = Path(tempfile.mkdtemp(prefix="silent_"))
     conn = db.connect(work / "t.db")
     try:
@@ -59,9 +62,9 @@ def _run(slug, scenario, mode="sampled", audio="on"):
 @_needs_staging
 class SilentBlockTests(unittest.TestCase):
     def test_resync_remainder_warns(self):
-        """C_S03E03 full: resync fikser naesten (0.882) men fejlplacerer snit --
+        """SH_S01E06 piecewise_c full: resync fikser naesten men ikke helt --
         resten skal advare, ikke glide stille igennem. Forbedringen beholdes."""
-        row, rec = _run("C_S03E03", "piecewise", mode="full")
+        row, rec = _run("SH_S01E06", "piecewise_c", mode="full")
         self.assertEqual(row.get("correctness_flag"), "SUSPECT",
                          f"silent again (note: {(row.get('note') or '')[:300]})")
         self.assertIn("anchor region(s)", row.get("sync_status") or "",
@@ -132,10 +135,10 @@ class SilentBlockTests(unittest.TestCase):
                         f"silent again (note: {(row.get('note') or '')[:300]})")
 
     def test_per_cue_jitter_warns(self):
-        """C_S02E03 full jitter: +/-1-3s per cue averages away in every anchor's
-        shift, so it went through silently (0.082). Only the spread inside each
-        anchor shows it (0.56s median)."""
-        row, rec = _run("C_S02E03", "jitter", mode="full")
+        """SH_S01E01 full jitter +/-0.5-1.5s: averages away in every anchor's
+        shift, so only the spread inside each anchor shows it (0.53s)."""
+        row, rec = _run("SH_S01E01", "jitter", mode="full",
+                        jitter_lo_hi=(0.5, 1.5))
         self.assertLess(rec.get("frac_le_1_0s"), 0.90)
         self.assertEqual(row.get("correctness_flag"), "SUSPECT")
         self.assertIn("Cue timing is noisy", row.get("note") or "")

@@ -78,6 +78,21 @@ SWAP_MARGIN = 0.15
 # motivated this fallback (S03E01 #69: displayed 0.56 vs swapped 1.0, a 0.44 gap).
 SEQUENCE_MARGIN = 0.1
 
+# Many swapped lines: timing-independent rate gate. Clean files rate 0-0.067
+# (turbo, 28 files) / 0-0.014 (tiny, 6 SH); swap files 0.147-0.54 / 0.209-0.49.
+# 0.10 sits in both gaps. 5/10 bars exclude n=6 (max 2 swapped, 0.05) and
+# unmeasurable files (wrong content, <10 decided).
+SWAP_GATE_RATE_MIN = 0.10
+SWAP_GATE_MIN_SWAPPED = 5
+SWAP_GATE_MIN_DECIDED = 10
+# Sampled trigger: this many free heuristic hits buys the full-transcript look.
+# Catches all 24 swap files (min 7) and 25 % synthetic (min 6); 3 clean files
+# buy a wasted look (SH_S01E02 already escalates via its 174 s gap).
+SWAP_GATE_ESCALATE_HEURISTIC = 6
+# Text-match window for the timing-independent scan (either side of cue start).
+SWAP_GATE_MATCH_WINDOW_S = 90.0
+SWAP_GATE_MIN_OVERLAP = 0.5
+
 
 
 def _split_two_lines(text: str) -> Optional[tuple[str, str]]:
@@ -309,6 +324,59 @@ def _meets_swap_threshold(confirmed: int, checked: int, cfg: Config) -> bool:
     if checked == 0 or confirmed < cfg.line_order_swap_threshold_min:
         return False
     return confirmed / checked >= cfg.line_order_swap_threshold_pct
+
+
+def swap_gate_evidence(subs, segments: list[dict]) -> dict:
+    """Timing-independent swap rate over every two-line cue.
+
+    Each cue finds its own best-matching transcript segment by TEXT within
+    +-90 s of its own start (order-blind bag of words), then the sequence
+    verdict judges L1/L2 order there. Cue timing never gates the match, so a
+    mistimed file still measures -- unlike _judge_order's cue-timed windows,
+    which are blind before sync. Returns {"swapped", "checked", "rate"}."""
+    segs = sorted(segments, key=lambda s: s["start"])
+    stoks = [tokenize(s.get("text") or "") for s in segs]
+    sw = ok = 0
+    for e in subs.events:
+        sp = _split_two_lines(e.text)
+        if not sp:
+            continue
+        l1, l2 = sp
+        if _dash_prefixed(l1) or _dash_prefixed(l2):
+            continue
+        t1, t2 = tokenize(l1), tokenize(l2)
+        if len(t1) < 2 or len(t2) < 2:
+            continue
+        c = e.start / 1000.0
+        best = None
+        for i, s in enumerate(segs):
+            if abs(s["start"] - c) > SWAP_GATE_MATCH_WINDOW_S:
+                continue
+            denom = len(t1 | t2)
+            sc = len((t1 | t2) & stoks[i]) / denom if denom else 0.0
+            if best is None or sc > best[0]:
+                best = (sc, i)
+        if not best or best[0] < SWAP_GATE_MIN_OVERLAP:
+            continue
+        i = best[1]
+        text = " ".join(s["text"] for s in segs[max(0, i - 1):i + 2])
+        v = _sequence_order_verdict(text, l1, l2)
+        if v is True:
+            sw += 1
+        elif v is False:
+            ok += 1
+    checked = sw + ok
+    return {"swapped": sw, "checked": checked,
+            "rate": round(sw / checked, 3) if checked else None}
+
+
+def swap_gate_trips(ev: dict) -> bool:
+    """Rate >= 0.10 with >= 5 swapped of >= 10 decided: fetch a fresh file."""
+    if ev.get("checked", 0) < SWAP_GATE_MIN_DECIDED:
+        return False
+    if ev.get("swapped", 0) < SWAP_GATE_MIN_SWAPPED:
+        return False
+    return (ev.get("rate") or 0.0) >= SWAP_GATE_RATE_MIN
 
 
 def _covered_positions(slots: list) -> list[float]:

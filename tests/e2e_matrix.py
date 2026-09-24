@@ -576,6 +576,32 @@ def corrupt_drift_swap(subs, rng, rate=0.02, n=6):
     return out, kept, {"rate": rate, "swapped": s_detail["swapped"]}
 
 
+def corrupt_many_swaps(subs, rng, frac=0.25):
+    """25 % of two-line cues reversed: the many-swaps file the gate must flag.
+
+    Cap-signal-tripping targets first (like corrupt_swap), then any two-line
+    cue to reach the fraction. Deterministic, no rng needed."""
+    from verifyarr.line_order import (_split_two_lines, _cap_signal,
+                                      heuristic_candidates, all_two_line_events)
+    out = copy.deepcopy(subs)
+    already = {c[0] for c in heuristic_candidates(out)}
+    cands = [i for i, e in enumerate(out.events)
+             if (p := _split_two_lines(e.text)) and _cap_signal(p[1], p[0])
+             and i not in already]
+    n = max(1, int(len(all_two_line_events(out)) * frac))
+    if len(cands) < n:
+        extra = [i for i, e in enumerate(out.events)
+                 if _split_two_lines(e.text) and i not in already
+                 and i not in cands]
+        cands = cands + [i for i in extra if i not in cands]
+    targets = cands[:n] if len(cands) <= n else [
+        cands[int(k * len(cands) / n)] for k in range(n)]
+    for i in targets:
+        l1, l2 = _split_two_lines(out.events[i].text)
+        out.events[i].text = f"{l2}\\N{l1}"
+    return out, None, {"swapped": targets}
+
+
 # The real PAL speed-up: 24fps film run at 25fps, +4.167%. This is the most common
 # rate error in the wild and the one alass guesses at unprompted (it applied 25/24 to a
 # 2% stretch and turned it into 6.25% -- rapport 10.5). corrupt_drift's 2% matches no
@@ -816,6 +842,7 @@ SCENARIOS = {
     "dropdup": corrupt_dropdup, "jitter": corrupt_jitter,
     "wrong_episode": corrupt_wrong_episode,
     "swap": corrupt_swap, "drift_swap": corrupt_drift_swap,
+    "many_swaps": corrupt_many_swaps,
     # Old name kept so historical commands and jsonl comparisons still resolve.
     "gap": corrupt_missing_middle,
 }
@@ -1064,7 +1091,7 @@ def main(argv=None):
                             if name in DETECTION_SCENARIOS:
                                 rec["detected"] = (rec.get("flag") != "ok"
                                                    and bool(rec.get("untouched")))
-                            if name in ("swap", "drift_swap"):
+                            if name in ("swap", "drift_swap", "many_swaps"):
                                 rec["swap"] = swap_recovery(ref, after_ev, detail.get("swapped", []))
                                 rec["swap_detail"] = swap_index_detail(
                                     detail.get("swapped", []), rec["lo_fixed_indices"])
@@ -1142,7 +1169,7 @@ def build_summary(results, models, slugs, scen, modes=None, audios=None):
             entry["untouched"] = len(un)
         if name in DETECTION_SCENARIOS:
             entry["detected"] = sum(1 for r in rows if r.get("detected"))
-        if name in ("swap", "drift_swap"):
+        if name in ("swap", "drift_swap", "many_swaps"):
             sw = [r["swap"] for r in rows if "swap" in r and r["swap"].get("frac_restored") is not None]
             if sw:
                 entry["mean_frac_restored"] = round(

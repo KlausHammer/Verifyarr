@@ -33,7 +33,7 @@ from verifyarr import db
 MODEL = "tiny.en-greedy-cpu"
 STAGING_OK = (
     M.SWEEP.exists()
-    and (M.SWEEP / MODEL / "C_S03E10.json").exists()
+    and (M.SWEEP / MODEL / "SH_S01E01.json").exists()
     and (M.SWEEP / MODEL / "C_S02E01.json").exists()
 )
 _needs_staging = unittest.skipUnless(STAGING_OK, "needs whisper_gpu_staging sweep data")
@@ -68,10 +68,9 @@ def _run(slug, scenario, mode="full", audio="on"):
 @_needs_staging
 class PresyncBaselineTests(unittest.TestCase):
     def test_presync_winner_is_written_not_reported_in_sync(self):
-        """C_S03E10 uniform_neg full: presync +45s er korrekt, alass' 2-blok
-        forkastes. Baseline skal paa disken som fixed, ikke "already in sync"
-        paa en 45s-forkert fil."""
-        row, rec = _run("C_S03E10", "uniform_neg", mode="full")
+        """SH_S01E01 uniform_neg full: baseline-sejr skal paa disken som fixed,
+        ikke "already in sync" paa en 45s-forkert fil."""
+        row, rec = _run("SH_S01E01", "uniform_neg", mode="full")
         self.assertTrue((row.get("sync_status") or "").startswith("fixed"),
                          f"presync forkastet uden skrivning: {row.get('sync_status')} "
                          f"(note: {(row.get('note') or '')[:300]})")

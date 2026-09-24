@@ -23,21 +23,25 @@ from verifyarr import db, pipeline
 from verifyarr.subtitles import load_subs
 
 MODEL = "tiny.en-greedy-cpu"
-STAGING_OK = (M.SWEEP.exists() and (M.SWEEP / MODEL / "C_S03E03.json").exists())
+STAGING_OK = (M.SWEEP.exists()
+                and (M.SWEEP / MODEL / "SH_S01E01.json").exists()
+                and (M.SWEEP / MODEL / "SH_S01E02.json").exists()
+                and (M.SWEEP / MODEL / "SH_S01E03.json").exists())
 _needs_staging = unittest.skipUnless(STAGING_OK, "needs whisper_gpu_staging sweep data")
 
 
 @_needs_staging
 class ScreenOrderTests(unittest.TestCase):
-    SLUG = "C_S03E03"
+    SLUG = "SH_S01E01"
 
-    def _run(self, subs, mode="sampled"):
+    def _run(self, subs, mode="sampled", slug=None):
         """Returns (row, resulting subs, alass_calls, screen)."""
-        fx = M.fixture(self.SLUG)
-        video = M.media_dir(self.SLUG) / fx["video_name"]
+        slug = slug or self.SLUG
+        fx = M.fixture(slug)
+        video = M.media_dir(slug) / fx["video_name"]
         if not video.exists():
             self.skipTest("no video")
-        lang, segments = M.audio_evidence(MODEL, self.SLUG, fx)
+        lang, segments = M.audio_evidence(MODEL, slug, fx)
         work = Path(tempfile.mkdtemp(prefix="screen_"))
         conn = db.connect(work / "t.db")
         calls = []
@@ -68,8 +72,9 @@ class ScreenOrderTests(unittest.TestCase):
             pipeline.screen_pair = real_screen
             conn.close()
 
-    def _orig(self):
-        return M.subs_for(self.SLUG, M.fixture(self.SLUG))
+    def _orig(self, slug=None):
+        slug = slug or self.SLUG
+        return M.subs_for(slug, M.fixture(slug))
 
     def test_healthy_file_ends_at_the_screen_and_alass_never_runs(self):
         """The saving that matters on a slow machine: no alass means no full audio extraction."""
@@ -87,23 +92,23 @@ class ScreenOrderTests(unittest.TestCase):
     def test_stretch_is_corrected_before_alass_sees_it(self):
         """alass alone reads a 2% stretch as a PAL conversion and triples the error. Handed a
         file whose rate is already right it produces one clean block instead."""
-        bad = copy.deepcopy(self._orig())
+        bad = copy.deepcopy(self._orig("SH_S01E02"))
         for e in bad.events:
             e.start, e.end = int(e.start * 1.02), int(e.end * 1.02)
-        row, out, calls, screen = self._run(bad)
+        row, out, calls, screen = self._run(bad, slug="SH_S01E02")
         self.assertEqual(screen["verdict"], "needs_sync")
         self.assertIn("Pre-sync before alass: rate", row.get("note") or "")
         self.assertTrue(calls, "alass should still run after the pre-sync")
-        orig = self._orig()
+        orig = self._orig("SH_S01E02")
         d = [abs(a.start - b.start) / 1000.0 for a, b in zip(orig.events, out.events)]
         within = sum(1 for x in d if x <= 1.0) / len(d)
         self.assertGreater(within, 0.9, f"only {within:.0%} of cues landed within 1s")
 
     def test_uniform_shift_is_measured_and_pre_applied(self):
-        bad = copy.deepcopy(self._orig())
+        bad = copy.deepcopy(self._orig("SH_S01E02"))
         for e in bad.events:
             e.start, e.end = e.start + 45000, e.end + 45000
-        row, out, _calls, screen = self._run(bad)
+        row, out, _calls, screen = self._run(bad, mode="full", slug="SH_S01E02")
         self.assertEqual(screen["verdict"], "needs_sync")
         self.assertIn("Pre-sync before alass: offset", row.get("note") or "")
 
@@ -136,10 +141,10 @@ class ScreenOrderTests(unittest.TestCase):
         last screened file's audio plus everything charged since. Regression guard --
         screen_pair measures a delta and hands it to the row instead."""
         from verifyarr import correctness
-        orig = self._orig()
+        orig = self._orig("SH_S01E03")  # no >=120 s gap: must not escalate
         correctness.whisper_cost.reset()
         correctness.whisper_cost.fresh_s = 999.0     # another file's spend, already charged
-        row, _out, _calls, screen = self._run(copy.deepcopy(orig))
+        row, _out, _calls, screen = self._run(copy.deepcopy(orig), slug="SH_S01E03")
         self.assertIsNotNone(screen.get("cost"), "screen_pair reported no cost of its own")
         self.assertLess(row["whisper_cost"]["fresh_audio_s"], 900.0,
                         f"this row billed for another file's audio: {row['whisper_cost']}")

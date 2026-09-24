@@ -37,6 +37,7 @@ from verifyarr.sync_engine import (
 )
 from verifyarr.line_order import (
     heuristic_candidates, collect_samples, collect_samples_full, finalize_line_order, cache_key_for,
+    swap_gate_evidence, swap_gate_trips, SWAP_GATE_ESCALATE_HEURISTIC,
 )
 from verifyarr.correctness import (
     evaluate_against_cached_transcripts, evaluate_against_full_transcript, significant_anchor_residuals, JobCancelled,
@@ -1548,6 +1549,27 @@ def _missing_middle_hit(conn: sqlite3.Connection, video_path: Path, subs, cfg: C
     return missing_middle_evidence(subs, segments)
 
 
+def _swap_says_needs_full(collected: dict, subs, cfg: Config) -> bool:
+    """Many heuristic hits buy the full-transcript look; the verdict needs it."""
+    if cfg.whisper_mode != "sampled" or not cfg.escalate_sampled_to_full:
+        return False
+    if collected.get("full_coverage") or collected.get("skipped"):
+        return False
+    return len(heuristic_candidates(subs)) >= SWAP_GATE_ESCALATE_HEURISTIC
+
+
+def _swap_gate_hit(conn: sqlite3.Connection, video_path: Path, subs, cfg: Config) -> Optional[dict]:
+    """Timing-independent swap rate from the cached full transcript, else None."""
+    provider, model = full_transcript_cache_key(cfg)
+    cached = db.get_full_transcript_cache(conn, video_path, stt_provider=provider, stt_model=model)
+    if cached is None or not cached.get("segments"):
+        return None
+    segments = _drop_repetition_loops(_drop_nonspeech(cached["segments"]))
+    if not segments:
+        return None
+    return swap_gate_evidence(subs, segments)
+
+
 def _screen_says_needs_full(collected: dict, cfg: Config, sync_blocks: Optional[int] = None) -> bool:
     """Whether a sampled run has seen enough to justify paying for the whole transcript.
 
@@ -1744,6 +1766,8 @@ def correctness_and_finish(video_path: Path, subtitle_path: Path, lang: Optional
             jitter_hit = not (screen_hit or fps_hit) and _jitter_says_needs_full(collected, cfg)
             gap_hit = not (screen_hit or fps_hit or jitter_hit) \
                 and _missing_middle_says_needs_full(collected, current_subs, cfg)
+            swap_hit = not (screen_hit or fps_hit or jitter_hit or gap_hit) \
+                and _swap_says_needs_full(collected, current_subs, cfg)
             if screen_hit:
                 log.info("%s: sampled clips disagree about the timing -- re-checking against "
                          "a full transcript", subtitle_path.name)
@@ -1756,7 +1780,10 @@ def correctness_and_finish(video_path: Path, subtitle_path: Path, lang: Optional
             elif gap_hit:
                 log.info("%s: subtitle has a long cue gap -- confirming against a full "
                          "transcript", subtitle_path.name)
-            if screen_hit or fps_hit or jitter_hit or gap_hit:
+            elif swap_hit:
+                log.info("%s: many suspected swapped lines -- confirming against a full "
+                         "transcript", subtitle_path.name)
+            if screen_hit or fps_hit or jitter_hit or gap_hit or swap_hit:
                 with tempfile.TemporaryDirectory() as td2:
                     full = collect_samples_full(video_path, current_subs, lang, cfg, Path(td2),
                                                  conn, cancel_event=cancel_event)
@@ -1794,6 +1821,33 @@ def correctness_and_finish(video_path: Path, subtitle_path: Path, lang: Optional
             row["correctness_audio_lang"] = result.get("audio_lang")
             row["correctness_samples"] = result.get("samples")
             swap_severity = result.get("swap_severity")
+
+            # Many swapped lines: SUSPECT before anything is written. Sync only
+            # moves cues; the text is identical across candidates, so this
+            # measures the file as-is. Deferred sync is dropped unwritten.
+            swap_ev = _swap_gate_hit(conn, video_path, current_subs, cfg)
+            if swap_ev is not None and swap_gate_trips(swap_ev):
+                had_deferred = row.pop("_ambiguous_sync", None) is not None
+                if had_deferred or not (row.get("sync_status") or "").startswith("fixed"):
+                    row["sync_status"] = "left unchanged (many swapped lines -- not corrected)"
+                    row["sync_max_shift_s"] = None
+                    row["sync_split_blocks"] = None
+                    row["sync_block_spread_s"] = None
+                row["correctness_flag"] = "SUSPECT"
+                row["note"] = (row["note"] + f" Many swapped lines ({swap_ev['swapped']} of "
+                               f"{swap_ev['checked']} tested) -- fetch a fresh subtitle.").strip()
+                row["line_order_fixed"] = 0
+                row["line_order_flagged"] = len(result.get("line_issues") or []) \
+                    + len(result.get("line_flagged") or [])
+                row["line_order_swap_rate"] = result.get("swap_rate")
+                row["auto_action"] = handle_suspect(
+                    subtitle_path, video_path, cfg, media_root, lang,
+                    bazarr_meta, history_index, cfg.correctness_auto_action,
+                    conn=conn, run_id=run_id, cancel_event=cancel_event)
+                row["whisper_cost"] = _row_cost(row)
+                update_state(conn, video_path, subtitle_path, row, run_id=run_id,
+                             media_root=media_root)
+                return row
 
             # A fix sync_pair deferred writing (an alass result held back together
             # with its alternative — see its own docstring) gets resolved HERE,

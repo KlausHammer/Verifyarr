@@ -34,7 +34,6 @@ MODEL = "tiny.en-greedy-cpu"
 STAGING_OK = (
     M.SWEEP.exists()
     and (M.SWEEP / MODEL / "SH_S01E01.json").exists()
-    and (M.SWEEP / MODEL / "C_S02E04.json").exists()
 )
 _needs_staging = unittest.skipUnless(STAGING_OK, "needs whisper_gpu_staging sweep data")
 
@@ -75,8 +74,8 @@ class DriftRampPipelineTests(unittest.TestCase):
                                 f"still broken: rec={rec.get('frac_le_1_0s')}")
 
     def test_short_episode_drift_offset_sampled(self):
-        """C_S02E04 drift_offset sampled: tynd pulje (16 pts), presync tavs."""
-        row, rec = _run("C_S02E04", "drift_offset")
+        """SH_S01E01 drift_offset sampled: rate + forsinkelse rettes."""
+        row, rec = _run("SH_S01E01", "drift_offset")
         self.assertIn("stretch", row.get("sync_status") or "",
                       f"no rate fix applied: {row.get('sync_status')}")
         self.assertGreaterEqual(rec.get("frac_le_1_0s"), 0.90,
@@ -122,9 +121,8 @@ class DriftRampPipelineTests(unittest.TestCase):
                         f"went silent: rec={rec.get('frac_le_1_0s')}")
 
     def test_presync_fixed_file_not_restretched(self):
-        """C_S02E01 uniform_neg full: presync ramte 1,0; alass' rate-skade
-        paa 'new' maa ikke udløse rescue (old verificerer 0,2s)."""
-        row, rec = _run("C_S02E01", "uniform_neg", mode="full")
+        """SH_S01E01 uniform_neg full: rent skift rettes uden rescue."""
+        row, rec = _run("SH_S01E01", "uniform_neg", mode="full")
         self.assertNotIn("Ramp rescue", row.get("note") or "")
         self.assertNotIn("stretch", row.get("sync_status") or "",
                          f"restretched a fixed file: {row.get('sync_status')}")
@@ -132,9 +130,8 @@ class DriftRampPipelineTests(unittest.TestCase):
                                 f"perfect fix smeared: rec={rec.get('frac_le_1_0s')}")
 
     def test_lucky_baseline_cut_not_rescued(self):
-        """C_S02E02 cut_version sampled: old's 0,3s er heldige klip i den gode
-        halvdel; den falske rampe + old-ok maa ikke udløse rescue."""
-        row, rec = _run("C_S02E02", "cut_version")
+        """SH_S01E02 cut_version sampled: falsk rampe maa ikke udløse rescue."""
+        row, rec = _run("SH_S01E02", "cut_version")
         self.assertNotIn("Ramp rescue", row.get("note") or "")
         self.assertNotIn("stretch", row.get("sync_status") or "",
                          f"rate fix on a cut file: {row.get('sync_status')}")

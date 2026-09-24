@@ -59,7 +59,11 @@ from sync_verification import (
 # kind of already-broken input that would confound a scenario meant to test a KNOWN, injected
 # break (see the original audit's S02E03 finding, which hit the same confound). Used instead in
 # RealWorldFixTests below, unmodified, as a genuine "does the app fix a real problem" case.
-HEALTHY_SLUGS = ["S02E01", "S02E06", "S02E10", "S02E15"]
+#
+# S02E01/S02E06/S02E10 are NOT here either: their subtitles carry many swapped
+# lines (14-18 of 37-45 tested), so the swap gate now flags them fetch-fresh
+# instead of syncing them -- correct policy, but not a sync-test baseline.
+HEALTHY_SLUGS = ["S02E15"]
 
 SCRATCH_DIR = Path(tempfile.gettempdir()) / "verifyarr-sync-verification"
 
@@ -332,7 +336,10 @@ class SyncVerificationCase(unittest.TestCase):
         SCRATCH_DIR.mkdir(parents=True, exist_ok=True)
         cls.conn = db.connect(SCRATCH_DIR / "scratch.db")
         cls.cfg = _test_config(cls.conn)
-        cls.fixtures = {slug: load_fixture(slug) for slug in HEALTHY_SLUGS}
+        # HEALTHY_SLUGS drives the sync loops; the explicit-slug tests below
+        # need their own fixtures too (wrong-episode pairs, clamp probe).
+        need = list(dict.fromkeys(list(HEALTHY_SLUGS) + ["S02E01", "S02E06"]))
+        cls.fixtures = {slug: load_fixture(slug) for slug in need}
         cls.ground_truths = {slug: build_ground_truth(f) for slug, f in cls.fixtures.items()}
 
     def _run(self, slug: str, subs, lang: str = "en"):
