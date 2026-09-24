@@ -43,7 +43,12 @@ from verifyarr.correctness import (
     whisper_cost, anchor_slope_breaks, anchor_run_offsets, get_duration_seconds,
     anchor_jitter, JITTER_MIN_MAD_S, JITTER_ESCALATE_MAD_S,
     ANCHOR_RESYNC_INTERVAL_S, ANCHOR_SUSPECT_MIN_SAMPLES,
+    cue_gaps, missing_middle_evidence, MISSING_MIDDLE_ESCALATE_GAP_S,
+    full_transcript_cache_key,
 )
+# Same filters full_transcript_for_check applies on the way out: the cache holds raw
+# segments, and an unfiltered repetition loop reads as a scene's worth of dialogue.
+from verifyarr.generate import _drop_nonspeech, _drop_repetition_loops
 from verifyarr.fileops import backup_subtitle, quarantine_subtitle
 from verifyarr.bazarr import (
     bazarr_map_path, bazarr_blacklist, remediate_suspect, remediate_without_history,
@@ -1518,6 +1523,31 @@ def _jitter_says_needs_full(collected: dict, cfg: Config) -> bool:
     return jit is not None and jit >= JITTER_ESCALATE_MAD_S
 
 
+def _missing_middle_says_needs_full(collected: dict, subs, cfg: Config) -> bool:
+    """A bare cue gap >= 120s buys the full transcript; the gap verdict needs it."""
+    if cfg.whisper_mode != "sampled" or not cfg.escalate_sampled_to_full:
+        return False
+    if collected.get("full_coverage") or collected.get("skipped"):
+        return False
+    return bool(cue_gaps(subs, MISSING_MIDDLE_ESCALATE_GAP_S))
+
+
+def _mmss(sec: float) -> str:
+    return f"{int(sec // 60)}:{int(sec % 60):02d}"
+
+
+def _missing_middle_hit(conn: sqlite3.Connection, video_path: Path, subs, cfg: Config) -> Optional[dict]:
+    """Gap evidence from the cached full transcript, or None without one."""
+    provider, model = full_transcript_cache_key(cfg)
+    cached = db.get_full_transcript_cache(conn, video_path, stt_provider=provider, stt_model=model)
+    if cached is None or not cached.get("segments"):
+        return None
+    segments = _drop_repetition_loops(_drop_nonspeech(cached["segments"]))
+    if not segments:
+        return None
+    return missing_middle_evidence(subs, segments)
+
+
 def _screen_says_needs_full(collected: dict, cfg: Config, sync_blocks: Optional[int] = None) -> bool:
     """Whether a sampled run has seen enough to justify paying for the whole transcript.
 
@@ -1712,6 +1742,8 @@ def correctness_and_finish(video_path: Path, subtitle_path: Path, lang: Optional
             screen_hit = _screen_says_needs_full(collected, cfg, blocks)
             fps_hit = not screen_hit and _fps_says_needs_full(collected, cfg)
             jitter_hit = not (screen_hit or fps_hit) and _jitter_says_needs_full(collected, cfg)
+            gap_hit = not (screen_hit or fps_hit or jitter_hit) \
+                and _missing_middle_says_needs_full(collected, current_subs, cfg)
             if screen_hit:
                 log.info("%s: sampled clips disagree about the timing -- re-checking against "
                          "a full transcript", subtitle_path.name)
@@ -1721,7 +1753,10 @@ def correctness_and_finish(video_path: Path, subtitle_path: Path, lang: Optional
             elif jitter_hit:
                 log.info("%s: sampled anchors are noisy -- confirming against a full "
                          "transcript", subtitle_path.name)
-            if screen_hit or fps_hit or jitter_hit:
+            elif gap_hit:
+                log.info("%s: subtitle has a long cue gap -- confirming against a full "
+                         "transcript", subtitle_path.name)
+            if screen_hit or fps_hit or jitter_hit or gap_hit:
                 with tempfile.TemporaryDirectory() as td2:
                     full = collect_samples_full(video_path, current_subs, lang, cfg, Path(td2),
                                                  conn, cancel_event=cancel_event)
@@ -2066,6 +2101,19 @@ def correctness_and_finish(video_path: Path, subtitle_path: Path, lang: Optional
                 row["note"] = (row["note"] + f" Cue timing is noisy: lines within one clip "
                                f"disagree by {jit:.2f}s (median) -- no single offset fixes that; "
                                "fetch a fresh subtitle.").strip()
+                row["auto_action"] = handle_suspect(subtitle_path, video_path, cfg, media_root, lang,
+                                                     bazarr_meta, history_index, cfg.correctness_auto_action,
+                                                     conn=conn, run_id=run_id, cancel_event=cancel_event)
+            elif (mm := _missing_middle_hit(conn, video_path, current_subs, cfg)
+                    if (result.get("full_coverage") or escalated_samples is not None)
+                    else None) is not None:
+                # Detection only: the surviving timings are correct, nothing to fix.
+                row["correctness_flag"] = "SUSPECT"
+                row["note"] = (row["note"] +
+                               f" Subtitle has no lines for {mm['gap_end'] - mm['gap_start']:.0f} s "
+                               f"at {_mmss(mm['gap_start'])}-{_mmss(mm['gap_end'])} where the audio "
+                               f"has {mm['speech_s']:.0f} s of speech -- part of the episode is "
+                               "missing; fetch a fresh subtitle.").strip()
                 row["auto_action"] = handle_suspect(subtitle_path, video_path, cfg, media_root, lang,
                                                      bazarr_meta, history_index, cfg.correctness_auto_action,
                                                      conn=conn, run_id=run_id, cancel_event=cancel_event)

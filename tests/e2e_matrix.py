@@ -36,8 +36,8 @@ Scenarios (23, all in the default set):
   cut_version    the real cut mismatch: middle cues gone AND everything after
                  300s too early. Doing nothing is the WRONG answer here.
   missing_middle 5-minute middle chunk of cues deleted, surviving timings
-                 correct. Doing nothing IS the right answer. (Was called
-                 "gap"; the old name still resolves.)
+                 correct. Flagging it WITHOUT rewriting IS the right answer.
+                 (Was called "gap"; the old name still resolves.)
   ROBUSTNESS AND SAFETY -- nothing to fix, everything to not break
   dropdup        5% of cues dropped, 5% duplicated in place.
   jitter         per-cue +/-1..3s noise. Pass = no worse, not recovery.
@@ -154,6 +154,8 @@ TIMING_SCENARIOS = {"uniform", "uniform_neg", "uniform_p03", "uniform_m07", "uni
 # inventing one is worse than reporting the file.
 NO_CHANGE_SCENARIOS = {"clean", "missing_middle", "gap", "dropdup", "jitter",
                        "wrong_episode", "uniform_p03"}
+# Detection-only: untouched is half the answer; the file must ALSO be flagged.
+DETECTION_SCENARIOS = {"missing_middle"}
 DEFAULT_SCENARIOS = ["clean",
                      "uniform", "uniform_neg", "uniform_p03", "uniform_m07",
                      "uniform_p15", "uniform_m5",
@@ -516,9 +518,8 @@ def corrupt_missing_middle(subs, rng, gap_seconds=300.0):
 
     Named for what it is. It was called "gap (cut version)", which it is not: a cut
     version also moves everything after the cut (see corrupt_cut_version). Here the
-    right answer is to do nothing, and the thing under test is robustness to a subtitle
-    with a hole in it -- 5 minutes where Whisper hears dialogue and the file has none.
-    Returns kept indices."""
+    right answer is to flag the hole and leave the file alone -- 5 minutes where
+    Whisper hears dialogue and the file has none. Returns kept indices."""
     out = copy.deepcopy(subs)
     dur = max(e.end for e in out.events) / 1000.0
     g0, g1 = dur * 0.4, dur * 0.4 + gap_seconds
@@ -615,7 +616,7 @@ def corrupt_cut_version(subs, rng, cut_seconds=300.0):
     cut are absent, AND every cue after it sits cut_seconds too EARLY, because in the
     broadcast that material started that much sooner. So this is a genuine two-block
     problem with a 300s step in the middle -- alass' home ground, and a case where
-    doing nothing (the right answer for missing_middle) is the wrong answer."""
+    leaving the file alone (half the answer for missing_middle) is the wrong answer."""
     out = copy.deepcopy(subs)
     dur = max(e.end for e in out.events) / 1000.0
     c0, c1 = dur * 0.4, dur * 0.4 + cut_seconds
@@ -1060,6 +1061,9 @@ def main(argv=None):
                                     (_s.startswith("already in sync")
                                      or _s.startswith("left unchanged"))
                                     and rec["lo_fixed"] in (None, 0))
+                            if name in DETECTION_SCENARIOS:
+                                rec["detected"] = (rec.get("flag") != "ok"
+                                                   and bool(rec.get("untouched")))
                             if name in ("swap", "drift_swap"):
                                 rec["swap"] = swap_recovery(ref, after_ev, detail.get("swapped", []))
                                 rec["swap_detail"] = swap_index_detail(
@@ -1136,6 +1140,8 @@ def build_summary(results, models, slugs, scen, modes=None, audios=None):
         if name == "clean":
             un = [r for r in rows if r.get("untouched")]
             entry["untouched"] = len(un)
+        if name in DETECTION_SCENARIOS:
+            entry["detected"] = sum(1 for r in rows if r.get("detected"))
         if name in ("swap", "drift_swap"):
             sw = [r["swap"] for r in rows if "swap" in r and r["swap"].get("frac_restored") is not None]
             if sw:

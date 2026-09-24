@@ -149,6 +149,46 @@ class SilentBlockTests(unittest.TestCase):
 
 
 @_needs_staging
+class MissingMiddleTests(unittest.TestCase):
+    def test_missing_middle_full_warns_without_rewriting(self):
+        """SH_S01E01 full missing_middle: 300s of cues gone, survivors correct.
+        Detection only: SUSPECT + untouched file, timings unchanged."""
+        row, _ = _run("SH_S01E01", "missing_middle", mode="full")
+        self.assertEqual(row.get("correctness_flag"), "SUSPECT",
+                         f"silent again (note: {(row.get('note') or '')[:300]})")
+        note = row.get("note") or ""
+        self.assertIn("part of the episode is missing", note)
+        self.assertRegex(note, r"no lines for \d+ s at \d+:\d\d-\d+:\d\d")
+        self.assertTrue((row.get("sync_status") or "").startswith(
+            ("already in sync", "left unchanged")),
+            f"must not rewrite (sync: {row.get('sync_status')})")
+        self.assertIn(row.get("line_order_fixed"), (None, 0))
+
+    def test_missing_middle_sampled_warns_without_rewriting(self):
+        """Same hole in sampled mode: the 300s cue gap alone buys the full
+        transcript, and the verdict is taken on that -- not on the 5 clips."""
+        row, _ = _run("SH_S01E01", "missing_middle", mode="sampled")
+        self.assertEqual(row.get("correctness_flag"), "SUSPECT",
+                         f"silent again (note: {(row.get('note') or '')[:300]})")
+        self.assertIn("part of the episode is missing", row.get("note") or "")
+        self.assertTrue((row.get("sync_status") or "").startswith(
+            ("already in sync", "left unchanged")),
+            f"must not rewrite (sync: {row.get('sync_status')})")
+        self.assertIn(row.get("line_order_fixed"), (None, 0))
+
+    def test_big_healthy_gap_sampled_stays_ok(self):
+        """SH_S01E02 clean sampled: natural 174s gap (1652-1826, credits music,
+        ~10 words). The gap trigger may buy the full transcript, but the file
+        must stay ok and untouched."""
+        row, rec = _run("SH_S01E02", "clean", mode="sampled")
+        self.assertEqual(row.get("correctness_flag"), "ok", (row.get("note") or "")[-300:])
+        self.assertTrue((row.get("sync_status") or "").startswith(
+            ("already in sync", "left unchanged")),
+            f"rewrote a healthy file (sync: {row.get('sync_status')})")
+        self.assertEqual(rec.get("frac_le_1_0s"), 1.0)
+
+
+@_needs_staging
 class StretchNoteTests(unittest.TestCase):
     def test_presync_note_survives_deferral(self):
         """SH_S01E06 full drift: presync fyrer, men alass gaar multiblok og

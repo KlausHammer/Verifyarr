@@ -723,6 +723,58 @@ def anchor_jitter(samples: list[dict], min_anchors: int = JITTER_MIN_ANCHORS) ->
     return statistics.median(mads) if len(mads) >= min_anchors else None
 
 
+# A missing middle: a cue gap holding a whole scene's dialogue. Healthy SH gaps
+# (6 episodes x 15 models, production-filtered transcripts) peak at 133 words /
+# 82.6s (base.en-q5_1, song scene); one credits stretch reaches 112.3s but only
+# 20 words (turbo-q5_0) -- seconds alone don't separate, words do. Injected 300s
+# cuts sit at 116-232s / 330-734 words. Both bars must clear, on full coverage;
+# 200 words sits midway (x1.5 over healthy, x1.65 under injected).
+MISSING_MIDDLE_MIN_GAP_S = 20.0
+MISSING_MIDDLE_MIN_SPEECH_S = 90.0
+MISSING_MIDDLE_MIN_WORDS = 200
+# Sampled trigger: a bare cue gap this long buys the full transcript (free signal,
+# no Whisper). Healthy SH has two (178s E01, 174s E02); they cost a look, not a flag.
+MISSING_MIDDLE_ESCALATE_GAP_S = 120.0
+
+
+def cue_gaps(subs, min_gap_s: float = MISSING_MIDDLE_MIN_GAP_S) -> list[tuple[float, float]]:
+    """(start, end) seconds of every between-cues hole >= min_gap_s."""
+    ev = sorted(subs.events, key=lambda e: e.start)
+    return [(a.end / 1000.0, b.start / 1000.0) for a, b in zip(ev, ev[1:])
+            if (b.start - a.end) / 1000.0 >= min_gap_s]
+
+
+def gap_speech(segments: list[dict], g0: float, g1: float) -> tuple[float, int]:
+    """(overlap seconds, words) of transcript segments in [g0, g1). Words count
+    segments starting inside (one utterance, one vote); seconds count overlap."""
+    secs, words = 0.0, 0
+    for s in segments:
+        try:
+            st, en = float(s["start"]), float(s["end"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        if en <= st:
+            continue
+        if min(en, g1) - max(st, g0) > 0:
+            secs += min(en, g1) - max(st, g0)
+        if g0 <= st < g1:
+            words += len((s.get("text") or "").split())
+    return secs, words
+
+
+def missing_middle_evidence(subs, segments: list[dict]) -> Optional[dict]:
+    """Loudest cue gap clearing both speech bars, or None. Segments must already
+    carry full_transcript_for_check's own filters (nonspeech + repetition loops):
+    unfiltered, one turbo loop hallucinated 653 words into a healthy gap."""
+    best = None
+    for g0, g1 in cue_gaps(subs):
+        secs, words = gap_speech(segments, g0, g1)
+        if secs >= MISSING_MIDDLE_MIN_SPEECH_S and words >= MISSING_MIDDLE_MIN_WORDS \
+                and (best is None or secs > best["speech_s"]):
+            best = {"gap_start": g0, "gap_end": g1, "speech_s": secs, "words": words}
+    return best
+
+
 # A block remainder: k consecutive anchors whose median sits min_dev off the file's.
 # Measured on full-mode matrix rows: correct unflagged files peak at 0.86s (k=10),
 # the three silent half-repaired ones sit at 1.54-2.14s.
