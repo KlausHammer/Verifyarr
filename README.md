@@ -5,8 +5,13 @@ Self-hosted subtitle sync + verification for a Plex/Bazarr library.
 1. **Syncs** every subtitle against its own video with [alass](https://github.com/kaegi/alass),
    which finds multiple sync points per file (handles mid-episode jumps, not just a global
    offset). `.srt`/`.ass`/`.ssa`/`.vtt`.
-2. **Checks the subtitle is actually right** — samples a few audio clips, transcribes them with
-   Whisper (Groq or OpenRouter), and compares the words against the subtitle at those timestamps.
+2. **Checks the subtitle is actually right** — samples audio clips, transcribes them with
+   Whisper (local whisper.cpp `tiny.en` on the CPU by default; Groq or OpenRouter optional), and
+   compares the words against the subtitle at those timestamps. A Silero VAD model ships in the
+   image and is on by default. Fixed on its own: constant offsets, framerate (23.976↔24),
+   PAL (24↔25) and any steady drift. Detected and flagged "fetch a fresh one" instead of
+   repaired: missing parts (middle, start, end), mistimed blocks, many swapped lines, per-line
+   noise, wrong episode.
 3. **Cleans up suspect files on its own**, if you turn it on: quarantine (never permanent
    deletion), tell Bazarr to blacklist the source, or have it fetch a replacement itself.
 4. **Generates a subtitle from scratch**, if you turn it on, for a video that has none at all —
@@ -25,8 +30,9 @@ docker compose up -d
 ```
 
 Open `http://your-server:8787`, create an admin password, then go through Settings: General
-(Root Folders), Correctness (a free [Groq](https://console.groq.com/keys) API key), Bazarr
-(URL + API key), Automation, Scheduling. Generate (see below) is optional and off by default.
+(Root Folders), Correctness (local Whisper works out of the box; a free
+[Groq](https://console.groq.com/keys) API key is optional), Bazarr (URL + API key),
+Automation, Scheduling. Generate (see below) is optional and off by default.
 
 Forgot the admin password? `docker exec -it verifyarr python3 verifyarr.py reset-password`.
 

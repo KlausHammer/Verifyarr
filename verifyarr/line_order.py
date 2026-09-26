@@ -804,13 +804,12 @@ def collect_samples_full(video_path: Path, subs, sub_lang: Optional[str], cfg: C
 
 def finalize_line_order(collected: dict, cfg: Config, cancel_event=None, compute_swap_severity: bool = True) -> dict:
     """Turns a collect_samples() result — fresh, or reused from a previous run's cache (see
-    pipeline.py) — into the actual verdict. Every Whisper-confirmed swap gets auto-fixed
-    (line_issues) -- swapping two lines back is a safe, mechanical fix regardless of how many
-    lines are affected; a real content problem (wrong episode, bad translation) is caught
-    separately, by the ordinary correctness score, which is what decides whether the file is
-    trustworthy at all (see pipeline.py). swap_severity is Whisper's own confirmed rate, purely
-    informational (noted when auto-fixing) -- compute_swap_severity=False (line-order feature not
-    turned on) just skips computing it, nothing else.
+    pipeline.py) — into the actual verdict. Whisper-confirmed swaps (line_issues) are
+    REPORTED, not repaired (pipeline._apply_line_order); many of them send the whole file
+    to fetch-fresh (pipeline's swap gate). A real content problem (wrong episode, bad
+    translation) is caught separately, by the ordinary correctness score. swap_severity is
+    Whisper's own confirmed rate, purely informational -- compute_swap_severity=False
+    (line-order feature not turned on) just skips computing it, nothing else.
 
     Returns the same shape correctness_check does ({"avg_score", "samples", "flag", "audio_lang"}),
     plus:

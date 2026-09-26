@@ -1605,10 +1605,16 @@ def _cache_json(collected: dict) -> str:
     })
 
 
-def _block_repair_parts(sync_status: Optional[str]) -> int:
-    """Parts in a block repair on disk ("N sync block(s)" / "N anchor region(s)"), else 0."""
-    m = re.search(r"(\d+) (?:sync block|anchor region)\(s\)", sync_status or "")
-    return int(m.group(1)) if m else 0
+def _block_repair_parts(row: dict) -> int:
+    """Parts in the block repair on disk, else 0: from the status ("N sync block(s)" /
+    "N anchor region(s)"), or sync_split_blocks when alass wrote blocks directly."""
+    status = row.get("sync_status") or ""
+    m = re.search(r"(\d+) (?:sync block|anchor region)\(s\)", status)
+    if m:
+        return int(m.group(1))
+    if re.fullmatch(r"fixed \(Δ[^,()]*s\)", status):
+        return row.get("sync_split_blocks") or 0
+    return 0
 
 
 # A block repair is never verified line by line: its edges land where the anchors
@@ -1627,18 +1633,38 @@ def _mmss(sec: float) -> str:
     return f"{int(sec // 60)}:{int(sec % 60):02d}"
 
 
-def _missing_middle_hit(conn: sqlite3.Connection, video_path: Path, subs, cfg: Config) -> Optional[dict]:
-    """Gap evidence (mid, head, tail) from the cached full transcript, or None."""
+_FULL_SEG_MEMO: dict = {}
+
+
+def _cached_full_segments(conn: sqlite3.Connection, video_path: Path, cfg: Config
+                          ) -> Optional[list]:
+    """The cached full transcript, filtered like full_transcript_for_check, or None.
+    Filtered once per transcript: 4-6 callers per file each re-ran the filters and
+    re-logged their warnings."""
     provider, model = full_transcript_cache_key(cfg)
     cached = db.get_full_transcript_cache(conn, video_path, stt_provider=provider, stt_model=model)
     if cached is None or not cached.get("segments"):
         return None
-    segments = _drop_repetition_loops(_drop_nonspeech(cached["segments"]))
+    raw = cached["segments"]
+    key = (str(video_path), provider, model, len(raw),
+           json.dumps(raw[:2] + raw[-2:], sort_keys=True, default=str))
+    if key not in _FULL_SEG_MEMO:
+        if len(_FULL_SEG_MEMO) >= 8:
+            _FULL_SEG_MEMO.pop(next(iter(_FULL_SEG_MEMO)))
+        _FULL_SEG_MEMO[key] = _drop_repetition_loops(_drop_nonspeech(raw))
+    return _FULL_SEG_MEMO[key]
+
+
+def _missing_middle_hit(conn: sqlite3.Connection, video_path: Path, subs, cfg: Config) -> Optional[dict]:
+    """Gap evidence (mid, head, tail) from the cached full transcript, or None."""
+    segments = _cached_full_segments(conn, video_path, cfg)
+    if segments is None:
+        return None
     if not segments:
         return None
     return missing_middle_evidence(subs, segments,
                                    duration_s=get_duration_seconds(video_path),
-                                   min_words=missing_middle_min_words(model))
+                                   min_words=missing_middle_min_words(full_transcript_cache_key(cfg)[1]))
 
 
 def _block_runs_hit(conn: sqlite3.Connection, video_path: Path, subs, cfg: Config,
@@ -1648,11 +1674,9 @@ def _block_runs_hit(conn: sqlite3.Connection, video_path: Path, subs, cfg: Confi
     proven_block: the file already had a block (resync or alass block fit), so a
     short remainder counts -- 3 lines in a row 5s+ out. Not used otherwise: one
     healthy SH file carries such a triple (repeated line, -13.7s)."""
-    provider, model = full_transcript_cache_key(cfg)
-    cached = db.get_full_transcript_cache(conn, video_path, stt_provider=provider, stt_model=model)
-    if cached is None or not cached.get("segments"):
+    segments = _cached_full_segments(conn, video_path, cfg)
+    if segments is None:
         return []
-    segments = _drop_repetition_loops(_drop_nonspeech(cached["segments"]))
     if not segments:
         return []
     pts = dense_anchor_points(subs, segments)
@@ -1681,11 +1705,9 @@ def _block_runs_hit(conn: sqlite3.Connection, video_path: Path, subs, cfg: Confi
 
 def _dense_pool(conn: sqlite3.Connection, video_path: Path, subs, cfg: Config) -> list:
     """(audio, cue) for every matched line against the cached full transcript."""
-    provider, model = full_transcript_cache_key(cfg)
-    cached = db.get_full_transcript_cache(conn, video_path, stt_provider=provider, stt_model=model)
-    if cached is None or not cached.get("segments"):
+    segments = _cached_full_segments(conn, video_path, cfg)
+    if segments is None:
         return []
-    segments = _drop_repetition_loops(_drop_nonspeech(cached["segments"]))
     return [(float(a), float(c)) for smp in dense_anchor_points(subs, segments)
             for a, c in smp["anchor_points"]]
 
@@ -1720,7 +1742,8 @@ def _try_rate_from_baseline(conn: sqlite3.Connection, video_path: Path, subtitle
     apply_fps_rescale(coarse, ratio, offset=offset)
     full = [(a, c / ratio - offset) for a, c in _dense_pool(conn, video_path, coarse, cfg)]
     p_full = _dense_probe(full)
-    if p_full is not None and p_full["keep_frac"] >= p["keep_frac"] - 0.05:
+    if (p_full is not None and rate_gates_pass(p_full)
+            and p_full["keep_frac"] >= p["keep_frac"] - 0.05):
         ratio, offset, name = snap_rate(full, p_full)
     fixed = _copy.deepcopy(baseline)
     worst = apply_fps_rescale(fixed, ratio, offset=offset)
@@ -1775,11 +1798,9 @@ def _swap_says_needs_full(collected: dict, subs, cfg: Config) -> bool:
 
 def _swap_gate_hit(conn: sqlite3.Connection, video_path: Path, subs, cfg: Config) -> Optional[dict]:
     """Timing-independent swap rate from the cached full transcript, else None."""
-    provider, model = full_transcript_cache_key(cfg)
-    cached = db.get_full_transcript_cache(conn, video_path, stt_provider=provider, stt_model=model)
-    if cached is None or not cached.get("segments"):
+    segments = _cached_full_segments(conn, video_path, cfg)
+    if segments is None:
         return None
-    segments = _drop_repetition_loops(_drop_nonspeech(cached["segments"]))
     if not segments:
         return None
     return swap_gate_evidence(subs, segments)
@@ -2140,6 +2161,9 @@ def correctness_and_finish(video_path: Path, subtitle_path: Path, lang: Optional
                 current_subs, fps_note, fps_info = fps_fix
                 row["fps_ratio"] = fps_info["name"]
                 row["sync_max_shift_s"] = round(fps_info["worst"], 2)
+                # The rate fix replaced alass' file: its block fields no longer apply.
+                row["sync_split_blocks"] = None
+                row["sync_block_spread_s"] = None
                 # Says the file was REWRITTEN. Without it a framerate fix leaves sync_status on
                 # "already in sync", and every "healthy files untouched" count -- the matrix's
                 # included -- reads a rewritten file as untouched.
@@ -2404,7 +2428,7 @@ def correctness_and_finish(video_path: Path, subtitle_path: Path, lang: Optional
                 row["auto_action"] = handle_suspect(subtitle_path, video_path, cfg, media_root, lang,
                                                      bazarr_meta, history_index, cfg.correctness_auto_action,
                                                      conn=conn, run_id=run_id, cancel_event=cancel_event)
-            elif (parts := _block_repair_parts(row.get("sync_status"))) >= 2:
+            elif (parts := _block_repair_parts(row)) >= 2:
                 row["correctness_flag"] = "SUSPECT"
                 row["note"] = (row["note"] + BLOCK_REPAIR_NOTE.format(n=parts)).strip()
                 row["auto_action"] = handle_suspect(subtitle_path, video_path, cfg, media_root, lang,

@@ -33,6 +33,8 @@ import subprocess
 from pathlib import Path
 from typing import Optional
 
+from verifyarr.procprio import wrap_low_priority
+
 log = logging.getLogger("verifyarr")
 
 # Below this much speech inside a clip_seconds window, the slot is silence for
@@ -45,6 +47,13 @@ SCAN_STEP_SECONDS = 5.0
 
 # (video_path, mtime, size) -> [(start, end)] for binary VAD runs this process did.
 _VAD_MEMO: dict = {}
+_VAD_MEMO_MAX = 64  # the webapp lives for weeks; a sweep touches thousands of files
+
+
+def _memo_put(key, value) -> None:
+    if len(_VAD_MEMO) >= _VAD_MEMO_MAX:
+        _VAD_MEMO.pop(next(iter(_VAD_MEMO)))
+    _VAD_MEMO[key] = value
 
 
 def _valid_interval(start: float, end: float) -> Optional[tuple[float, float]]:
@@ -171,6 +180,9 @@ def timeline_for_video(conn, video_path: Path, cfg
     1. Full-transcript cache segments (whole-file map, any provider).  whole_file=True
     2. Cached clip segments, offset by their clip starts.               whole_file=False
     3. Silero binary run when vad_binary/vad_model are configured.      whole_file=True
+       WAV input only (the binary reads WAV): for a video this source is off, and that
+       is deliberate -- decoding it first changed no matrix class on SH (p50 12 better,
+       12 worse, sampled), so placement is not worth an extra decode before alass.
     (None, False) when nothing is available: callers keep dialogue-density behavior.
 
     The second value is the whole point of the pair, and leaving it out was a real bug.
@@ -240,7 +252,9 @@ def run_vad_timeline(video_path: Path, binary: str, model: str,
     cmd = [binary, "-vm", model, "-f", str(video_path), "-t", str(max(1, threads)),
            "-vspd", "100", "-vsd", "50"]
     try:
-        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+        # Low priority like every other heavy call (N100 shares the box).
+        proc = subprocess.run(wrap_low_priority(cmd), capture_output=True, text=True,
+                              timeout=timeout)
     except (OSError, subprocess.TimeoutExpired) as e:
         log.warning("VAD run failed for %s: %s", video_path, e)
         return None
@@ -267,7 +281,7 @@ def run_vad_timeline(video_path: Path, binary: str, model: str,
                     "treating as confirmed silence; check the binary's output format if that "
                     "seems wrong", video_path)
     if memo:  # temp WAVs are not memoized: their paths die with the run
-        _VAD_MEMO[key] = intervals
+        _memo_put(key, intervals)
     return intervals
 
 
@@ -297,7 +311,7 @@ def speech_timeline(video_path: Path, cfg) -> Optional[list[tuple[float, float]]
             out = (run_vad_timeline(wav, binary, model, memo=False)
                    if sync_engine.extract_audio_wav(Path(video_path), wav) else None)
     if out is not None:  # a failure is retried next time, not remembered
-        _VAD_MEMO[key] = out
+        _memo_put(key, out)
     return out
 
 

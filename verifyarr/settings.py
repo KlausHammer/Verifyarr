@@ -669,7 +669,7 @@ SETTING_DEFS: dict = {
     "correctness.openrouter_llm_model_fallback": ("correctness", "str", ""),
     # Local whisper.cpp transcription — see Config.use_local_whisper's docstring for exactly
     # what this does and doesn't replace. Binary defaults to where the Dockerfile bakes it; model
-    # defaults to WHISPER_MODEL (docker-compose env var, default "small.en-q5_1" — see
+    # defaults to WHISPER_MODEL (docker-compose env var, default "tiny.en" — see
     # DEFAULT_LOCAL_WHISPER_MODEL_PATH), downloaded on first use if it isn't already baked into
     # the image. Only relevant once use_local_whisper is turned on.
     "correctness.use_local_whisper":     ("correctness", "bool", True),

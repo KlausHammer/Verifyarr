@@ -65,7 +65,10 @@ class ScreenOrderTests(unittest.TestCase):
             tmp = work / "s.srt"
             subs.save(str(tmp))
             with M.patch_whisper_full(lang, segments), M.patch_sampled_transcription(lang, segments):
-                row = pipeline.process_pair(video, tmp, "en", cfg, conn)
+                # Staging WAV like the matrix: alass and VAD skip the 30s decode.
+                row = pipeline.process_pair(video, tmp, "en", cfg, conn,
+                                            audio_cache=M.audio_cache_for(slug, video),
+                                            audio_cache_dir=work)
             return row, load_subs(tmp), calls, captured.get("screen")
         finally:
             pipeline.run_alass = real_alass

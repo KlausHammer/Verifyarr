@@ -196,9 +196,6 @@ class RandomScenarioTests(unittest.TestCase):
         self.assertEqual(d["cut_end_s"] - d["cut_start_s"], 300.0)
 
 
-if __name__ == "__main__":
-    unittest.main()
-
 
 def _pts(*pairs):
     """(audio_s, shift_s) -> one sample carrying raw anchor_points."""
@@ -231,3 +228,7 @@ class PointRunTests(unittest.TestCase):
         base = [(t, 0.1) for t in range(0, 600, 20)]
         block = [(1000 + 15 * i, -4.4) for i in range(3)]
         self.assertEqual(C.anchor_point_runs(_pts(*(base + block))), [])
+
+
+if __name__ == "__main__":
+    unittest.main()

@@ -25,5 +25,18 @@ class PrivateKeyTests(unittest.TestCase):
         json.dumps(row)
 
 
+
+class BlockRepairPartsTests(unittest.TestCase):
+    def test_parts_from_status_and_direct_write(self):
+        from verifyarr.pipeline import _block_repair_parts as parts
+        self.assertEqual(parts({"sync_status": "fixed (Δ9.0s, 3 sync block(s))"}), 3)
+        self.assertEqual(parts({"sync_status": "fixed (Δ9.0s, 2 anchor region(s))"}), 2)
+        # sync_pair's direct multi-block write (no verification possible).
+        self.assertEqual(parts({"sync_status": "fixed (Δ12.0s)", "sync_split_blocks": 3}), 3)
+        self.assertEqual(parts({"sync_status": "fixed (Δ12.0s)", "sync_split_blocks": 1}), 1)
+        # A rate fix replaced the file: alass' old block count no longer describes it.
+        self.assertEqual(parts({"sync_status": "fixed (rate 25/24, up to 99.1s)",
+                                "sync_split_blocks": 3}), 0)
+
 if __name__ == "__main__":
     unittest.main()
