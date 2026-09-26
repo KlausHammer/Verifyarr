@@ -17,7 +17,7 @@ Scenarios (23, all in the default set):
   uniform        global +45s shift (the old e2e_after.py scenario).
   uniform_neg    -45s: the same size the other way, which the anchor window
                  does NOT see symmetrically (+clip_seconds+30s vs -30s).
-  uniform_p03    +0.3s -- under the 0.5s decision bar; nothing may move.
+  uniform_p03    +0.3s -- just over the 0.25s decision bar; expected to move.
   uniform_m07    -0.7s -- just over it, and negative.
   uniform_p15    +1.5s, uniform_m5  -5s: the rest of the boundary sweep.
   RATE
@@ -159,7 +159,7 @@ TIMING_SCENARIOS = {"uniform", "uniform_neg", "uniform_p03", "uniform_m07", "uni
 # wrong_episode and jitter are the sharp ones: there is no correction to make, and
 # inventing one is worse than reporting the file.
 NO_CHANGE_SCENARIOS = {"clean", "missing_middle", "gap", "dropdup", "jitter",
-                       "wrong_episode", "uniform_p03",
+                       "wrong_episode",
                        "hole_rand0", "hole_rand1", "hole_rand2", "hole_rand3",
                        "trunc_start_rand0", "trunc_start_rand1",
                        "trunc_end_rand0", "trunc_end_rand1"}
