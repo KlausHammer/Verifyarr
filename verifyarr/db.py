@@ -257,6 +257,24 @@ CREATE TABLE IF NOT EXISTS vad_timeline_cache (
 );
 CREATE INDEX IF NOT EXISTS ix_vad_timeline_cache_created ON vad_timeline_cache(created_at);
 
+-- Sampled-mode gap probes (pipeline._missing_middle_probe): Whisper segments for the clips
+-- that cover a subtitle's bare gaps, ~4.6 min of audio per episode. Its own table, NOT
+-- video_transcript_cache: every clip there is fed to the sync candidates as evidence.
+CREATE TABLE IF NOT EXISTS gap_probe_cache (
+    video_path    TEXT NOT NULL,
+    clip_start    REAL NOT NULL,   -- rounded to ms
+    clip_seconds  REAL NOT NULL,
+    audio_lang    TEXT NOT NULL,   -- '' when none was passed
+    stt_provider  TEXT NOT NULL,
+    stt_model     TEXT NOT NULL,
+    video_mtime   REAL,
+    video_size    INTEGER,
+    segments_json TEXT NOT NULL,   -- Whisper's segments, relative to clip_start
+    created_at    TEXT NOT NULL,
+    PRIMARY KEY (video_path, clip_start, clip_seconds, audio_lang, stt_provider, stt_model)
+);
+CREATE INDEX IF NOT EXISTS ix_gap_probe_cache_created ON gap_probe_cache(created_at);
+
 -- One row per (video, language) generation attempt (see generate.run_generation_batch). Two
 -- jobs, both of which need memory ACROSS runs:
 --   1. A failed attempt is not retried for generate.RETRY_COOLDOWN_HOURS. Generation is capped
@@ -1355,6 +1373,49 @@ def prune_full_transcript_cache(conn: sqlite3.Connection, max_age_days: int = 90
     transcript is far more expensive to regenerate (a whole movie's worth of Whisper calls, not
     one 30s clip), so there's more to lose by pruning it aggressively."""
     return _prune_older_than(conn, "video_full_transcript_cache", "created_at", max_age_days)
+
+
+def _gap_probe_key(video_path: Path, start: float, dur: float, audio_lang: Optional[str],
+                   stt_provider: str, stt_model: str) -> tuple:
+    return (str(video_path), round(float(start), 3), round(float(dur), 3), audio_lang or "",
+            stt_provider or "", stt_model or "")
+
+
+def get_gap_probe_cache(conn: sqlite3.Connection, video_path: Path, start: float, dur: float,
+                        audio_lang: Optional[str], stt_provider: str,
+                        stt_model: str) -> Optional[list[dict]]:
+    """Cached segments for one gap-probe clip of this video (same bytes, same model), or None."""
+    row = conn.execute(
+        "SELECT video_mtime, video_size, segments_json FROM gap_probe_cache WHERE video_path = ? "
+        "AND clip_start = ? AND clip_seconds = ? AND audio_lang = ? AND stt_provider = ? "
+        "AND stt_model = ?",
+        _gap_probe_key(video_path, start, dur, audio_lang, stt_provider, stt_model)).fetchone()
+    if row is None:
+        return None
+    mtime, size = _video_signature(video_path)
+    if mtime is None or row["video_size"] != size or abs((row["video_mtime"] or 0.0) - mtime) > 1:
+        return None
+    return json.loads(row["segments_json"])
+
+
+def save_gap_probe_cache(conn: sqlite3.Connection, video_path: Path, start: float, dur: float,
+                         audio_lang: Optional[str], stt_provider: str, stt_model: str,
+                         segments: list[dict]) -> None:
+    mtime, size = _video_signature(video_path)
+    if mtime is None:
+        return
+    conn.execute(
+        "INSERT OR REPLACE INTO gap_probe_cache (video_path, clip_start, clip_seconds, audio_lang, "
+        "stt_provider, stt_model, video_mtime, video_size, segments_json, created_at) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        _gap_probe_key(video_path, start, dur, audio_lang, stt_provider, stt_model)
+        + (mtime, size, json.dumps(segments), datetime.now(timezone.utc).isoformat()),
+    )
+    conn.commit()
+
+
+def prune_gap_probe_cache(conn: sqlite3.Connection, max_age_days: int = 30) -> int:
+    return _prune_older_than(conn, "gap_probe_cache", "created_at", max_age_days)
 
 
 def prune_vad_timeline_cache(conn: sqlite3.Connection, max_age_days: int = 90) -> int:

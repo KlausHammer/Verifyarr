@@ -1565,11 +1565,31 @@ def _min_words(cfg: Config) -> int:
     return missing_middle_min_words(full_transcript_cache_key(cfg)[1])
 
 
-def _missing_middle_probe(video_path: Path, subs, cfg: Config, audio_lang: Optional[str],
-                          cancel_event=None) -> Optional[dict]:
-    """Sampled mode: transcribe only the bare gaps and judge them like the full path."""
+def _gap_clip_segments(conn: sqlite3.Connection, video_path: Path, start: float, dur: float,
+                       cfg: Config, audio_lang: Optional[str], tmp_dir: Path,
+                       cancel_event=None) -> list[dict]:
+    """One gap-probe clip's Whisper segments (relative), from gap_probe_cache when this
+    video, clip and model were probed before. A failed transcription is not cached."""
     from verifyarr import line_order as _lo
     from verifyarr import correctness as _corr
+    provider, model = full_transcript_cache_key(cfg)
+    segs = db.get_gap_probe_cache(conn, video_path, start, dur, audio_lang, provider, model)
+    if segs is not None:
+        _corr.whisper_cost.cached_s += dur
+        return segs
+    res = _lo._extract_and_transcribe(video_path, start, dur, cfg, audio_lang, tmp_dir,
+                                      cancel_event=cancel_event)
+    _corr.whisper_cost.fresh_s += dur
+    if res is None:
+        return []
+    segs = res.get("segments") or []
+    db.save_gap_probe_cache(conn, video_path, start, dur, audio_lang, provider, model, segs)
+    return segs
+
+
+def _missing_middle_probe(conn: sqlite3.Connection, video_path: Path, subs, cfg: Config,
+                          audio_lang: Optional[str], cancel_event=None) -> Optional[dict]:
+    """Sampled mode: transcribe only the bare gaps and judge them like the full path."""
     duration = get_duration_seconds(video_path)
     min_words = _min_words(cfg)
     best = None
@@ -1577,10 +1597,8 @@ def _missing_middle_probe(video_path: Path, subs, cfg: Config, audio_lang: Optio
         for g0, g1 in all_gaps(subs, duration, MISSING_MIDDLE_ESCALATE_GAP_S):
             segs, secs, words = [], 0.0, 0
             for start, dur in gap_probe_windows(g0, g1, float(cfg.clip_seconds)):
-                res = _lo._extract_and_transcribe(video_path, start, dur, cfg, audio_lang,
-                                                  Path(td), cancel_event=cancel_event)
-                _corr.whisper_cost.fresh_s += dur
-                for sg in (res or {}).get("segments") or []:
+                for sg in _gap_clip_segments(conn, video_path, start, dur, cfg, audio_lang,
+                                             Path(td), cancel_event=cancel_event):
                     try:
                         segs.append({"start": start + float(sg["start"]),
                                      "end": start + float(sg["end"]), "text": sg.get("text", "")})
@@ -1947,7 +1965,7 @@ def _detection_note(conn: sqlite3.Connection, video_path: Path, current_subs, cf
     if have_full:
         mm = _missing_middle_hit(conn, video_path, current_subs, cfg)
     elif cfg.whisper_mode == "sampled":
-        mm = _missing_middle_probe(video_path, current_subs, cfg,
+        mm = _missing_middle_probe(conn, video_path, current_subs, cfg,
                                    result.get("audio_lang") or lang, cancel_event=cancel_event)
     else:
         mm = None

@@ -52,6 +52,7 @@ def _prune_transcript_cache_job() -> None:
     """video_transcript_cache (see correctness.correctness_check) has no settings knob -- fixed
     at 30 days, same as the reasoning behind reports.MAX_REPORTS not being one either."""
     _prune_with_fresh_conn(db.prune_transcript_cache, 30, "cached transcript(s)")
+    _prune_with_fresh_conn(db.prune_gap_probe_cache, 30, "cached gap probe(s)")
 
 
 def _prune_full_transcript_cache_job() -> None:
