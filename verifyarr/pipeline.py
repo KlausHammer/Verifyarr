@@ -1608,6 +1608,15 @@ def _cache_json(collected: dict) -> str:
     })
 
 
+def _cache_load(text: str) -> dict:
+    """Inverse of _cache_json: JSON turned dict keys and tuples into str and lists."""
+    collected = json.loads(text)
+    collected["whisper_verdicts"] = {int(k): v for k, v in collected["whisper_verdicts"].items()}
+    collected["tested_items"] = [tuple(t) for t in collected["tested_items"]]
+    collected["candidates"] = [tuple(c) for c in collected["candidates"]]
+    return collected
+
+
 def _block_repair_parts(row: dict) -> int:
     """Parts in the block repair on disk, else 0: from the status ("N sync block(s)" /
     "N anchor region(s)"), or sync_split_blocks when alass wrote blocks directly."""
@@ -1963,10 +1972,7 @@ def _gather_evidence(video_path: Path, subtitle_path: Path, lang: Optional[str],
     reused_cache = bool(cached and cached["key"] == cache_key)
     try:
         if reused_cache:
-            collected = json.loads(cached["json"])
-            collected["whisper_verdicts"] = {int(k): v for k, v in collected["whisper_verdicts"].items()}
-            collected["tested_items"] = [tuple(t) for t in collected["tested_items"]]
-            collected["candidates"] = [tuple(c) for c in collected["candidates"]]
+            collected = _cache_load(cached["json"])
             if collected.get("full_coverage"):
                 ev_cfg = dataclasses.replace(cfg, whisper_mode="full")
             # Older cache rows predate heuristic_indices -- absent means "no filtering" to

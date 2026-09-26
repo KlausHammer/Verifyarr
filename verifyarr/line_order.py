@@ -134,6 +134,11 @@ def all_two_line_events(subs) -> list[tuple[int, str, str, int, int]]:
     return list(_iter_two_line_events(subs))
 
 
+# Bump when the cached payload changes shape (pipeline._cache_json): rows written
+# before it (v1: no full_coverage/fps_points) are then re-collected, not misread.
+CACHE_SCHEMA = 2
+
+
 def cache_key_for(subs, cfg: Config) -> str:
     """Identifies a `collect_samples` result as still valid for THIS subtitle content under
     THESE settings (see pipeline.py) — a subtitle's fingerprint (content, not file mtime/size)
@@ -147,7 +152,7 @@ def cache_key_for(subs, cfg: Config) -> str:
     verdicts until the subtitle itself changes. Same (provider, model) pair the full-transcript
     cache is keyed on, from the one function, so the two can't drift apart."""
     provider, model = correctness.full_transcript_cache_key(cfg)
-    return (f"{subs_fingerprint(subs)}:{cfg.sample_count}:{cfg.clip_seconds}:"
+    return (f"v{CACHE_SCHEMA}:{subs_fingerprint(subs)}:{cfg.sample_count}:{cfg.clip_seconds}:"
             f"{cfg.window_minutes}:{cfg.whisper_mode}:{provider}:{model}")
 
 
