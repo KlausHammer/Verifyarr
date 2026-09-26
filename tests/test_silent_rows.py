@@ -12,7 +12,6 @@ from __future__ import annotations
 
 import copy
 import random
-import shutil
 import sys
 import tempfile
 import unittest
@@ -34,6 +33,11 @@ _needs_staging = unittest.skipUnless(STAGING_OK, "needs whisper_gpu_staging swee
 
 def _run(slug, scenario, mode="sampled", audio="on", jitter_lo_hi=None):
     """Matrix-faithful single row: seeded corruption through M.run_one on a fresh DB."""
+    return _runs(slug, scenario, mode, audio, jitter_lo_hi)[-1]
+
+
+def _runs(slug, scenario, mode="sampled", audio="on", jitter_lo_hi=None, repeat=1):
+    """[(row, rec)] for the same corrupted file run `repeat` times on one DB."""
     fx = M.fixture(slug)
     video = M.media_dir(slug) / fx["video_name"]
     if not video.exists():
@@ -52,10 +56,13 @@ def _run(slug, scenario, mode="sampled", audio="on", jitter_lo_hi=None):
         cfg = M.cfg_for(conn, mode, audio, groq_model=MODEL)
         object.__setattr__(cfg, "fps_check_enabled", True)
         cache = M.audio_cache_for(slug, video)
-        row, after = M.run_one(work, video, corrupted, lang, segments, cfg,
-                               conn, "t", mode, cache)
-        rec = M.summarize(M.timing_errors(list(orig.events), list(after.events), None))
-        return row, rec
+        out = []
+        for _ in range(repeat):
+            row, after = M.run_one(work, video, copy.deepcopy(corrupted), lang, segments, cfg,
+                                   conn, "t", mode, cache)
+            out.append((row, M.summarize(M.timing_errors(list(orig.events),
+                                                         list(after.events), None))))
+        return out
     finally:
         conn.close()
 
@@ -115,26 +122,8 @@ class SilentBlockTests(unittest.TestCase):
 
     def test_rerun_on_cache_keeps_missing_middle(self):
         """Samme fil to gange paa samme DB: cache-hit maa ikke tabe arm 2-tjek."""
-        slug = "SH_S01E01"
-        fx = M.fixture(slug)
-        video = M.media_dir(slug) / fx["video_name"]
-        lang, segments = M.audio_evidence(MODEL, slug, fx)
-        orig = M.subs_for(slug, fx)
-        work = Path(tempfile.mkdtemp(prefix="silent_"))
-        conn = db.connect(work / "t.db")
-        try:
-            cfg = M.cfg_for(conn, "full", "off", groq_model=MODEL)
-            flags = []
-            for _ in range(2):
-                bad, _, _ = M.SCENARIOS["missing_middle"](
-                    copy.deepcopy(orig), random.Random(f"matrix-v1:{slug}:missing_middle"))
-                row, _ = M.run_one(work, video, bad, lang, segments, cfg, conn, "t", "full",
-                                   M.audio_cache_for(slug, video))
-                flags.append(row.get("correctness_flag"))
-        finally:
-            conn.close()
-            shutil.rmtree(work, ignore_errors=True)
-        self.assertEqual(flags, ["SUSPECT", "SUSPECT"])
+        rows = _runs("SH_S01E01", "missing_middle", mode="full", audio="off", repeat=2)
+        self.assertEqual([r.get("correctness_flag") for r, _ in rows], ["SUSPECT", "SUSPECT"])
 
     def test_escalated_block_file_is_judged_on_the_full_transcript(self):
         """C_S02E12 sampled piecewise_b: alass' 3-blok-fit eskalerer, men resync og
