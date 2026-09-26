@@ -46,7 +46,13 @@ def wav_complete(path: Path) -> bool:
     return size == declared + 8 or size == declared + 9  # trailing pad byte, per spec
 
 
-def extract_audio_wav(video_path: Path, out_path: Path, timeout: int = 180) -> bool:
+# video path -> extracted WAV, so VAD (vad.speech_timeline) decodes a file once, not twice.
+KNOWN_WAVS: dict[str, Path] = {}
+
+
+# 600s: a large file read over a NAS on an N100 outruns 180s, and a timeout
+# silently turns VAD off for that file.
+def extract_audio_wav(video_path: Path, out_path: Path, timeout: int = 600) -> bool:
     """Extracts the full audio track as 16kHz mono WAV — used to cache alass' expensive
     audio decoding across multiple subtitle files for the same video (see audio_cache in
     process_pair/cmd_sweep). alass-cli accepts a WAV just as well as a video file as its
@@ -170,4 +176,6 @@ def resolve_alass_reference(video_path: Path, audio_cache: Optional[dict],
                 log.debug("Audio extraction failed for %s, alass will use the video file directly", video_path.name)
         else:
             log.debug("Reusing already-extracted audio for %s", video_path.name)
+        if audio_cache[video_path] is not None:
+            KNOWN_WAVS[str(video_path)] = audio_cache[video_path]
         return audio_cache[video_path] or video_path

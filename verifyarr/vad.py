@@ -216,7 +216,7 @@ def timeline_for_video(conn, video_path: Path, cfg
 
 
 def run_vad_timeline(video_path: Path, binary: str, model: str,
-                     threads: int = 4, timeout: float = 600.0,
+                     threads: int = 4, timeout: float = 600.0, memo: bool = True,
                      ) -> Optional[list[tuple[float, float]]]:
     """One Silero VAD run over the whole file (local-only). Returns None (never raises)
     when unconfigured, missing, or failed -- callers always fall back to cached
@@ -266,7 +266,8 @@ def run_vad_timeline(video_path: Path, binary: str, model: str,
         log.warning("VAD run for %s produced output but no parseable start=/end= pairs -- "
                     "treating as confirmed silence; check the binary's output format if that "
                     "seems wrong", video_path)
-    _VAD_MEMO[key] = intervals
+    if memo:  # temp WAVs are not memoized: their paths die with the run
+        _VAD_MEMO[key] = intervals
     return intervals
 
 
@@ -274,8 +275,8 @@ def speech_timeline(video_path: Path, cfg) -> Optional[list[tuple[float, float]]
     """Real VAD speech intervals for the whole file, or None when VAD isn't set up.
     whisper-vad-speech-segments wants WAV, so a video is decoded once to a temp WAV."""
     binary, model = getattr(cfg, "vad_binary", ""), getattr(cfg, "vad_model", "")
-    if not binary or not model:
-        return None
+    if not binary or not model or not Path(binary).is_file() or not Path(model).is_file():
+        return None  # not set up: skip the audio decode too
     try:
         st = Path(video_path).stat()
         key = ("wav", str(video_path), st.st_mtime_ns, st.st_size)
@@ -283,14 +284,20 @@ def speech_timeline(video_path: Path, cfg) -> Optional[list[tuple[float, float]]
         return None
     if key in _VAD_MEMO:
         return _VAD_MEMO[key]
+    from verifyarr import sync_engine
     out = run_vad_timeline(video_path, binary, model) if Path(video_path).suffix.lower() == ".wav" else None
+    known = sync_engine.KNOWN_WAVS.get(str(video_path))
+    if (not out and known is not None and Path(known).is_file()
+            and Path(known).stat().st_mtime_ns >= st.st_mtime_ns):  # not from an older video
+        out = run_vad_timeline(known, binary, model)  # alass already decoded it
     if not out:
         import tempfile
-        from verifyarr.sync_engine import extract_audio_wav
         with tempfile.TemporaryDirectory() as td:
             wav = Path(td) / "audio.wav"
-            out = run_vad_timeline(wav, binary, model) if extract_audio_wav(Path(video_path), wav) else None
-    _VAD_MEMO[key] = out
+            out = (run_vad_timeline(wav, binary, model, memo=False)
+                   if sync_engine.extract_audio_wav(Path(video_path), wav) else None)
+    if out is not None:  # a failure is retried next time, not remembered
+        _VAD_MEMO[key] = out
     return out
 
 

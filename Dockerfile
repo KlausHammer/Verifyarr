@@ -34,11 +34,8 @@ RUN set -e; \
         ninja -C /tmp/whisper.cpp/build -j"$(nproc)" whisper-cli whisper-vad-speech-segments; \
     fi; \
     install -m755 /tmp/whisper.cpp/build/bin/whisper-cli /usr/local/bin/whisper-cli
-# VAD timeline binary (verifyarr/vad.py). Silero model isn't baked in (no stable URL) --
-# mount at sync.vad_model or leave sync.vad_binary empty to stay on cached segments.
-RUN if [ -f /tmp/whisper.cpp/build/bin/whisper-vad-speech-segments ]; then \
-        install -m755 /tmp/whisper.cpp/build/bin/whisper-vad-speech-segments /usr/local/bin/whisper-vad-speech-segments; \
-    fi
+# VAD (verifyarr/vad.py): binary plus Silero model, on by default (sync.vad_binary).
+RUN install -m755 /tmp/whisper.cpp/build/bin/whisper-vad-speech-segments /usr/local/bin/whisper-vad-speech-segments
 
 # Must match settings.py's WHISPER_MODEL default -- keeps the stock build pre-baked with
 # what the app expects. A different WHISPER_MODEL is fetched at runtime instead (see
@@ -46,6 +43,8 @@ RUN if [ -f /tmp/whisper.cpp/build/bin/whisper-vad-speech-segments ]; then \
 ARG WHISPER_MODEL=tiny.en
 RUN mkdir -p /app/models \
     && bash /tmp/whisper.cpp/models/download-ggml-model.sh ${WHISPER_MODEL} /app/models \
+    && bash /tmp/whisper.cpp/models/download-vad-model.sh silero-v5.1.2 /app/models \
+    && test -s /app/models/ggml-silero-v5.1.2.bin \
     && rm -rf /tmp/whisper.cpp
 
 # ---- build stage: React SPA (the webapp) ----
@@ -78,6 +77,7 @@ RUN cd /usr/local/bin && \
     alass --help >/dev/null 2>&1 || echo "WARNING: could not verify the alass binary during build"
 
 COPY --from=whisper-builder /usr/local/bin/whisper-cli /usr/local/bin/whisper-cli
+COPY --from=whisper-builder /usr/local/bin/whisper-vad-speech-segments /usr/local/bin/whisper-vad-speech-segments
 COPY --from=whisper-builder /app/models/ /app/models/
 RUN whisper-cli --help >/dev/null 2>&1 || echo "WARNING: could not verify the whisper-cli binary during build"
 

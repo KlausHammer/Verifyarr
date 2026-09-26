@@ -479,6 +479,9 @@ def apply_pending_sync(subtitle_path: Path, cfg: Config, row: dict, reason: str)
     a "[pending verification]" status nobody will come back to, and so the internal pysubs2
     objects never leak into what gets persisted/serialized (reports.write_report). No-op when
     nothing is pending. Returns the subs written, or None."""
+    # Only correctness_and_finish reads these; every other path drops them here.
+    row.pop("_pre_sync_subs", None)
+    row.pop("_orig_subs", None)
     ambiguous = row.pop("_ambiguous_sync", None)
     if ambiguous is None:
         return None
@@ -1591,6 +1594,19 @@ def _missing_middle_probe(video_path: Path, subs, cfg: Config, audio_lang: Optio
     return best
 
 
+def _cache_json(collected: dict) -> str:
+    """Line-order cache row. fps_points and full_coverage too: without them a rerun
+    of an unchanged file skipped missing-middle and jitter (both need coverage)."""
+    return json.dumps({
+        "samples": collected["samples"], "audio_lang": collected["audio_lang"],
+        "whisper_verdicts": collected["whisper_verdicts"],
+        "tested_items": collected["tested_items"], "candidates": collected["candidates"],
+        "heuristic_indices": collected.get("heuristic_indices"),
+        "fps_points": collected.get("fps_points") or [],
+        "full_coverage": bool(collected.get("full_coverage")),
+    })
+
+
 def _block_repair_parts(sync_status: Optional[str]) -> int:
     """Parts in a block repair on disk ("N sync block(s)" / "N anchor region(s)"), else 0."""
     m = re.search(r"(\d+) (?:sync block|anchor region)\(s\)", sync_status or "")
@@ -1942,6 +1958,8 @@ def correctness_and_finish(video_path: Path, subtitle_path: Path, lang: Optional
                 collected["whisper_verdicts"] = {int(k): v for k, v in collected["whisper_verdicts"].items()}
                 collected["tested_items"] = [tuple(t) for t in collected["tested_items"]]
                 collected["candidates"] = [tuple(c) for c in collected["candidates"]]
+                if collected.get("full_coverage"):
+                    ev_cfg = dataclasses.replace(cfg, whisper_mode="full")
                 # Older cache rows predate heuristic_indices -- absent means "no filtering" to
                 # finalize_line_order, which is what those rows' (heuristic-only) candidates
                 # already were anyway.
@@ -2018,12 +2036,7 @@ def correctness_and_finish(video_path: Path, subtitle_path: Path, lang: Optional
                           "since last check).", subtitle_path.name)
             else:
                 row["line_order_cache_key"] = cache_key
-                row["line_order_cache_json"] = json.dumps({
-                    "samples": collected["samples"], "audio_lang": collected["audio_lang"],
-                    "whisper_verdicts": collected["whisper_verdicts"],
-                    "tested_items": collected["tested_items"], "candidates": collected["candidates"],
-                    "heuristic_indices": collected.get("heuristic_indices"),
-                })
+                row["line_order_cache_json"] = _cache_json(collected)
 
             act_on_line_order = cfg.line_order_enabled and cfg.line_order_audio_confirm
             result = finalize_line_order(collected, cfg, cancel_event=cancel_event,
@@ -2146,12 +2159,7 @@ def correctness_and_finish(video_path: Path, subtitle_path: Path, lang: Optional
                 # (on failure/skip it returns the SAME pre-fix object).
                 if collected is not pre_recheck_collected:
                     row["line_order_cache_key"] = cache_key_for(current_subs, cfg)
-                    row["line_order_cache_json"] = json.dumps({
-                        "samples": collected["samples"], "audio_lang": collected["audio_lang"],
-                        "whisper_verdicts": collected["whisper_verdicts"],
-                        "tested_items": collected["tested_items"], "candidates": collected["candidates"],
-                        "heuristic_indices": collected.get("heuristic_indices"),
-                    })
+                    row["line_order_cache_json"] = _cache_json(collected)
 
             # Shared by the safety net and the anchor branch below: a file the
             # anchors condemn always gets the resync ATTEMPT first -- the net only
@@ -2370,12 +2378,7 @@ def correctness_and_finish(video_path: Path, subtitle_path: Path, lang: Optional
                     # cache entry means the next run just re-collects properly instead.
                     if collected is not pre_recheck_collected:
                         row["line_order_cache_key"] = cache_key_for(current_subs, cfg)
-                        row["line_order_cache_json"] = json.dumps({
-                            "samples": collected["samples"], "audio_lang": collected["audio_lang"],
-                            "whisper_verdicts": collected["whisper_verdicts"],
-                            "tested_items": collected["tested_items"], "candidates": collected["candidates"],
-                            "heuristic_indices": collected.get("heuristic_indices"),
-                        })
+                        row["line_order_cache_json"] = _cache_json(collected)
                 else:
                     row["correctness_flag"] = "SUSPECT"
                     row["note"] = (row["note"] +

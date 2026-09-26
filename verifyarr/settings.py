@@ -602,10 +602,10 @@ SETTING_DEFS: dict = {
     "sync.overlap_threshold":   ("sync", "float", 0.25),
     # sampled | full -- see Config.whisper_mode.
     "sync.whisper_mode":        ("sync", "str", "sampled"),
-    # VAD timeline for sample placement (see vad.py). Empty binary = disabled; the model
-    # is deliberately NOT auto-downloaded (no verified stable URL), mount or place it at
-    # vad_model. Language-independent by construction: speech activity has no language.
-    "sync.vad_binary":          ("sync", "str", ""),
+    # VAD timeline (see vad.py): sample placement and block confirmation. On by default --
+    # the image ships binary and Silero model; the tested setup is tiny.en + VAD. Empty
+    # binary = disabled; a missing file disables it too. Language-independent.
+    "sync.vad_binary":          ("sync", "str", "/usr/local/bin/whisper-vad-speech-segments"),
     "sync.vad_model":           ("sync", "str", "/app/models/ggml-silero-v5.1.2.bin"),
     "sync.vad_min_speech_seconds": ("sync", "float", 2.0),
     # See Config.block_spread_suspect_threshold_s -- 20s chosen as "clearly more than ordinary

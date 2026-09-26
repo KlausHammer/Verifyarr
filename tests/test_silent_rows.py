@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import copy
 import random
+import shutil
 import sys
 import tempfile
 import unittest
@@ -111,6 +112,29 @@ class SilentBlockTests(unittest.TestCase):
         row, rec = _run("SH_S01E04", "block_rand2", mode="sampled")
         self.assertIn("sync block(s)", row.get("sync_status") or "")
         self.assertEqual(row.get("correctness_flag"), "SUSPECT")
+
+    def test_rerun_on_cache_keeps_missing_middle(self):
+        """Samme fil to gange paa samme DB: cache-hit maa ikke tabe arm 2-tjek."""
+        slug = "SH_S01E01"
+        fx = M.fixture(slug)
+        video = M.media_dir(slug) / fx["video_name"]
+        lang, segments = M.audio_evidence(MODEL, slug, fx)
+        orig = M.subs_for(slug, fx)
+        work = Path(tempfile.mkdtemp(prefix="silent_"))
+        conn = db.connect(work / "t.db")
+        try:
+            cfg = M.cfg_for(conn, "full", "off", groq_model=MODEL)
+            flags = []
+            for _ in range(2):
+                bad, _, _ = M.SCENARIOS["missing_middle"](
+                    copy.deepcopy(orig), random.Random(f"matrix-v1:{slug}:missing_middle"))
+                row, _ = M.run_one(work, video, bad, lang, segments, cfg, conn, "t", "full",
+                                   M.audio_cache_for(slug, video))
+                flags.append(row.get("correctness_flag"))
+        finally:
+            conn.close()
+            shutil.rmtree(work, ignore_errors=True)
+        self.assertEqual(flags, ["SUSPECT", "SUSPECT"])
 
     def test_escalated_block_file_is_judged_on_the_full_transcript(self):
         """C_S02E12 sampled piecewise_b: alass' 3-blok-fit eskalerer, men resync og
