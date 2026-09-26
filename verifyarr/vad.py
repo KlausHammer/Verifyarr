@@ -303,7 +303,7 @@ def speech_timeline(video_path: Path, cfg) -> Optional[list[tuple[float, float]]
     known = sync_engine.KNOWN_WAVS.get(str(video_path))
     if (not out and known is not None and Path(known).is_file()
             and Path(known).stat().st_mtime_ns >= st.st_mtime_ns):  # not from an older video
-        out = run_vad_timeline(known, binary, model)  # alass already decoded it
+        out = run_vad_timeline(known, binary, model, memo=False)  # alass already decoded it
     if not out:
         import tempfile
         with tempfile.TemporaryDirectory() as td:
@@ -313,6 +313,38 @@ def speech_timeline(video_path: Path, cfg) -> Optional[list[tuple[float, float]]
     if out is not None:  # a failure is retried next time, not remembered
         _memo_put(key, out)
     return out
+
+
+def _mask(spans, t0: float, n: int, step: float) -> bytearray:
+    """n slots of step seconds from t0; 1 where a span covers the slot."""
+    m = bytearray(n)
+    for a, b in spans:
+        for k in range(max(0, int((a - t0) / step)), min(n, int((b - t0) / step))):
+            m[k] = 1
+    return m
+
+
+def _speech_prefix(v: bytearray) -> list[int]:
+    """P[k] = speech slots minus silent slots before k."""
+    p = [0]
+    for x in v:
+        p.append(p[-1] + (1 if x else -1))
+    return p
+
+
+def _speech_score(p: list[int], cues, sh: float, t0: float, step: float) -> int:
+    """Cue slots on speech minus cue slots on silence, cues moved by sh (p from
+    _speech_prefix). Same slots as _mask; overlapping cues count once."""
+    n = len(p) - 1
+    spans = sorted((max(0, int((a + sh - t0) / step)), min(n, int((b + sh - t0) / step)))
+                   for a, b in cues)
+    total, end = 0, 0
+    for lo, hi in spans:
+        lo = max(lo, end)
+        if hi > lo:
+            total += p[hi] - p[lo]
+            end = hi
+    return total
 
 
 def shift_fits_speech(intervals: list[tuple[float, float]], cues: list[tuple[float, float]],
@@ -326,21 +358,8 @@ def shift_fits_speech(intervals: list[tuple[float, float]], cues: list[tuple[flo
     n = int((t1 - t0) / step)
     if n <= 0:
         return False
-
-    def _mask(spans):
-        m = bytearray(n)
-        for a, b in spans:
-            for k in range(max(0, int((a - t0) / step)), min(n, int((b - t0) / step))):
-                m[k] = 1
-        return m
-
-    v = _mask([(a, b) for a, b in intervals if b >= t0 and a <= t1])
-
-    def _score(sh):
-        c = _mask([(a + sh, b + sh) for a, b in cues])
-        return sum((1 if x else -1) for x, y in zip(v, c) if y)
-
-    return _score(shift) > _score(0.0)
+    p = _speech_prefix(_mask([(a, b) for a, b in intervals if b >= t0 and a <= t1], t0, n, step))
+    return _speech_score(p, cues, shift, t0, step) > _speech_score(p, cues, 0.0, t0, step)
 
 
 def block_witness(intervals: list[tuple[float, float]], cues: list[tuple[float, float]],
@@ -359,19 +378,11 @@ def block_witness(intervals: list[tuple[float, float]], cues: list[tuple[float, 
         if len(cw) >= 6:
             t0 = t - search - 5.0
             n = int((win + 2 * search + 10.0) / step)
-            v = bytearray(n)
-            for a, b in intervals:
-                if b < t0 or a > t0 + n * step:
-                    continue
-                for k in range(max(0, int((a - t0) / step)), min(n, int((b - t0) / step))):
-                    v[k] = 1
+            p = _speech_prefix(_mask([(a, b) for a, b in intervals
+                                      if b >= t0 and a <= t0 + n * step], t0, n, step))
 
             def _score(sh):
-                c = bytearray(n)
-                for a, b in cw:
-                    for k in range(max(0, int((a + sh - t0) / step)), min(n, int((b + sh - t0) / step))):
-                        c[k] = 1
-                return sum((1 if x else -1) for x, y in zip(v, c) if y)
+                return _speech_score(p, cw, sh, t0, step)
 
             s0 = _score(0.0)
             best_score, best = max((_score(k * 0.5), k * 0.5)

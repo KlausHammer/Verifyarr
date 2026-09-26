@@ -31,7 +31,7 @@ class RunLockTests(unittest.TestCase):
                 mock.patch.object(jobs, "_run_single") as single:
             with jobs.run_lock(wait_s=0):
                 jobs.execute_run(run_id, mock.Mock(), self.conn, threading.Event(), "single",
-                                 trigger="cli_single")
+                                 trigger="cli_single", lock_wait_s=jobs.SINGLE_LOCK_WAIT_S)
         single.assert_not_called()
         row = self.conn.execute("SELECT status, error_message FROM runs WHERE id=?",
                                 (run_id,)).fetchone()

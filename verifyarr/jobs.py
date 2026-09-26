@@ -168,13 +168,22 @@ def run_lock(wait_s: Optional[float], cancel_event: Optional[threading.Event] = 
             except BlockingIOError:
                 if deadline is not None and time.monotonic() >= deadline:
                     raise RunLockBusy()
-                if cancel_event is not None and cancel_event.wait(1.0):
+                if (cancel_event or threading.Event()).wait(1.0):
                     raise JobCancelled()
-                if cancel_event is None:
-                    time.sleep(1.0)
         yield
     finally:
         f.close()  # closing releases the flock
+
+
+@contextlib.contextmanager
+def _forget_wavs_after(audio_cache: dict):
+    """Drops this sweep's WAVs from sync_engine.KNOWN_WAVS when their tempdir goes."""
+    try:
+        yield
+    finally:
+        from verifyarr import sync_engine
+        for video in audio_cache:
+            sync_engine.KNOWN_WAVS.pop(str(video), None)
 
 
 def execute_run(run_id: int, cfg: Config, conn: sqlite3.Connection, cancel_event: threading.Event,
@@ -182,15 +191,15 @@ def execute_run(run_id: int, cfg: Config, conn: sqlite3.Connection, cancel_event
                  subtitle: Optional[Path] = None, lang: Optional[str] = None,
                  bazarr_meta: Optional[dict] = None,
                  kind: Optional[str] = None, title: Optional[str] = None,
-                 season: Optional[str] = None) -> None:
+                 season: Optional[str] = None, lock_wait_s: Optional[float] = None) -> None:
+    """lock_wait_s: how long to wait for another run's lock (None = as long as it takes)."""
     cfg = _effective_cfg(cfg, trigger)
     handler = _RunLogHandler(conn, run_id)
     root_log = logging.getLogger("verifyarr")
     root_log.addHandler(handler)
     status, error_message = "completed", None
-    wait_s = SINGLE_LOCK_WAIT_S if trigger.startswith("cli") and mode != "sweep" else None
     try:
-        with run_lock(wait_s, cancel_event):
+        with run_lock(lock_wait_s, cancel_event):
             if mode == "sweep":
                 _run_sweep(conn, run_id, cfg, force, cancel_event, kind=kind, title=title,
                            season=season)
@@ -200,7 +209,7 @@ def execute_run(run_id: int, cfg: Config, conn: sqlite3.Connection, cancel_event
                 _run_single(conn, run_id, cfg, video, subtitle, lang, bazarr_meta, cancel_event)
     except RunLockBusy:
         log.warning("Another run is still active after %.0fs -- skipped; the next sweep "
-                    "picks this file up.", wait_s)
+                    "picks this file up.", lock_wait_s)
         status, error_message = "failed", "another run was active; skipped"
     except JobCancelled:
         status = "cancelled"
@@ -366,7 +375,8 @@ def _run_sweep(conn: sqlite3.Connection, run_id: int, cfg: Config, force: bool,
     # the result is now cached PER SUBTITLE across runs (line_order_cache_key/json in the
     # files table) — an unchanged subtitle costs zero Whisper calls on a later sweep,
     # regardless of language.
-    with tempfile.TemporaryDirectory(prefix="verifyarr-audio-") as audio_cache_dir_str:
+    with tempfile.TemporaryDirectory(prefix="verifyarr-audio-") as audio_cache_dir_str, \
+            _forget_wavs_after(audio_cache):
         audio_cache_dir = Path(audio_cache_dir_str)
 
         # should_skip is checked once, up front -- an unchanged file should never occupy a

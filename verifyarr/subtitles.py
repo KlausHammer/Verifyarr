@@ -520,7 +520,8 @@ def robust_rate_fit(points, resid_s: float = STRETCH_RESID_TRIM_S,
                         for x2, y2 in pts[i + 1:] if x2 != x1)
         if not slopes:
             return None
-        m = statistics.median(slopes)
+        h = len(slopes) // 2  # already sorted: statistics.median would sort again
+        m = slopes[h] if len(slopes) % 2 else (slopes[h - 1] + slopes[h]) / 2
         c = statistics.median(y - m * x for x, y in pts)
         kept = [(x, y) for x, y in raw if abs(y - (m * x + c)) <= resid_s]
         # Too few points near the line means the line does not describe this pool.
@@ -664,8 +665,8 @@ def snap_rate(points, p: dict) -> tuple[float, float, str]:
         if abs(r / ratio - 1) <= RATE_SNAP_TOL:
             o = statistics.median(a / r - s for a, s in line)
             snaps.append((mad(r, o), r, o, name))
-    best = min(snaps) if snaps else None
-    if best is None or best[0] > measured[0] + 0.02:
+    best = min(snaps, default=measured)
+    if best[0] > measured[0] + 0.02:
         best = measured
     return best[1], best[2], best[3]
 

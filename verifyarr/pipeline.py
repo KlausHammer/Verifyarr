@@ -7,6 +7,7 @@ them split (CLI, the Bazarr-hook single-file path, remediate's own candidate ver
 
 from __future__ import annotations
 
+import copy
 import dataclasses
 import json
 import re
@@ -45,7 +46,7 @@ from verifyarr.correctness import (
     anchor_jitter, JITTER_MIN_MAD_S, JITTER_ESCALATE_MAD_S,
     ANCHOR_RESYNC_INTERVAL_S, ANCHOR_SUSPECT_MIN_SAMPLES,
     all_gaps, missing_middle_evidence, MISSING_MIDDLE_ESCALATE_GAP_S,
-    gap_probe_windows, gap_speech, MISSING_MIDDLE_MIN_SPEECH_S, missing_middle_min_words,
+    gap_probe_windows, gap_speech, clears_missing_middle, missing_middle_min_words,
     anchor_block_clusters, anchor_point_runs, dense_anchor_points,
     full_transcript_cache_key,
 )
@@ -309,10 +310,9 @@ def presync_from_screen(subs, screen: dict, cfg: Config):
     Returns (fixed_subs, description) or None. Never writes; the caller owns the file.
     """
     pts = _fps_points(screen.get("collected") or {})
-    probe = stretch_probe([(a, a - s) for a, s in pts]) if pts else None
-    import copy as _copy
+    probe = _dense_probe(pts)
     if probe is not None and _stretch_gates_pass(probe):
-        fixed = _copy.deepcopy(subs)
+        fixed = copy.deepcopy(subs)
         worst = apply_fps_rescale(fixed, 1.0 / (1.0 - probe["slope"]), offset=probe["intercept"])
         if worst >= cfg.min_change_seconds:
             return fixed, (f"rate {(1.0 / (1.0 - probe['slope']) - 1) * 100:+.2f}% "
@@ -324,7 +324,7 @@ def presync_from_screen(subs, screen: dict, cfg: Config):
             and spread is not None and spread < SCREEN_TOLERANCE_S
             and (screen.get("agree_frac") or 0) >= SCREEN_MIN_AGREE_FRAC
             and (screen.get("tilt") is None or abs(screen["tilt"]) < SCREEN_TOLERANCE_S)):
-        fixed = _copy.deepcopy(subs)
+        fixed = copy.deepcopy(subs)
         for e in fixed.events:
             e.start = max(0, int(round(e.start + shift * 1000)))
             e.end = max(e.start, int(round(e.end + shift * 1000)))
@@ -797,14 +797,13 @@ def _ramp_rescue_probe(result: dict, new_subs, cfg: Config) -> Optional[dict]:
     if not result.get("full_coverage") or not cfg.fps_check_enabled:
         return None
     pts = _fps_points(result)
-    probe = stretch_probe([(a, a - s) for a, s in pts]) if pts else None
+    probe = _dense_probe(pts)
     if not _stretch_gates_pass(probe) and not _ramp_overwhelming(probe):
         return None
     ratio = 1.0 / (1.0 - probe["slope"])
     if max_quartile_residual_after(pts, ratio, probe["intercept"]) > FPS_RESID_MAX_S:
         return None
-    import copy as _copy
-    trial = _copy.deepcopy(new_subs)
+    trial = copy.deepcopy(new_subs)
     if apply_fps_rescale(trial, ratio, offset=probe["intercept"]) < cfg.min_change_seconds:
         return None
     return probe
@@ -1401,6 +1400,12 @@ def _try_stretch_rescale(subtitle_path: Path, cfg: Config, media_root: Path,
     return _apply_stretch_fix(subtitle_path, cfg, media_root, current_subs, pts, p)
 
 
+def _stretch_info(name: str, ratio: float, p: dict, worst: float) -> dict:
+    """fps_fix row info for a rate fixed from anchors alone."""
+    return {"name": name, "kind": "stretch", "ratio": ratio, "atilt": p["tilt"],
+            "vtilt": None, "n_anchors": p["n"], "n_vad": 0, "worst": worst, "probe": p}
+
+
 def _apply_stretch_fix(subtitle_path: Path, cfg: Config, media_root: Path,
                        current_subs, pts: list, p: dict):
     """Applies a stretch probe that already passed its gates (quartile, threshold, write)."""
@@ -1412,15 +1417,13 @@ def _apply_stretch_fix(subtitle_path: Path, cfg: Config, media_root: Path,
         log.info("stretch rescale %s for %s discarded: %.1fs left in one quarter",
                  f"{(ratio - 1) * 100:+.2f}%", subtitle_path.name, left)
         return None
-    import copy as _copy
-    fixed = _copy.deepcopy(current_subs)
+    fixed = copy.deepcopy(current_subs)
     worst = apply_fps_rescale(fixed, ratio, offset=p["intercept"])
     if worst < cfg.min_change_seconds:
         return None
     _write_fix(subtitle_path, cfg, media_root, fixed)
     name = f"stretch {(ratio - 1) * 100:+.2f}%"
-    info = {"name": name, "kind": "stretch", "ratio": ratio, "atilt": p["tilt"],
-            "vtilt": None, "n_anchors": p["n"], "n_vad": 0, "worst": worst, "probe": p}
+    info = _stretch_info(name, ratio, p, worst)
     note = (f" rate {name} offset {p['intercept']:+.1f}s "
             f"(tilt {p['tilt']:+.1f}s over {p['n']} anchors, "
             f"rho {p['rho']:+.2f}, spread {p['gain']:+.2f}s tighter to {p['resid']:.2f}s, "
@@ -1503,8 +1506,7 @@ def _try_fps_rescale(conn: sqlite3.Connection, video_path: Path, subtitle_path: 
         log.info("fps %s for %s discarded: %.1fs left in one quarter",
                  name, subtitle_path.name, left)
         return None
-    import copy as _copy
-    fixed = _copy.deepcopy(current_subs)
+    fixed = copy.deepcopy(current_subs)
     worst = apply_fps_rescale(fixed, ratio)
     if worst < cfg.min_change_seconds:
         log.info("fps %s for %s discarded: largest change %.2fs under threshold",
@@ -1562,13 +1564,18 @@ def _jitter_says_needs_full(collected: dict, cfg: Config) -> bool:
     return jit is not None and jit >= JITTER_ESCALATE_MAD_S
 
 
+def _min_words(cfg: Config) -> int:
+    """Missing-middle word bar for the transcript model in use."""
+    return missing_middle_min_words(full_transcript_cache_key(cfg)[1])
+
+
 def _missing_middle_probe(video_path: Path, subs, cfg: Config, audio_lang: Optional[str],
                           cancel_event=None) -> Optional[dict]:
     """Sampled mode: transcribe only the bare gaps and judge them like the full path."""
     from verifyarr import line_order as _lo
     from verifyarr import correctness as _corr
     duration = get_duration_seconds(video_path)
-    min_words = missing_middle_min_words(full_transcript_cache_key(cfg)[1])
+    min_words = _min_words(cfg)
     best = None
     with tempfile.TemporaryDirectory() as td:
         for g0, g1 in all_gaps(subs, duration, MISSING_MIDDLE_ESCALATE_GAP_S):
@@ -1584,9 +1591,9 @@ def _missing_middle_probe(video_path: Path, subs, cfg: Config, audio_lang: Optio
                     except (KeyError, TypeError, ValueError):
                         continue
                 secs, words = gap_speech(_drop_repetition_loops(_drop_nonspeech(segs)), g0, g1)
-                if secs >= MISSING_MIDDLE_MIN_SPEECH_S and words >= min_words:
+                if clears_missing_middle(secs, words, min_words):
                     break  # bar met, no need to hear the rest
-            if secs >= MISSING_MIDDLE_MIN_SPEECH_S and words >= min_words \
+            if clears_missing_middle(secs, words, min_words) \
                     and (best is None or secs > best["speech_s"]):
                 best = {"gap_start": g0, "gap_end": g1, "speech_s": secs, "words": words}
     return best
@@ -1658,13 +1665,11 @@ def _cached_full_segments(conn: sqlite3.Connection, video_path: Path, cfg: Confi
 def _missing_middle_hit(conn: sqlite3.Connection, video_path: Path, subs, cfg: Config) -> Optional[dict]:
     """Gap evidence (mid, head, tail) from the cached full transcript, or None."""
     segments = _cached_full_segments(conn, video_path, cfg)
-    if segments is None:
-        return None
     if not segments:
         return None
     return missing_middle_evidence(subs, segments,
                                    duration_s=get_duration_seconds(video_path),
-                                   min_words=missing_middle_min_words(full_transcript_cache_key(cfg)[1]))
+                                   min_words=_min_words(cfg))
 
 
 def _block_runs_hit(conn: sqlite3.Connection, video_path: Path, subs, cfg: Config,
@@ -1675,8 +1680,6 @@ def _block_runs_hit(conn: sqlite3.Connection, video_path: Path, subs, cfg: Confi
     short remainder counts -- 3 lines in a row 5s+ out. Not used otherwise: one
     healthy SH file carries such a triple (repeated line, -13.7s)."""
     segments = _cached_full_segments(conn, video_path, cfg)
-    if segments is None:
-        return []
     if not segments:
         return []
     pts = dense_anchor_points(subs, segments)
@@ -1706,7 +1709,7 @@ def _block_runs_hit(conn: sqlite3.Connection, video_path: Path, subs, cfg: Confi
 def _dense_pool(conn: sqlite3.Connection, video_path: Path, subs, cfg: Config) -> list:
     """(audio, cue) for every matched line against the cached full transcript."""
     segments = _cached_full_segments(conn, video_path, cfg)
-    if segments is None:
+    if not segments:
         return []
     return [(float(a), float(c)) for smp in dense_anchor_points(subs, segments)
             for a, c in smp["anchor_points"]]
@@ -1714,6 +1717,12 @@ def _dense_pool(conn: sqlite3.Connection, video_path: Path, subs, cfg: Config) -
 
 def _dense_probe(pts: list) -> Optional[dict]:
     return stretch_probe([(a, a - c) for a, c in pts]) if pts else None
+
+
+def _rescaled(subs, ratio: float, offset: float):
+    """(copy of subs rescaled, worst move in seconds)."""
+    out = copy.deepcopy(subs)
+    return out, apply_fps_rescale(out, ratio, offset=offset)
 
 
 def _try_rate_from_baseline(conn: sqlite3.Connection, video_path: Path, subtitle_path: Path,
@@ -1735,18 +1744,15 @@ def _try_rate_from_baseline(conn: sqlite3.Connection, video_path: Path, subtitle
             _dense_probe(_dense_pool(conn, video_path, current, cfg)), tight=True):
         return None
     ratio, offset, name = snap_rate(pts, p)
-    import copy as _copy
     # Second look from the coarse fix: the original only matches while its
     # offset fits the window (PAL: first ~20 min). Mapped back, whole file.
-    coarse = _copy.deepcopy(baseline)
-    apply_fps_rescale(coarse, ratio, offset=offset)
+    coarse, _ = _rescaled(baseline, ratio, offset)
     full = [(a, c / ratio - offset) for a, c in _dense_pool(conn, video_path, coarse, cfg)]
     p_full = _dense_probe(full)
     if (p_full is not None and rate_gates_pass(p_full)
             and p_full["keep_frac"] >= p["keep_frac"] - 0.05):
         ratio, offset, name = snap_rate(full, p_full)
-    fixed = _copy.deepcopy(baseline)
-    worst = apply_fps_rescale(fixed, ratio, offset=offset)
+    fixed, worst = _rescaled(baseline, ratio, offset)
     after = _dense_probe(_dense_pool(conn, video_path, fixed, cfg))
     if not rate_is_flat(after):
         log.info("rate %s for %s discarded: not flat after (%s)", name, subtitle_path.name,
@@ -1755,8 +1761,7 @@ def _try_rate_from_baseline(conn: sqlite3.Connection, video_path: Path, subtitle
     if worst < cfg.min_change_seconds:
         return None
     _write_fix(subtitle_path, cfg, media_root, fixed)
-    info = {"name": name, "kind": "stretch", "ratio": ratio, "atilt": p["tilt"],
-            "vtilt": None, "n_anchors": p["n"], "n_vad": 0, "worst": worst, "probe": p}
+    info = _stretch_info(name, ratio, p, worst)
     note = (f" rate {name} offset {offset:+.1f}s from the original file over the full "
             f"transcript (tilt {p['tilt']:+.1f}s over {p['n']} lines, rho {p['rho']:+.2f}, "
             f"{p['keep_frac']:.0%} on the line; flat after: tilt {after['tilt']:+.2f}s).")
@@ -1769,7 +1774,7 @@ def _rate_says_needs_full(collected: dict, cfg: Config) -> bool:
     if cfg.whisper_mode != "sampled" or not cfg.fps_check_enabled \
             or collected.get("full_coverage"):
         return False
-    p = stretch_probe([(a, a - c) for a, c in _fps_points(collected)])
+    p = _dense_probe(_fps_points(collected))
     return (p is not None and p.get("rho") is not None
             and abs(p["tilt"]) >= RATE_MIN_TILT_S and abs(p["rho"]) >= 0.6
             and p["keep_frac"] >= 0.8)
@@ -1799,8 +1804,6 @@ def _swap_says_needs_full(collected: dict, subs, cfg: Config) -> bool:
 def _swap_gate_hit(conn: sqlite3.Connection, video_path: Path, subs, cfg: Config) -> Optional[dict]:
     """Timing-independent swap rate from the cached full transcript, else None."""
     segments = _cached_full_segments(conn, video_path, cfg)
-    if segments is None:
-        return None
     if not segments:
         return None
     return swap_gate_evidence(subs, segments)
@@ -1831,15 +1834,9 @@ def _screen_says_needs_full(collected: dict, cfg: Config, sync_blocks: Optional[
     # and 0% of clean, gap, swap and uniform ones. Detection does not need this branch at all
     # (see anchor_suspect_min_samples).
     samples = collected.get("samples") or []
-    # One confident anchor 10s+ out is reason to look too, block fit or not: none of
-    # 283 sampled files that end correct and unflagged carry one.
-    if any(s.get("anchor") and abs(s["anchor"]["shift"]) >= ANCHOR_HUGE_SINGLE_S
-           for s in samples):
-        return True
     # One anchor 2.5s+ out is a block witness (sparse sampling lands 0-1 clips
     # in a 180s block). Dense evidence decides -- this only buys the look.
-    if any(s.get("anchor") and abs(s["anchor"]["shift"]) > ANCHOR_SUSPECT_THRESHOLD_S
-           for s in samples):
+    if significant_anchor_residuals(samples, ANCHOR_SUSPECT_THRESHOLD_S, min_samples=1):
         return True
     # Three matched lines in a row at one offset: the block verdict needs more lines.
     if anchor_point_runs(samples, k=3):
@@ -1852,10 +1849,7 @@ def _screen_says_needs_full(collected: dict, cfg: Config, sync_blocks: Optional[
     if (sync_blocks or 0) > 1:
         return True
     spread = anchor_spread(samples)
-    if spread is not None and spread > ANCHOR_SCREEN_SPREAD_S:
-        return True
-    return bool(significant_anchor_residuals(samples, ANCHOR_SUSPECT_THRESHOLD_S,
-                                             min_samples=cfg.escalate_min_bad_samples))
+    return spread is not None and spread > ANCHOR_SCREEN_SPREAD_S
 
 
 def _recheck_after_resync(video_path: Path, corrected_subs, lang: Optional[str], cfg: Config,
@@ -1930,10 +1924,10 @@ def _detection_note(conn: sqlite3.Connection, video_path: Path, current_subs, cf
                     cancel_event=None) -> Optional[str]:
     """The last detectors of the verdict chain, in order; the first note that fires, or None.
     Each is evaluated only when the ones before it stayed quiet."""
-    dense = (result.get("full_coverage") or escalated_samples is not None
-             or cfg.whisper_mode == "full")
+    have_full = bool(result.get("full_coverage")) or escalated_samples is not None
     runs = (_block_runs_hit(conn, video_path, current_subs, cfg,
-                            proven_block=resolved_winner == "blocks") if dense else [])
+                            proven_block=resolved_winner == "blocks")
+            if have_full or cfg.whisper_mode == "full" else [])
     if runs:
         # Part of the file sits at another offset.
         return (f" Part of the episode is out of sync: {_runs_text(runs)} -- fetch a fresh "
@@ -1947,7 +1941,7 @@ def _detection_note(conn: sqlite3.Connection, video_path: Path, current_subs, cf
         # Per-cue noise has no offset to fix. Full coverage only.
         return (f" Cue timing is noisy: lines within one clip disagree by {jit:.2f}s "
                 "(median) -- no single offset fixes that; fetch a fresh subtitle.")
-    if result.get("full_coverage") or escalated_samples is not None:
+    if have_full:
         mm = _missing_middle_hit(conn, video_path, current_subs, cfg)
     elif cfg.whisper_mode == "sampled":
         mm = _missing_middle_probe(video_path, current_subs, cfg,

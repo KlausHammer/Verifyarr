@@ -136,16 +136,19 @@ def scores_recovery(slug, scenario):
     """Timing recovery is meaningless on drift-case episodes (own timings off)."""
     return (scenario in TIMING_SCENARIOS or scenario == "clean") \
         and slug not in DRIFT_CASE_SLUGS
+# Randomised families (seeded per scenario name).
+BLOCK_SCENARIOS = ({f"block_rand{i}" for i in range(4)}
+                   | {f"blocks_rand{i}" for i in range(2)})
+HOLE_SCENARIOS = ({f"hole_rand{i}" for i in range(4)}
+                  | {f"trunc_start_rand{i}" for i in range(2)}
+                  | {f"trunc_end_rand{i}" for i in range(2)})
+RATE_SCENARIOS = ({f"drift_rand{i}" for i in range(6)}
+                  | {f"ratio_rand{i}" for i in range(4)})
 TIMING_SCENARIOS = {"uniform", "uniform_neg", "uniform_p03", "uniform_m07", "uniform_p15",
                     "uniform_m5", "drift", "drift_offset", "pal_late", "pal_early",
                     "piecewise", "piecewise_b", "piecewise_c", "cut_version",
                     "missing_middle", "gap", "drift_swap", "fps_late", "fps_early",
-                    "dropdup", "jitter",
-                    "block_rand0", "block_rand1", "block_rand2", "block_rand3",
-                    "blocks_rand0", "blocks_rand1",
-                    "drift_rand0", "drift_rand1", "drift_rand2", "drift_rand3",
-                    "drift_rand4", "drift_rand5",
-                    "ratio_rand0", "ratio_rand1", "ratio_rand2", "ratio_rand3"}
+                    "dropdup", "jitter"} | BLOCK_SCENARIOS | RATE_SCENARIOS
 # Everything runs by default. Nothing is opt-in any more: fps_late/fps_early used to be
 # held out on the grounds that alass already fixed them, but "alass still does it" is
 # exactly the kind of assumption that goes stale silently -- and they are the only rate
@@ -159,18 +162,10 @@ TIMING_SCENARIOS = {"uniform", "uniform_neg", "uniform_p03", "uniform_m07", "uni
 # wrong_episode and jitter are the sharp ones: there is no correction to make, and
 # inventing one is worse than reporting the file.
 NO_CHANGE_SCENARIOS = {"clean", "missing_middle", "gap", "dropdup", "jitter",
-                       "wrong_episode",
-                       "hole_rand0", "hole_rand1", "hole_rand2", "hole_rand3",
-                       "trunc_start_rand0", "trunc_start_rand1",
-                       "trunc_end_rand0", "trunc_end_rand1"}
+                       "wrong_episode"} | HOLE_SCENARIOS
 # Detection-only: untouched is half the answer; the file must ALSO be flagged.
-DETECTION_SCENARIOS = {"missing_middle",
-                       "hole_rand0", "hole_rand1", "hole_rand2", "hole_rand3",
-                       "trunc_start_rand0", "trunc_start_rand1",
-                       "trunc_end_rand0", "trunc_end_rand1"}
-# Blocks: fixed (p50<=0.15, >=98% within 0.5s) OR flagged counts as caught.
-BLOCK_SCENARIOS = {"block_rand0", "block_rand1", "block_rand2", "block_rand3",
-                   "blocks_rand0", "blocks_rand1"}
+DETECTION_SCENARIOS = {"missing_middle"} | HOLE_SCENARIOS
+# Blocks (BLOCK_SCENARIOS): fixed (p50<=0.15, >=98% within 0.5s) OR flagged counts as caught.
 DEFAULT_SCENARIOS = ["clean",
                      "uniform", "uniform_neg", "uniform_p03", "uniform_m07",
                      "uniform_p15", "uniform_m5",
@@ -1244,7 +1239,7 @@ def main(argv=None):
                             if name in BLOCK_SCENARIOS:
                                 _rec = rec.get("recovered") or {}
                                 _fixed = (_rec.get("p50") is not None
-                                          and _rec.get("p50", 9) <= 0.15
+                                          and _rec["p50"] <= 0.15
                                           and _rec.get("frac_le_0_5s", 0) >= 0.98)
                                 rec["caught"] = bool(_fixed or rec.get("flag") != "ok")
                             if name in ("swap", "drift_swap", "many_swaps"):

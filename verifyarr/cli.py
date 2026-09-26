@@ -46,8 +46,9 @@ def _execute_command(cfg: Config, conn, *, trigger: str, run_kind: str, force: b
     """Create + synchronously execute one CLI run — the identical two lines every command
     ends with, so a future change (e.g. run bookkeeping) lands in one place."""
     run_id = jobs.create_run(conn, trigger, run_kind, cfg.dry_run, force, **(create_kwargs or {}))
-    jobs.execute_run(run_id, cfg, conn, threading.Event(), run_kind,
-                     trigger=trigger, **execute_kwargs)
+    jobs.execute_run(run_id, cfg, conn, threading.Event(), run_kind, trigger=trigger,
+                     lock_wait_s=None if run_kind == "sweep" else jobs.SINGLE_LOCK_WAIT_S,
+                     **execute_kwargs)
 
 
 def cmd_sweep(cfg: Config, conn, force: bool, trigger: str = "cli_sweep") -> None:

@@ -3,6 +3,7 @@ subtitle's word content. See `correctness_check` for the main flow and scoring l
 
 from __future__ import annotations
 
+import bisect
 import json
 import statistics
 import re
@@ -90,13 +91,29 @@ def detect_embedded_subtitle_langs(video_path: Path) -> set[str]:
     return langs
 
 
+_DURATION_MEMO: dict = {}
+
+
 def get_duration_seconds(video_path: Path) -> Optional[float]:
+    """ffprobe duration, remembered per (path, mtime, size): 3-6 callers per file."""
+    try:
+        st = Path(video_path).stat()
+        key = (str(video_path), st.st_mtime_ns, st.st_size)
+    except OSError:
+        key = None
+    if key in _DURATION_MEMO:
+        return _DURATION_MEMO[key]
     data = _ffprobe_json(video_path, "-show_entries", "format=duration", timeout=60)
     dur = data.get("format", {}).get("duration")
     try:
-        return float(dur) if dur else None
+        out = float(dur) if dur else None
     except (TypeError, ValueError):
-        return None
+        out = None
+    if key is not None and out is not None:
+        if len(_DURATION_MEMO) >= 64:
+            _DURATION_MEMO.pop(next(iter(_DURATION_MEMO)))
+        _DURATION_MEMO[key] = out
+    return out
 
 
 # Multipart uploads have to declare what they actually are: correctness.py sends WAV clips,
@@ -726,6 +743,13 @@ MISSING_MIDDLE_MIN_WORDS_TINY = 50
 def missing_middle_min_words(model: Optional[str]) -> int:
     return MISSING_MIDDLE_MIN_WORDS_TINY if "tiny" in (model or "").lower() \
         else MISSING_MIDDLE_MIN_WORDS
+
+
+def clears_missing_middle(secs: float, words: int, min_words: int) -> bool:
+    """One gap's speech clears both bars."""
+    return secs >= MISSING_MIDDLE_MIN_SPEECH_S and words >= min_words
+
+
 # Sampled mode transcribes only the gaps, not the file: every bare gap >= 50s
 # (60s holes leave >= 56.8s bare), whole, in clip-sized pieces, stopping once the
 # bar is met. Sampling part of a gap does not work: healthy SH gaps reach 1.2
@@ -806,7 +830,7 @@ def missing_middle_evidence(subs, segments: list[dict],
     gaps = all_gaps(subs, duration_s) if duration_s else cue_gaps(subs)
     for g0, g1 in gaps:
         secs, words = gap_speech(segments, g0, g1)
-        if secs >= MISSING_MIDDLE_MIN_SPEECH_S and words >= min_words \
+        if clears_missing_middle(secs, words, min_words) \
                 and (best is None or secs > best["speech_s"]):
             best = {"gap_start": g0, "gap_end": g1, "speech_s": secs, "words": words}
     return best
@@ -861,10 +885,11 @@ def dense_anchor_points(subs, segments: list[dict], clip_s: float = 30.0,
     most lines of a short block (E04 0:30-2:50: 3 of 9)."""
     from verifyarr.subtitles import _match_segments_to_lines
     segs = sorted(segments, key=lambda s: float(s.get("start") or 0.0))
+    starts = [float(s.get("start") or 0.0) for s in segs]
     end = max((float(s.get("end") or 0.0) for s in segs), default=0.0)
     out, t = [], 0.0
     while t < end:
-        clip = [s for s in segs if t <= float(s.get("start") or 0.0) < t + clip_s]
+        clip = segs[bisect.bisect_left(starts, t):bisect.bisect_left(starts, t + clip_s)]
         if clip:
             m = _match_segments_to_lines(clip, 0.0, subs, t - before_s, t + clip_s + after_s)
             if m:
