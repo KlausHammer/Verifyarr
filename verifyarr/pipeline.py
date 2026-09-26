@@ -32,6 +32,7 @@ from verifyarr.subtitles import (
     FPS_RATIOS, FPS_ANCHOR_TILT_MIN_S, FPS_BINNED_TILT_MIN_S, FPS_LOO_TILT_MIN_S,
     FPS_VAD_TILT_MIN_S, FPS_MIN_ANCHORS,
     FPS_MAX_BASE_SPREAD_S, rate_gates_pass, rate_is_flat, snap_rate, RATE_MIN_TILT_S,
+    probe_gates_pass, stretch_ratio, stretch_name,
 )
 from verifyarr.sync_engine import (
     resolve_alass_bin, resolve_alass_reference, run_alass, parse_alass_shift_blocks,
@@ -313,10 +314,10 @@ def presync_from_screen(subs, screen: dict, cfg: Config):
     pts = _fps_points(screen.get("collected") or {})
     probe = _dense_probe(pts)
     if probe is not None and _stretch_gates_pass(probe):
-        fixed = copy.deepcopy(subs)
-        worst = apply_fps_rescale(fixed, 1.0 / (1.0 - probe["slope"]), offset=probe["intercept"])
+        ratio = stretch_ratio(probe)
+        fixed, worst = _rescaled(subs, ratio, probe["intercept"])
         if worst >= cfg.min_change_seconds:
-            return fixed, (f"rate {(1.0 / (1.0 - probe['slope']) - 1) * 100:+.2f}% "
+            return fixed, (f"rate {(ratio - 1) * 100:+.2f}% "
                            f"({probe['n']} anchors, {probe['keep_frac']:.0%} on the line)")
     shift = screen.get("shift")
     spread = screen.get("spread")
@@ -801,7 +802,7 @@ def _ramp_rescue_probe(result: dict, new_subs, cfg: Config) -> Optional[dict]:
     probe = _dense_probe(pts)
     if not _stretch_gates_pass(probe) and not _ramp_overwhelming(probe):
         return None
-    ratio = 1.0 / (1.0 - probe["slope"])
+    ratio = stretch_ratio(probe)
     if max_quartile_residual_after(pts, ratio, probe["intercept"]) > FPS_RESID_MAX_S:
         return None
     trial = copy.deepcopy(new_subs)
@@ -1334,12 +1335,8 @@ def _stretch_gates_pass(p: Optional[dict]) -> bool:
     """The five readings that separate a whole-file rate error from a block error. Shared by
     the post-alass fix (_try_stretch_rescale) and the pre-alass correction
     (presync_from_screen) so the two can never disagree about what a stretch looks like."""
-    if p is None or p.get("rho") is None:
-        return False
-    return (p["n"] >= STRETCH_MIN_POINTS and abs(p["tilt"]) >= STRETCH_MIN_TILT_S
-            and abs(p["slope"]) <= STRETCH_MAX_RATE and abs(p["rho"]) >= STRETCH_RHO_MIN
-            and p["gain"] >= STRETCH_MIN_GAIN_S and p["resid"] <= STRETCH_MAX_RESID_S
-            and p["keep_frac"] >= STRETCH_MIN_KEEP_FRAC)
+    return probe_gates_pass(p, STRETCH_MIN_POINTS, STRETCH_MIN_TILT_S, STRETCH_RHO_MIN,
+                            STRETCH_MIN_KEEP_FRAC, STRETCH_MIN_GAIN_S, STRETCH_MAX_RESID_S)
 
 
 def _try_stretch_rescale(subtitle_path: Path, cfg: Config, media_root: Path,
@@ -1412,18 +1409,17 @@ def _apply_stretch_fix(subtitle_path: Path, cfg: Config, media_root: Path,
     """Applies a stretch probe that already passed its gates (quartile, threshold, write)."""
     # a = (s + c) / (1 - m): the rate and the offset are one inverse. alass has
     # usually shifted the file already, so undoing only the rate leaves its shift.
-    ratio = 1.0 / (1.0 - p["slope"])
+    ratio = stretch_ratio(p)
     left = max_quartile_residual_after(pts, ratio, p["intercept"])
     if left > FPS_RESID_MAX_S:
         log.info("stretch rescale %s for %s discarded: %.1fs left in one quarter",
                  f"{(ratio - 1) * 100:+.2f}%", subtitle_path.name, left)
         return None
-    fixed = copy.deepcopy(current_subs)
-    worst = apply_fps_rescale(fixed, ratio, offset=p["intercept"])
+    fixed, worst = _rescaled(current_subs, ratio, p["intercept"])
     if worst < cfg.min_change_seconds:
         return None
     _write_fix(subtitle_path, cfg, media_root, fixed)
-    name = f"stretch {(ratio - 1) * 100:+.2f}%"
+    name = stretch_name(ratio)
     info = _stretch_info(name, ratio, p, worst)
     note = (f" rate {name} offset {p['intercept']:+.1f}s "
             f"(tilt {p['tilt']:+.1f}s over {p['n']} anchors, "
@@ -1710,8 +1706,7 @@ def _dense_pool(conn: sqlite3.Connection, video_path: Path, subs, cfg: Config) -
     segments = _cached_full_segments(conn, video_path, cfg)
     if not segments:
         return []
-    return [(float(a), float(c)) for smp in dense_anchor_points(subs, segments)
-            for a, c in smp["anchor_points"]]
+    return _fps_points({"samples": dense_anchor_points(subs, segments)})
 
 
 def _dense_probe(pts: list) -> Optional[dict]:

@@ -634,11 +634,27 @@ RATE_SNAP_RATIOS = ((1000 / 1001, "24/23.976"), (1001 / 1000, "23.976/24"),
 RATE_SNAP_TOL = 0.0008
 
 
+def stretch_ratio(p: dict) -> float:
+    """new_t = ratio * (t + intercept) undoes a probe's slope."""
+    return 1.0 / (1.0 - p["slope"])
+
+
+def stretch_name(ratio: float) -> str:
+    return f"stretch {(ratio - 1) * 100:+.2f}%"
+
+
+def probe_gates_pass(p: Optional[dict], min_points: int, min_tilt: float, min_rho: float,
+                     min_keep: float, min_gain: float, max_resid: float) -> bool:
+    """A stretch_probe reading that looks like one whole-file rate, under the given bars."""
+    return (p is not None and p.get("rho") is not None and p["n"] >= min_points
+            and abs(p["tilt"]) >= min_tilt and abs(p["rho"]) >= min_rho
+            and p["keep_frac"] >= min_keep and p["gain"] >= min_gain
+            and p["resid"] <= max_resid and abs(p["slope"]) <= STRETCH_MAX_RATE)
+
+
 def rate_gates_pass(p: Optional[dict]) -> bool:
-    return (p is not None and p.get("rho") is not None and p["n"] >= RATE_MIN_POINTS
-            and abs(p["tilt"]) >= RATE_MIN_TILT_S and abs(p["rho"]) >= RATE_MIN_RHO
-            and p["keep_frac"] >= RATE_MIN_KEEP and p["gain"] >= RATE_MIN_GAIN_S
-            and p["resid"] <= RATE_MAX_RESID_S and abs(p["slope"]) <= STRETCH_MAX_RATE)
+    return probe_gates_pass(p, RATE_MIN_POINTS, RATE_MIN_TILT_S, RATE_MIN_RHO,
+                            RATE_MIN_KEEP, RATE_MIN_GAIN_S, RATE_MAX_RESID_S)
 
 
 def rate_is_flat(p: Optional[dict], tight: bool = False) -> bool:
@@ -652,14 +668,14 @@ def rate_is_flat(p: Optional[dict], tight: bool = False) -> bool:
 def snap_rate(points, p: dict) -> tuple[float, float, str]:
     """(ratio, offset, name) for new_t = ratio * (t + offset) from (audio, cue)
     points. A real conversion ratio wins when it fits the line as well."""
-    ratio, off = 1.0 / (1.0 - p["slope"]), p["intercept"]
+    ratio, off = stretch_ratio(p), p["intercept"]
     line = [(a, s) for a, s in points
             if abs(a - ratio * (s + off)) <= STRETCH_KEEP_TRIM_S] or list(points)
 
     def mad(r, o):
         return statistics.median(abs(a - r * (s + o)) for a, s in line)
 
-    measured = (mad(ratio, off), ratio, off, f"stretch {(ratio - 1) * 100:+.2f}%")
+    measured = (mad(ratio, off), ratio, off, stretch_name(ratio))
     snaps = []
     for r, name in RATE_SNAP_RATIOS:
         if abs(r / ratio - 1) <= RATE_SNAP_TOL:
