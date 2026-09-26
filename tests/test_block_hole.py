@@ -101,6 +101,31 @@ class MissingMiddleTests(unittest.TestCase):
         hit = C.missing_middle_evidence(subs, segs, duration_s=200.0)
         self.assertIsNone(hit)
 
+    def test_tiny_bar_is_lower(self):
+        self.assertEqual(C.missing_middle_min_words("ggml-tiny.en.bin"), 50)
+        self.assertEqual(C.missing_middle_min_words("tiny.en-greedy-cpu"), 50)
+        self.assertEqual(C.missing_middle_min_words("ggml-large-v3-turbo.bin"), 100)
+        self.assertEqual(C.missing_middle_min_words(None), 100)
+
+    def test_seventy_words_caught_on_tiny_only(self):
+        # A 16-line skip on tiny carries ~71 words (SH_S01E03 tail).
+        subs = _subs((0, 10, "a"), (500, 510, "b"))
+        segs = _segs((20, 60, " ".join(f"w{i}" for i in range(71))))
+        self.assertIsNotNone(C.missing_middle_evidence(subs, segs, min_words=50))
+        self.assertIsNone(C.missing_middle_evidence(subs, segs))
+
+
+class MatrixModelKeyTests(unittest.TestCase):
+    def test_cfg_names_the_tested_model(self):
+        # Transcript cache and hole bar key on the tested model, not the default.
+        import tempfile
+        from verifyarr import db
+        with tempfile.TemporaryDirectory() as td:
+            conn = db.connect(Path(td) / "t.db")
+            cfg = M.cfg_for(conn, groq_model="turbo-q5_0")
+            conn.close()
+        self.assertEqual(M.full_transcript_cache_key(cfg)[1], "ggml-turbo-q5_0.bin")
+
 
 class BlockClusterTests(unittest.TestCase):
     def test_two_close_anchors_off_the_median_flag(self):

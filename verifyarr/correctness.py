@@ -730,9 +730,17 @@ def anchor_jitter(samples: list[dict], min_anchors: int = JITTER_MIN_ANCHORS) ->
 # clears every model; skips of >= 10 lines are caught 91-98% (tiny.en-greedy
 # 98%), >= ~20 lines 100%. Speech density does NOT separate across models
 # (turbo's long segments put real skips at 0.7-1.3 words/s).
+# tiny (greedy, as shipped) gets 50: healthy SH peaks at 34, 16-line skips
+# carry 71; 52 real episodes on tiny: 50 and 100 flag the same files.
 MISSING_MIDDLE_MIN_GAP_S = 20.0
 MISSING_MIDDLE_MIN_SPEECH_S = 15.0
 MISSING_MIDDLE_MIN_WORDS = 100
+MISSING_MIDDLE_MIN_WORDS_TINY = 50
+
+
+def missing_middle_min_words(model: Optional[str]) -> int:
+    return MISSING_MIDDLE_MIN_WORDS_TINY if "tiny" in (model or "").lower() \
+        else MISSING_MIDDLE_MIN_WORDS
 # Sampled mode transcribes only the gaps, not the file: every bare gap >= 50s
 # (60s holes leave >= 56.8s bare), whole, in clip-sized pieces, stopping once the
 # bar is met. Sampling part of a gap does not work: healthy SH gaps reach 1.2
@@ -802,16 +810,18 @@ def gap_speech(segments: list[dict], g0: float, g1: float) -> tuple[float, int]:
 
 
 def missing_middle_evidence(subs, segments: list[dict],
-                            duration_s: Optional[float] = None) -> Optional[dict]:
+                            duration_s: Optional[float] = None,
+                            min_words: Optional[int] = None) -> Optional[dict]:
     """Loudest cue gap clearing both speech bars, or None. Segments must already
     carry full_transcript_for_check's own filters (nonspeech + repetition loops):
     unfiltered, one turbo loop hallucinated 653 words into a healthy gap.
     duration_s adds head/tail gaps (truncated downloads)."""
     best = None
+    min_words = MISSING_MIDDLE_MIN_WORDS if min_words is None else min_words
     gaps = all_gaps(subs, duration_s) if duration_s else cue_gaps(subs)
     for g0, g1 in gaps:
         secs, words = gap_speech(segments, g0, g1)
-        if secs >= MISSING_MIDDLE_MIN_SPEECH_S and words >= MISSING_MIDDLE_MIN_WORDS \
+        if secs >= MISSING_MIDDLE_MIN_SPEECH_S and words >= min_words \
                 and (best is None or secs > best["speech_s"]):
             best = {"gap_start": g0, "gap_end": g1, "speech_s": secs, "words": words}
     return best

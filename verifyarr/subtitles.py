@@ -615,6 +615,69 @@ def max_quartile_residual_after(points, ratio: float, offset: float = 0.0,
     return worst
 
 
+# Whole-file rate on DENSE pools (every matched line of the full transcript, on
+# the pre-sync file). SH tiny: healthy/block/hole |tilt| <= 0.4s; 0.1-4.3%
+# rates read 2.0-92s at |rho| >= 0.74, keep >= 0.90, gain >= 0.27, resid <= 0.32.
+# Blocks: keep <= 0.65 or gain < 0 with resid 0.61. Intercept bias +-0.09s.
+RATE_MIN_POINTS = 40
+RATE_MIN_TILT_S = 1.5
+RATE_MIN_RHO = 0.70
+RATE_MIN_KEEP = 0.90
+RATE_MIN_GAIN_S = 0.20
+RATE_MAX_RESID_S = 0.40
+# Flat = nothing left to fix: tilt and offset inside Whisper noise. Tight is
+# the healthy SH ceiling (tilt 0.4s, offset 0.09s): a file already fixed
+# elsewhere is only left alone when it is that good (p50 0.31s slipped at 1.0).
+RATE_FLAT_TILT_S = 1.0
+RATE_FLAT_OFFSET_S = 0.25
+RATE_TIGHT_TILT_S = 0.5
+RATE_TIGHT_OFFSET_S = 0.15
+# A block staircase on a ramp reads flat but spreads (healthy SH resid <= 0.28s).
+RATE_TIGHT_RESID_S = 0.30
+# Real conversions; measured rates land within 0.06 points of them.
+RATE_SNAP_RATIOS = ((1000 / 1001, "24/23.976"), (1001 / 1000, "23.976/24"),
+                    (24 / 25, "25/24"), (25 / 24, "24/25"),
+                    (24000 / 1001 / 25, "25/23.976"), (25 / (24000 / 1001), "23.976/25"))
+RATE_SNAP_TOL = 0.0008
+
+
+def rate_gates_pass(p: Optional[dict]) -> bool:
+    return (p is not None and p.get("rho") is not None and p["n"] >= RATE_MIN_POINTS
+            and abs(p["tilt"]) >= RATE_MIN_TILT_S and abs(p["rho"]) >= RATE_MIN_RHO
+            and p["keep_frac"] >= RATE_MIN_KEEP and p["gain"] >= RATE_MIN_GAIN_S
+            and p["resid"] <= RATE_MAX_RESID_S and abs(p["slope"]) <= STRETCH_MAX_RATE)
+
+
+def rate_is_flat(p: Optional[dict], tight: bool = False) -> bool:
+    tilt, off = ((RATE_TIGHT_TILT_S, RATE_TIGHT_OFFSET_S) if tight
+                 else (RATE_FLAT_TILT_S, RATE_FLAT_OFFSET_S))
+    return (p is not None and p["keep_frac"] >= RATE_MIN_KEEP
+            and abs(p["tilt"]) < tilt and abs(p["intercept"]) < off
+            and (not tight or p["resid"] <= RATE_TIGHT_RESID_S))
+
+
+def snap_rate(points, p: dict) -> tuple[float, float, str]:
+    """(ratio, offset, name) for new_t = ratio * (t + offset) from (audio, cue)
+    points. A real conversion ratio wins when it fits the line as well."""
+    ratio, off = 1.0 / (1.0 - p["slope"]), p["intercept"]
+    line = [(a, s) for a, s in points
+            if abs(a - ratio * (s + off)) <= STRETCH_KEEP_TRIM_S] or list(points)
+
+    def mad(r, o):
+        return statistics.median(abs(a - r * (s + o)) for a, s in line)
+
+    measured = (mad(ratio, off), ratio, off, f"stretch {(ratio - 1) * 100:+.2f}%")
+    snaps = []
+    for r, name in RATE_SNAP_RATIOS:
+        if abs(r / ratio - 1) <= RATE_SNAP_TOL:
+            o = statistics.median(a / r - s for a, s in line)
+            snaps.append((mad(r, o), r, o, name))
+    best = min(snaps) if snaps else None
+    if best is None or best[0] > measured[0] + 0.02:
+        best = measured
+    return best[1], best[2], best[3]
+
+
 def anchor_drift_signature(points, trim_s: float = FPS_ANCHOR_TRIM_S,
                            min_points: int = FPS_MIN_ANCHORS,
                            nbins: int = FPS_BINS, min_votes: int = FPS_MIN_VOTES,

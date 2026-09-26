@@ -30,6 +30,7 @@ from verifyarr.subtitles import (
     FPS_RATIOS, FPS_ANCHOR_TILT_MIN_S, FPS_BINNED_TILT_MIN_S, FPS_LOO_TILT_MIN_S,
     FPS_VAD_TILT_MIN_S, FPS_MIN_ANCHORS,
     FPS_MAX_BASE_SPREAD_S, FPS_ANCHOR_TRIM_S,
+    rate_gates_pass, rate_is_flat, snap_rate, RATE_MIN_TILT_S,
 )
 from verifyarr.sync_engine import (
     resolve_alass_bin, resolve_alass_reference, run_alass, parse_alass_shift_blocks,
@@ -45,7 +46,7 @@ from verifyarr.correctness import (
     anchor_jitter, JITTER_MIN_MAD_S, JITTER_ESCALATE_MAD_S,
     ANCHOR_RESYNC_INTERVAL_S, ANCHOR_SUSPECT_MIN_SAMPLES,
     cue_gaps, all_gaps, missing_middle_evidence, MISSING_MIDDLE_ESCALATE_GAP_S,
-    gap_probe_windows, gap_speech, MISSING_MIDDLE_MIN_SPEECH_S, MISSING_MIDDLE_MIN_WORDS,
+    gap_probe_windows, gap_speech, MISSING_MIDDLE_MIN_SPEECH_S, missing_middle_min_words,
     anchor_block_clusters, anchor_point_runs, dense_anchor_points,
     full_transcript_cache_key,
 )
@@ -732,6 +733,8 @@ def sync_pair(video_path: Path, subtitle_path: Path, lang: Optional[str], cfg: C
         # on top of a bad fit inherits its damage. Popped in correctness_and_finish; never
         # persisted (same handling as _ambiguous_sync).
         row["_pre_sync_subs"] = baseline_subs
+        if presync is not None:
+            row["_orig_subs"] = old_subs  # rate step measures the untouched file
         row["sync_status"] = f"fixed (Δ{max_shift:.1f}s)"
         row["note"] += presync_note + blocks_note + structural_note
     return row, current_subs
@@ -1563,6 +1566,7 @@ def _missing_middle_probe(video_path: Path, subs, cfg: Config, audio_lang: Optio
     from verifyarr import line_order as _lo
     from verifyarr import correctness as _corr
     duration = get_duration_seconds(video_path)
+    min_words = missing_middle_min_words(full_transcript_cache_key(cfg)[1])
     best = None
     with tempfile.TemporaryDirectory() as td:
         for g0, g1 in all_gaps(subs, duration, MISSING_MIDDLE_ESCALATE_GAP_S):
@@ -1578,9 +1582,9 @@ def _missing_middle_probe(video_path: Path, subs, cfg: Config, audio_lang: Optio
                     except (KeyError, TypeError, ValueError):
                         continue
                 secs, words = gap_speech(_drop_repetition_loops(_drop_nonspeech(segs)), g0, g1)
-                if secs >= MISSING_MIDDLE_MIN_SPEECH_S and words >= MISSING_MIDDLE_MIN_WORDS:
+                if secs >= MISSING_MIDDLE_MIN_SPEECH_S and words >= min_words:
                     break  # bar met, no need to hear the rest
-            if secs >= MISSING_MIDDLE_MIN_SPEECH_S and words >= MISSING_MIDDLE_MIN_WORDS \
+            if secs >= MISSING_MIDDLE_MIN_SPEECH_S and words >= min_words \
                     and (best is None or secs > best["speech_s"]):
                 best = {"gap_start": g0, "gap_end": g1, "speech_s": secs, "words": words}
     return best
@@ -1605,7 +1609,8 @@ def _missing_middle_hit(conn: sqlite3.Connection, video_path: Path, subs, cfg: C
     if not segments:
         return None
     return missing_middle_evidence(subs, segments,
-                                   duration_s=get_duration_seconds(video_path))
+                                   duration_s=get_duration_seconds(video_path),
+                                   min_words=missing_middle_min_words(model))
 
 
 def _block_runs_hit(conn: sqlite3.Connection, video_path: Path, subs, cfg: Config,
@@ -1644,6 +1649,79 @@ def _block_runs_hit(conn: sqlite3.Connection, video_path: Path, subs, cfg: Confi
             log.info("block run %s-%s (%+.1fs) not confirmed by VAD -- Whisper timing, not the file",
                      _mmss(r["from"]), _mmss(r["to"]), r["dev"])
     return kept
+
+
+def _dense_pool(conn: sqlite3.Connection, video_path: Path, subs, cfg: Config) -> list:
+    """(audio, cue) for every matched line against the cached full transcript."""
+    provider, model = full_transcript_cache_key(cfg)
+    cached = db.get_full_transcript_cache(conn, video_path, stt_provider=provider, stt_model=model)
+    if cached is None or not cached.get("segments"):
+        return []
+    segments = _drop_repetition_loops(_drop_nonspeech(cached["segments"]))
+    return [(float(a), float(c)) for smp in dense_anchor_points(subs, segments)
+            for a, c in smp["anchor_points"]]
+
+
+def _dense_probe(pts: list) -> Optional[dict]:
+    return stretch_probe([(a, a - c) for a, c in pts]) if pts else None
+
+
+def _try_rate_from_baseline(conn: sqlite3.Connection, video_path: Path, subtitle_path: Path,
+                            cfg: Config, media_root: Path, baseline, current):
+    """Rate error fixed from the pre-sync file over the full transcript.
+
+    alass answers a drift with one shift (or blocks) and leaves the ramp; the
+    discrete path only knows 0.1%. Dense anchors on the untouched file read any
+    rate and offset directly; a real conversion ratio is snapped to. Skipped when
+    the current file is already flat. The fix must come out flat itself.
+    Returns (fixed_subs, note_fragment, info) or None."""
+    if not cfg.fps_check_enabled or cfg.dry_run or baseline is None:
+        return None
+    pts = _dense_pool(conn, video_path, baseline, cfg)
+    p = _dense_probe(pts)
+    if not rate_gates_pass(p):
+        return None
+    if current is not baseline and rate_is_flat(
+            _dense_probe(_dense_pool(conn, video_path, current, cfg)), tight=True):
+        return None
+    ratio, offset, name = snap_rate(pts, p)
+    import copy as _copy
+    # Second look from the coarse fix: the original only matches while its
+    # offset fits the window (PAL: first ~20 min). Mapped back, whole file.
+    coarse = _copy.deepcopy(baseline)
+    apply_fps_rescale(coarse, ratio, offset=offset)
+    full = [(a, c / ratio - offset) for a, c in _dense_pool(conn, video_path, coarse, cfg)]
+    p_full = _dense_probe(full)
+    if p_full is not None and p_full["keep_frac"] >= p["keep_frac"] - 0.05:
+        ratio, offset, name = snap_rate(full, p_full)
+    fixed = _copy.deepcopy(baseline)
+    worst = apply_fps_rescale(fixed, ratio, offset=offset)
+    after = _dense_probe(_dense_pool(conn, video_path, fixed, cfg))
+    if not rate_is_flat(after):
+        log.info("rate %s for %s discarded: not flat after (%s)", name, subtitle_path.name,
+                 after and f"tilt {after['tilt']:+.2f}s, offset {after['intercept']:+.2f}s")
+        return None
+    if worst < cfg.min_change_seconds:
+        return None
+    _write_fix(subtitle_path, cfg, media_root, fixed)
+    info = {"name": name, "kind": "stretch", "ratio": ratio, "atilt": p["tilt"],
+            "vtilt": None, "n_anchors": p["n"], "n_vad": 0, "worst": worst, "probe": p}
+    note = (f" rate {name} offset {offset:+.1f}s from the original file over the full "
+            f"transcript (tilt {p['tilt']:+.1f}s over {p['n']} lines, rho {p['rho']:+.2f}, "
+            f"{p['keep_frac']:.0%} on the line; flat after: tilt {after['tilt']:+.2f}s).")
+    log.info("rate fix %s for %s:%s", name, subtitle_path.name, note)
+    return fixed, note, info
+
+
+def _rate_says_needs_full(collected: dict, cfg: Config) -> bool:
+    """Sampled pool leans like a rate: buy the full transcript to measure it."""
+    if cfg.whisper_mode != "sampled" or not cfg.fps_check_enabled \
+            or collected.get("full_coverage"):
+        return False
+    p = stretch_probe([(a, a - c) for a, c in _fps_points(collected)])
+    return (p is not None and p.get("rho") is not None
+            and abs(p["tilt"]) >= RATE_MIN_TILT_S and abs(p["rho"]) >= 0.6
+            and p["keep_frac"] >= 0.8)
 
 
 def _vad_says_needs_full(video_path: Path, collected: dict, subs, cfg: Config) -> bool:
@@ -1815,6 +1893,7 @@ def correctness_and_finish(video_path: Path, subtitle_path: Path, lang: Optional
     # Popped immediately: it's a pysubs2 object sync_pair left for _try_anchor_resync, and nothing
     # that gets persisted or serialized may still be carrying it (see apply_pending_sync).
     pre_sync_subs = row.pop("_pre_sync_subs", None)
+    orig_subs = row.pop("_orig_subs", None)
     if current_subs is None:
         # sync_pair couldn't parse the original subtitle at all -- nothing to correctness-check.
         row["whisper_cost"] = _row_cost(row)
@@ -1879,7 +1958,8 @@ def correctness_and_finish(video_path: Path, subtitle_path: Path, lang: Optional
             deferred = row.get("_ambiguous_sync") or {}
             blocks = deferred.get("blocks_split_count") or row.get("sync_split_blocks")
             screen_hit = _screen_says_needs_full(collected, cfg, blocks)
-            fps_hit = not screen_hit and _fps_says_needs_full(collected, cfg)
+            fps_hit = not screen_hit and (_fps_says_needs_full(collected, cfg)
+                                          or _rate_says_needs_full(collected, cfg))
             jitter_hit = not (screen_hit or fps_hit) and _jitter_says_needs_full(collected, cfg)
             swap_hit = not (screen_hit or fps_hit or jitter_hit) \
                 and _swap_says_needs_full(collected, current_subs, cfg)
@@ -1978,6 +2058,8 @@ def correctness_and_finish(video_path: Path, subtitle_path: Path, lang: Optional
             # _try_anchor_resync falls back to when alass's own fit can't be planned from.
             if ambiguous is not None and pre_sync_subs is None:
                 pre_sync_subs = ambiguous.get("old_subs")
+            if ambiguous is not None and orig_subs is None:
+                orig_subs = ambiguous.get("orig_subs")
             resolved_winner = None
             # Resolution below may hand back sparse samples; the step test needs these.
             escalated_samples = result.get("samples") if result.get("full_coverage") else None
@@ -2016,8 +2098,12 @@ def correctness_and_finish(video_path: Path, subtitle_path: Path, lang: Optional
             # gathered against cue times this fix just changed, so re-gather before
             # the verdict chain judges the corrected file.
             ramp_probe_saved = row.pop("_ramp_rescued", None)
-            fps_fix = _try_fps_rescale(conn, video_path, subtitle_path, lang, cfg,
-                                       media_root, current_subs, result)
+            fps_fix = _try_rate_from_baseline(conn, video_path, subtitle_path, cfg, media_root,
+                                              orig_subs or pre_sync_subs or current_subs,
+                                              current_subs)
+            if fps_fix is None:
+                fps_fix = _try_fps_rescale(conn, video_path, subtitle_path, lang, cfg,
+                                           media_root, current_subs, result)
             if fps_fix is None and ramp_probe_saved is not None:
                 # The normal path cannot fire here (new's SUSPECT flag, or a
                 # second-path pool under the strict keep bar) -- but the rescue

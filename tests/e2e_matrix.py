@@ -87,6 +87,7 @@ import contextlib
 import copy
 import json
 import random
+import math
 import re
 import statistics
 import sys
@@ -141,7 +142,10 @@ TIMING_SCENARIOS = {"uniform", "uniform_neg", "uniform_p03", "uniform_m07", "uni
                     "missing_middle", "gap", "drift_swap", "fps_late", "fps_early",
                     "dropdup", "jitter",
                     "block_rand0", "block_rand1", "block_rand2", "block_rand3",
-                    "blocks_rand0", "blocks_rand1"}
+                    "blocks_rand0", "blocks_rand1",
+                    "drift_rand0", "drift_rand1", "drift_rand2", "drift_rand3",
+                    "drift_rand4", "drift_rand5",
+                    "ratio_rand0", "ratio_rand1", "ratio_rand2", "ratio_rand3"}
 # Everything runs by default. Nothing is opt-in any more: fps_late/fps_early used to be
 # held out on the grounds that alass already fixed them, but "alass still does it" is
 # exactly the kind of assumption that goes stale silently -- and they are the only rate
@@ -366,6 +370,9 @@ def cfg_for(conn, mode="full", audio="on", **over) -> Config:
     if LOCAL_VAD_BINARY.exists() and LOCAL_VAD_MODEL.exists():
         vals.update(vad_binary=str(LOCAL_VAD_BINARY), vad_model=str(LOCAL_VAD_MODEL))
     vals.update(over)
+    # Name the tested model: transcript cache and hole bar key on it.
+    if over.get("groq_model"):
+        vals.setdefault("local_whisper_model", f"ggml-{over['groq_model']}.bin")
     for k, v in vals.items():
         object.__setattr__(cfg, k, v)
     return cfg
@@ -737,6 +744,35 @@ def corrupt_block_random(subs, rng, lo_len=90.0, hi_len=600.0, lo_shift=2.0, hi_
                        "shift_s": round(shift, 2)}
 
 
+def _stretch_offset(subs, rate, offset_s):
+    out = copy.deepcopy(subs)
+    for e in out.events:
+        e.start = max(0, int(e.start * (1 + rate) + offset_s * 1000))
+        e.end = max(e.start + 200, int(e.end * (1 + rate) + offset_s * 1000))
+    return out
+
+
+def corrupt_drift_random(subs, rng, lo=0.0015, hi=0.05, max_offset_s=10.0):
+    """Any rate 0.15-5% (log-uniform, either sign) plus an offset up to +/-10s."""
+    rate = math.exp(rng.uniform(math.log(lo), math.log(hi))) * rng.choice((-1, 1))
+    offset = rng.uniform(-max_offset_s, max_offset_s)
+    return _stretch_offset(subs, rate, offset), None, {
+        "rate": round(rate, 5), "offset_s": round(offset, 2)}
+
+
+# Real conversions: 23.976<->24, 24<->25 (PAL), 23.976<->25.
+REAL_RATIOS = (1001 / 1000, 25 / 24, 25 / (24000 / 1001))
+
+
+def corrupt_ratio_random(subs, rng, max_offset_s=10.0):
+    """A real conversion ratio, random direction, plus an offset up to +/-10s."""
+    r = rng.choice(REAL_RATIOS)
+    r = r if rng.random() < 0.5 else 1 / r
+    offset = rng.uniform(-max_offset_s, max_offset_s)
+    return _stretch_offset(subs, r - 1, offset), None, {
+        "rate": round(r - 1, 5), "offset_s": round(offset, 2)}
+
+
 def corrupt_blocks_random(subs, rng, n_lo=2, n_hi=3):
     """2-3 non-overlapping random blocks, each 90-300s shifted +/-2-20s."""
     out = copy.deepcopy(subs)
@@ -955,6 +991,8 @@ SCENARIOS = {
     "block_rand0": corrupt_block_random, "block_rand1": corrupt_block_random,
     "block_rand2": corrupt_block_random, "block_rand3": corrupt_block_random,
     "blocks_rand0": corrupt_blocks_random, "blocks_rand1": corrupt_blocks_random,
+    **{f"drift_rand{i}": corrupt_drift_random for i in range(6)},
+    **{f"ratio_rand{i}": corrupt_ratio_random for i in range(4)},
     # Old name kept so historical commands and jsonl comparisons still resolve.
     "gap": corrupt_missing_middle,
 }
