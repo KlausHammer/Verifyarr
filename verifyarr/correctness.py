@@ -723,37 +723,76 @@ def anchor_jitter(samples: list[dict], min_anchors: int = JITTER_MIN_ANCHORS) ->
     return statistics.median(mads) if len(mads) >= min_anchors else None
 
 
-# A missing middle: a cue gap holding a whole scene's dialogue. Healthy SH gaps
-# (6 episodes x 15 models, production-filtered transcripts) peak at 133 words /
-# 82.6s (base.en-q5_1, song scene); one credits stretch reaches 112.3s but only
-# 20 words (turbo-q5_0) -- seconds alone don't separate, words do. Injected 300s
-# cuts sit at 116-232s / 330-734 words. Both bars must clear, on full coverage;
-# 200 words sits midway (x1.5 over healthy, x1.65 under injected).
+# A missing middle (or head/tail): a cue gap holding dialogue. Music-tagged
+# segments (♪/♫) don't count. Healthy SH gaps across 15 models + the turbo
+# out/ transcripts peak at 86 words (turbo-q5_0; tiny.en-greedy 34): bigger
+# models transcribe background TV/radio the subtitle rightly skips. 100 words
+# clears every model; skips of >= 10 lines are caught 91-98% (tiny.en-greedy
+# 98%), >= ~20 lines 100%. Speech density does NOT separate across models
+# (turbo's long segments put real skips at 0.7-1.3 words/s).
 MISSING_MIDDLE_MIN_GAP_S = 20.0
-MISSING_MIDDLE_MIN_SPEECH_S = 90.0
-MISSING_MIDDLE_MIN_WORDS = 200
-# Sampled trigger: a bare cue gap this long buys the full transcript (free signal,
-# no Whisper). Healthy SH has two (178s E01, 174s E02); they cost a look, not a flag.
-MISSING_MIDDLE_ESCALATE_GAP_S = 120.0
+MISSING_MIDDLE_MIN_SPEECH_S = 15.0
+MISSING_MIDDLE_MIN_WORDS = 100
+# Sampled mode transcribes only the gaps, not the file: every bare gap >= 50s
+# (60s holes leave >= 56.8s bare), whole, in clip-sized pieces, stopping once the
+# bar is met. Sampling part of a gap does not work: healthy SH gaps reach 1.2
+# words/s in places (untitled speech at E03 5:39, every model) while a tiny probe
+# of a real 300s hole read 0.96 -- only the whole-gap count separates (86 vs 100).
+# Cost on SH: 4-6 min of audio per episode vs 45-60 for the full transcript.
+MISSING_MIDDLE_ESCALATE_GAP_S = 50.0
+
+
+def gap_probe_windows(g0: float, g1: float, clip_s: float) -> list[tuple[float, float]]:
+    """Back-to-back (start, duration) clips covering one gap."""
+    out, t = [], g0
+    while t < g1 - 0.5:
+        out.append((t, min(clip_s, g1 - t)))
+        t += clip_s
+    return out
 
 
 def cue_gaps(subs, min_gap_s: float = MISSING_MIDDLE_MIN_GAP_S) -> list[tuple[float, float]]:
     """(start, end) seconds of every between-cues hole >= min_gap_s."""
     ev = sorted(subs.events, key=lambda e: e.start)
-    return [(a.end / 1000.0, b.start / 1000.0) for a, b in zip(ev, ev[1:])
-            if (b.start - a.end) / 1000.0 >= min_gap_s]
+    out, max_end = [], None
+    for e in ev:
+        if max_end is not None and (e.start - max_end) / 1000.0 >= min_gap_s:
+            out.append((max_end / 1000.0, e.start / 1000.0))
+        max_end = e.end if max_end is None else max(max_end, e.end)
+    return out
+
+
+def all_gaps(subs, duration_s: Optional[float],
+             min_gap_s: float = MISSING_MIDDLE_MIN_GAP_S) -> list[tuple[float, float]]:
+    """cue_gaps plus head [0, first cue] and tail [last cue, duration]."""
+    gaps = list(cue_gaps(subs, min_gap_s))
+    if not subs.events:
+        return gaps
+    ev = sorted(subs.events, key=lambda e: e.start)
+    if ev[0].start / 1000.0 >= min_gap_s:
+        gaps.append((0.0, ev[0].start / 1000.0))
+    if duration_s:
+        tail0 = max(e.end for e in ev) / 1000.0
+        if duration_s - tail0 >= min_gap_s:
+            gaps.append((tail0, duration_s))
+    return gaps
+
+
+def _is_music(text: str) -> bool:
+    return "♪" in text or "♫" in text
 
 
 def gap_speech(segments: list[dict], g0: float, g1: float) -> tuple[float, int]:
     """(overlap seconds, words) of transcript segments in [g0, g1). Words count
-    segments starting inside (one utterance, one vote); seconds count overlap."""
+    segments starting inside (one utterance, one vote); seconds count overlap.
+    Music-tagged segments don't count -- a song is not a missing scene."""
     secs, words = 0.0, 0
     for s in segments:
         try:
             st, en = float(s["start"]), float(s["end"])
         except (KeyError, TypeError, ValueError):
             continue
-        if en <= st:
+        if en <= st or _is_music(s.get("text") or ""):
             continue
         if min(en, g1) - max(st, g0) > 0:
             secs += min(en, g1) - max(st, g0)
@@ -762,17 +801,119 @@ def gap_speech(segments: list[dict], g0: float, g1: float) -> tuple[float, int]:
     return secs, words
 
 
-def missing_middle_evidence(subs, segments: list[dict]) -> Optional[dict]:
+def missing_middle_evidence(subs, segments: list[dict],
+                            duration_s: Optional[float] = None) -> Optional[dict]:
     """Loudest cue gap clearing both speech bars, or None. Segments must already
     carry full_transcript_for_check's own filters (nonspeech + repetition loops):
-    unfiltered, one turbo loop hallucinated 653 words into a healthy gap."""
+    unfiltered, one turbo loop hallucinated 653 words into a healthy gap.
+    duration_s adds head/tail gaps (truncated downloads)."""
     best = None
-    for g0, g1 in cue_gaps(subs):
+    gaps = all_gaps(subs, duration_s) if duration_s else cue_gaps(subs)
+    for g0, g1 in gaps:
         secs, words = gap_speech(segments, g0, g1)
         if secs >= MISSING_MIDDLE_MIN_SPEECH_S and words >= MISSING_MIDDLE_MIN_WORDS \
                 and (best is None or secs > best["speech_s"]):
             best = {"gap_start": g0, "gap_end": g1, "speech_s": secs, "words": words}
     return best
+
+
+# A block the clip anchors miss: raw matched lines (one per cue, not clip
+# medians -- sparse dialogue leaves most clips under 3 lines) that run
+# together at one offset: >= 4 of k in a row, tight, off the file.
+# tiny.en-greedy full transcript: healthy SH peaks at 1.43s (k=6, MAD<=0.5);
+# injected blocks 90-600s x 2.3-20s sit at 2.64s and up (24/24). Model-bound:
+# other models run 2-12s on healthy SH (collapsed timestamps), see 14.33.
+POINT_RUN_K = 6
+POINT_RUN_MIN_DEV_S = 2.0
+POINT_RUN_MAX_MAD_S = 0.5
+
+
+def anchor_point_runs(samples: list[dict], k: int = POINT_RUN_K,
+                      min_dev: float = POINT_RUN_MIN_DEV_S,
+                      max_mad: float = POINT_RUN_MAX_MAD_S) -> list[dict]:
+    """Stretches where k consecutive matched lines share one offset away from the
+    file's: [{"from","to","dev","n"}], merged. Uses anchor_points (audio, cue)."""
+    pts: dict[float, float] = {}
+    for s in samples or []:
+        for a, c in s.get("anchor_points") or []:
+            pts[float(a)] = float(a) - float(c)
+    seq = sorted(pts.items())
+    if len(seq) < k:
+        return []
+    ref = statistics.median(sh for _, sh in seq)
+    runs: list[dict] = []
+    for i in range(len(seq) - k + 1):
+        win = [sh - ref for _, sh in seq[i:i + k]]
+        m = statistics.median(win)
+        if abs(m) < min_dev or statistics.median(abs(x - m) for x in win) > max_mad:
+            continue
+        lo, hi = seq[i][0], seq[i + k - 1][0]
+        if runs and lo <= runs[-1]["to"] and (runs[-1]["dev"] > 0) == (m > 0):
+            r = runs[-1]
+            r["to"], r["n"] = hi, r["n"] + 1
+            r["dev"] = m if abs(m) > abs(r["dev"]) else r["dev"]
+        else:
+            runs.append({"from": lo, "to": hi, "dev": round(m, 2), "n": k})
+    for r in runs:
+        r["dev"] = round(r["dev"], 2)
+    return runs
+
+
+def dense_anchor_points(subs, segments: list[dict], clip_s: float = 30.0,
+                        before_s: float = 30.0, after_s: float = 60.0) -> list[dict]:
+    """Every matched line over back-to-back clips of a full transcript, as
+    samples for anchor_point_runs. Production clips sit ~60s apart and miss
+    most lines of a short block (E04 0:30-2:50: 3 of 9)."""
+    from verifyarr.subtitles import _match_segments_to_lines
+    segs = sorted(segments, key=lambda s: float(s.get("start") or 0.0))
+    end = max((float(s.get("end") or 0.0) for s in segs), default=0.0)
+    out, t = [], 0.0
+    while t < end:
+        clip = [s for s in segs if t <= float(s.get("start") or 0.0) < t + clip_s]
+        if clip:
+            m = _match_segments_to_lines(clip, 0.0, subs, t - before_s, t + clip_s + after_s)
+            if m:
+                out.append({"start": t, "anchor_points":
+                            [(a["segment_start_abs"], a["matched_line_start_sec"]) for a in m]})
+        t += clip_s
+    return out
+
+
+# A block: >=2 anchors >2.5s off the file median within 5 minutes, or one >5s.
+# Healthy SH (tiny.en-greedy) peaks at 1.96s deviation, so 2.5s clears with
+# margin; a 180s block holds 2-4 anchors. Scattered singles are Whisper noise.
+BLOCK_CLUSTER_MIN_ANCHORS = 2
+BLOCK_CLUSTER_DEV_S = 2.5
+BLOCK_CLUSTER_WINDOW_S = 300.0
+BLOCK_SINGLE_S = 5.0
+
+
+def anchor_block_clusters(samples: list[dict], dev_s: float = BLOCK_CLUSTER_DEV_S,
+                          single_s: float = BLOCK_SINGLE_S,
+                          window_s: float = BLOCK_CLUSTER_WINDOW_S) -> list[list[dict]]:
+    """Groups of off-median anchors sharing a 5-minute window (block shape).
+
+    Returns the had samples per cluster (for resync/notes), [] when clean.
+    Absolute shift is not used: a uniform offset moves every anchor together."""
+    pts = sorted((s["start"], s["anchor"]["shift"], s) for s in samples
+                 if s.get("anchor") and s.get("start") is not None)
+    if len(pts) < 2:
+        return []
+    ref = statistics.median(sh for _, sh, _ in pts)
+    bad = [(t, sh, s) for t, sh, s in pts if abs(sh - ref) > dev_s]
+    huge = [[s] for _, sh, s in pts if abs(sh - ref) > single_s]
+    if huge:
+        return huge
+    out, cur = [], []
+    for t, _sh, s in bad:
+        if cur and t - cur[0][0] > window_s:
+            if len(cur) >= BLOCK_CLUSTER_MIN_ANCHORS:
+                out.append([s for _, _, s in cur])
+            cur = []
+        cur.append((t, _sh, s))
+    if len(cur) >= BLOCK_CLUSTER_MIN_ANCHORS:
+        out.append([s for _, _, s in cur])
+    return out
 
 
 # A block remainder: k consecutive anchors whose median sits min_dev off the file's.

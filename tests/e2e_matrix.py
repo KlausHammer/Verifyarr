@@ -139,7 +139,9 @@ TIMING_SCENARIOS = {"uniform", "uniform_neg", "uniform_p03", "uniform_m07", "uni
                     "uniform_m5", "drift", "drift_offset", "pal_late", "pal_early",
                     "piecewise", "piecewise_b", "piecewise_c", "cut_version",
                     "missing_middle", "gap", "drift_swap", "fps_late", "fps_early",
-                    "dropdup", "jitter"}
+                    "dropdup", "jitter",
+                    "block_rand0", "block_rand1", "block_rand2", "block_rand3",
+                    "blocks_rand0", "blocks_rand1"}
 # Everything runs by default. Nothing is opt-in any more: fps_late/fps_early used to be
 # held out on the grounds that alass already fixed them, but "alass still does it" is
 # exactly the kind of assumption that goes stale silently -- and they are the only rate
@@ -153,9 +155,18 @@ TIMING_SCENARIOS = {"uniform", "uniform_neg", "uniform_p03", "uniform_m07", "uni
 # wrong_episode and jitter are the sharp ones: there is no correction to make, and
 # inventing one is worse than reporting the file.
 NO_CHANGE_SCENARIOS = {"clean", "missing_middle", "gap", "dropdup", "jitter",
-                       "wrong_episode", "uniform_p03"}
+                       "wrong_episode", "uniform_p03",
+                       "hole_rand0", "hole_rand1", "hole_rand2", "hole_rand3",
+                       "trunc_start_rand0", "trunc_start_rand1",
+                       "trunc_end_rand0", "trunc_end_rand1"}
 # Detection-only: untouched is half the answer; the file must ALSO be flagged.
-DETECTION_SCENARIOS = {"missing_middle"}
+DETECTION_SCENARIOS = {"missing_middle",
+                       "hole_rand0", "hole_rand1", "hole_rand2", "hole_rand3",
+                       "trunc_start_rand0", "trunc_start_rand1",
+                       "trunc_end_rand0", "trunc_end_rand1"}
+# Blocks: fixed (p50<=0.15, >=98% within 0.5s) OR flagged counts as caught.
+BLOCK_SCENARIOS = {"block_rand0", "block_rand1", "block_rand2", "block_rand3",
+                   "blocks_rand0", "blocks_rand1"}
 DEFAULT_SCENARIOS = ["clean",
                      "uniform", "uniform_neg", "uniform_p03", "uniform_m07",
                      "uniform_p15", "uniform_m5",
@@ -332,6 +343,10 @@ def _fresh_conn_cfg(work, key, mode, audio, model, esc_over):
     return conn, cfg_for(conn, mode, audio, groq_model=model, **esc_over)
 
 
+LOCAL_VAD_BINARY = Path("/home/hammer/whisper.cpp/build/bin/whisper-vad-speech-segments")
+LOCAL_VAD_MODEL = SWEEP.parent / "model" / "ggml-silero-v5.1.2.bin"
+
+
 def cfg_for(conn, mode="full", audio="on", **over) -> Config:
     cfg = Config.from_db(conn)
     vals = dict(
@@ -347,6 +362,9 @@ def cfg_for(conn, mode="full", audio="on", **over) -> Config:
         # silently overridden; test_escalation_follows_the_shipped_default guards it now.
         window_minutes=0.5, overlap_threshold=0.25,
     )
+    # VAD like the Docker image (binary shipped, Silero model mounted), when present here.
+    if LOCAL_VAD_BINARY.exists() and LOCAL_VAD_MODEL.exists():
+        vals.update(vad_binary=str(LOCAL_VAD_BINARY), vad_model=str(LOCAL_VAD_MODEL))
     vals.update(over)
     for k, v in vals.items():
         object.__setattr__(cfg, k, v)
@@ -661,6 +679,89 @@ def corrupt_cut_version(subs, rng, cut_seconds=300.0):
                        "post_cut_shift_s": -cut_seconds}
 
 
+def corrupt_hole_random(subs, rng, lo_s=60.0, hi_s=300.0):
+    """Random hole 60-300s at 10-90%: same shape as missing_middle, new draw."""
+    out = copy.deepcopy(subs)
+    dur = max(e.end for e in out.events) / 1000.0
+    size = rng.uniform(lo_s, hi_s)
+    g0 = dur * rng.uniform(0.10, 0.90)
+    if g0 + size > dur:
+        g0 = max(0.0, dur - size)
+    g1 = g0 + size
+    kept = [i for i, e in enumerate(out.events)
+            if not (g0 * 1000 <= e.start and e.end <= g1 * 1000)]
+    out.events = [out.events[i] for i in kept]
+    return out, kept, {"gap_start_s": round(g0, 1), "gap_end_s": round(g1, 1),
+                       "size_s": round(size, 1),
+                       "removed_lines": len(subs.events) - len(kept)}
+
+
+def corrupt_trunc_start_random(subs, rng, lo_s=60.0, hi_s=300.0):
+    """Random 60-300s cut off the head: download stopped early at the start."""
+    out = copy.deepcopy(subs)
+    removed = rng.uniform(lo_s, hi_s)
+    t0 = min(e.start for e in out.events) / 1000.0
+    kept = [i for i, e in enumerate(out.events)
+            if e.start / 1000.0 >= t0 + removed]
+    out.events = [out.events[i] for i in kept]
+    return out, kept, {"removed_s": round(removed, 1),
+                       "removed_lines": len(subs.events) - len(kept)}
+
+
+def corrupt_trunc_end_random(subs, rng, lo_s=60.0, hi_s=300.0):
+    """Random 60-300s cut off the tail: download stopped early at the end."""
+    out = copy.deepcopy(subs)
+    removed = rng.uniform(lo_s, hi_s)
+    dur = max(e.end for e in out.events) / 1000.0
+    kept = [i for i, e in enumerate(out.events)
+            if e.start / 1000.0 < dur - removed]
+    out.events = [out.events[i] for i in kept]
+    return out, kept, {"removed_s": round(removed, 1),
+                       "removed_lines": len(subs.events) - len(kept)}
+
+
+def corrupt_block_random(subs, rng, lo_len=90.0, hi_len=600.0, lo_shift=2.0, hi_shift=20.0):
+    """One random block 90-600s shifted +/-2-20s, anywhere incl. edges."""
+    out = copy.deepcopy(subs)
+    dur = max(e.end for e in out.events) / 1000.0
+    length = rng.uniform(lo_len, hi_len)
+    b0 = dur * rng.uniform(0.0, 0.95)
+    if b0 + length > dur:
+        b0 = max(0.0, dur - length)
+    shift = rng.uniform(lo_shift, hi_shift) * rng.choice((-1, 1))
+    for e in out.events:
+        if b0 <= e.start / 1000.0 < b0 + length:
+            e.start = max(0, int(e.start + shift * 1000))
+            e.end = max(e.start + 200, int(e.end + shift * 1000))
+    return out, None, {"block_start_s": round(b0, 1), "length_s": round(length, 1),
+                       "shift_s": round(shift, 2)}
+
+
+def corrupt_blocks_random(subs, rng, n_lo=2, n_hi=3):
+    """2-3 non-overlapping random blocks, each 90-300s shifted +/-2-20s."""
+    out = copy.deepcopy(subs)
+    dur = max(e.end for e in out.events) / 1000.0
+    n = rng.randint(n_lo, n_hi)
+    blocks, tries = [], 0
+    while len(blocks) < n and tries < 50:
+        tries += 1
+        length = rng.uniform(90.0, 300.0)
+        b0 = dur * rng.uniform(0.0, 0.95)
+        if b0 + length > dur:
+            b0 = max(0.0, dur - length)
+        if any(b0 < hi + 30 and b0 + length + 30 > lo for lo, hi, _ in blocks):
+            continue
+        blocks.append((b0, b0 + length, rng.uniform(2.0, 20.0) * rng.choice((-1, 1))))
+    for b0, b1, shift in blocks:
+        for e in out.events:
+            if b0 <= e.start / 1000.0 < b1:
+                e.start = max(0, int(e.start + shift * 1000))
+                e.end = max(e.start + 200, int(e.end + shift * 1000))
+    detail = {"blocks": [{"start_s": round(b0, 1), "length_s": round(b1 - b0, 1),
+                          "shift_s": round(s, 2)} for b0, b1, s in blocks]}
+    return out, None, detail
+
+
 def corrupt_dropdup(subs, rng, frac=0.05):
     """5% of cues dropped and 5% duplicated in place -- merge/OCR damage. The timings
     that survive are CORRECT, so the pass mark is that nothing is broken: no crash, no
@@ -843,6 +944,17 @@ SCENARIOS = {
     "wrong_episode": corrupt_wrong_episode,
     "swap": corrupt_swap, "drift_swap": corrupt_drift_swap,
     "many_swaps": corrupt_many_swaps,
+    # Randomized sizes/positions (seeded per slug+scenario, like piecewise_b/c).
+    # Opt-in via --scenarios; DEFAULT_SCENARIOS stays fixed for comparability.
+    "hole_rand0": corrupt_hole_random, "hole_rand1": corrupt_hole_random,
+    "hole_rand2": corrupt_hole_random, "hole_rand3": corrupt_hole_random,
+    "trunc_start_rand0": corrupt_trunc_start_random,
+    "trunc_start_rand1": corrupt_trunc_start_random,
+    "trunc_end_rand0": corrupt_trunc_end_random,
+    "trunc_end_rand1": corrupt_trunc_end_random,
+    "block_rand0": corrupt_block_random, "block_rand1": corrupt_block_random,
+    "block_rand2": corrupt_block_random, "block_rand3": corrupt_block_random,
+    "blocks_rand0": corrupt_blocks_random, "blocks_rand1": corrupt_blocks_random,
     # Old name kept so historical commands and jsonl comparisons still resolve.
     "gap": corrupt_missing_middle,
 }
@@ -1091,6 +1203,12 @@ def main(argv=None):
                             if name in DETECTION_SCENARIOS:
                                 rec["detected"] = (rec.get("flag") != "ok"
                                                    and bool(rec.get("untouched")))
+                            if name in BLOCK_SCENARIOS:
+                                _rec = rec.get("recovered") or {}
+                                _fixed = (_rec.get("p50") is not None
+                                          and _rec.get("p50", 9) <= 0.15
+                                          and _rec.get("frac_le_0_5s", 0) >= 0.98)
+                                rec["caught"] = bool(_fixed or rec.get("flag") != "ok")
                             if name in ("swap", "drift_swap", "many_swaps"):
                                 rec["swap"] = swap_recovery(ref, after_ev, detail.get("swapped", []))
                                 rec["swap_detail"] = swap_index_detail(
@@ -1169,6 +1287,8 @@ def build_summary(results, models, slugs, scen, modes=None, audios=None):
             entry["untouched"] = len(un)
         if name in DETECTION_SCENARIOS:
             entry["detected"] = sum(1 for r in rows if r.get("detected"))
+        if name in BLOCK_SCENARIOS:
+            entry["caught"] = sum(1 for r in rows if r.get("caught"))
         if name in ("swap", "drift_swap", "many_swaps"):
             sw = [r["swap"] for r in rows if "swap" in r and r["swap"].get("frac_restored") is not None]
             if sw:

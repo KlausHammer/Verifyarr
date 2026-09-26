@@ -44,7 +44,9 @@ from verifyarr.correctness import (
     whisper_cost, anchor_slope_breaks, anchor_run_offsets, get_duration_seconds,
     anchor_jitter, JITTER_MIN_MAD_S, JITTER_ESCALATE_MAD_S,
     ANCHOR_RESYNC_INTERVAL_S, ANCHOR_SUSPECT_MIN_SAMPLES,
-    cue_gaps, missing_middle_evidence, MISSING_MIDDLE_ESCALATE_GAP_S,
+    cue_gaps, all_gaps, missing_middle_evidence, MISSING_MIDDLE_ESCALATE_GAP_S,
+    gap_probe_windows, gap_speech, MISSING_MIDDLE_MIN_SPEECH_S, MISSING_MIDDLE_MIN_WORDS,
+    anchor_block_clusters, anchor_point_runs, dense_anchor_points,
     full_transcript_cache_key,
 )
 # Same filters full_transcript_for_check applies on the way out: the cache holds raw
@@ -276,6 +278,12 @@ def _screen_pair(video_path: Path, subtitle_path: Path, lang: Optional[str], cfg
             out["spread"] is not None and out["spread"] >= SCREEN_TOLERANCE_S,
             out["tilt"] is not None and abs(out["tilt"]) >= SCREEN_TOLERANCE_S]
     out["verdict"] = "needs_sync" if any(over) else "ok"
+    if out["verdict"] == "ok":
+        # Median/MAD ignore a minority by design; a block IS a minority.
+        # No verdict here -- just run alass, which decides what moves.
+        if anchor_block_clusters(collected.get("samples") or []):
+            out["verdict"] = "needs_sync"
+            out["reason"] = "off-median anchor cluster (possible block)"
     if out["verdict"] == "ok" and subs.events:
         duration = get_duration_seconds(video_path)
         tail = duration - max(e.end for e in subs.events) / 1000.0 if duration else None
@@ -1549,13 +1557,38 @@ def _jitter_says_needs_full(collected: dict, cfg: Config) -> bool:
     return jit is not None and jit >= JITTER_ESCALATE_MAD_S
 
 
-def _missing_middle_says_needs_full(collected: dict, subs, cfg: Config) -> bool:
-    """A bare cue gap >= 120s buys the full transcript; the gap verdict needs it."""
-    if cfg.whisper_mode != "sampled" or not cfg.escalate_sampled_to_full:
-        return False
-    if collected.get("full_coverage") or collected.get("skipped"):
-        return False
-    return bool(cue_gaps(subs, MISSING_MIDDLE_ESCALATE_GAP_S))
+def _missing_middle_probe(video_path: Path, subs, cfg: Config, audio_lang: Optional[str],
+                          cancel_event=None) -> Optional[dict]:
+    """Sampled mode: transcribe only the bare gaps and judge them like the full path."""
+    from verifyarr import line_order as _lo
+    from verifyarr import correctness as _corr
+    duration = get_duration_seconds(video_path)
+    best = None
+    with tempfile.TemporaryDirectory() as td:
+        for g0, g1 in all_gaps(subs, duration, MISSING_MIDDLE_ESCALATE_GAP_S):
+            segs, secs, words = [], 0.0, 0
+            for start, dur in gap_probe_windows(g0, g1, float(cfg.clip_seconds)):
+                res = _lo._extract_and_transcribe(video_path, start, dur, cfg, audio_lang,
+                                                  Path(td), cancel_event=cancel_event)
+                _corr.whisper_cost.fresh_s += dur
+                for sg in (res or {}).get("segments") or []:
+                    try:
+                        segs.append({"start": start + float(sg["start"]),
+                                     "end": start + float(sg["end"]), "text": sg.get("text", "")})
+                    except (KeyError, TypeError, ValueError):
+                        continue
+                secs, words = gap_speech(_drop_repetition_loops(_drop_nonspeech(segs)), g0, g1)
+                if secs >= MISSING_MIDDLE_MIN_SPEECH_S and words >= MISSING_MIDDLE_MIN_WORDS:
+                    break  # bar met, no need to hear the rest
+            if secs >= MISSING_MIDDLE_MIN_SPEECH_S and words >= MISSING_MIDDLE_MIN_WORDS \
+                    and (best is None or secs > best["speech_s"]):
+                best = {"gap_start": g0, "gap_end": g1, "speech_s": secs, "words": words}
+    return best
+
+
+def _runs_text(runs: list) -> str:
+    return ", ".join(f"{_mmss(r['from'])}-{_mmss(r['to'])} ({r['dev']:+.1f}s)"
+                     for r in runs[:4])
 
 
 def _mmss(sec: float) -> str:
@@ -1563,7 +1596,7 @@ def _mmss(sec: float) -> str:
 
 
 def _missing_middle_hit(conn: sqlite3.Connection, video_path: Path, subs, cfg: Config) -> Optional[dict]:
-    """Gap evidence from the cached full transcript, or None without one."""
+    """Gap evidence (mid, head, tail) from the cached full transcript, or None."""
     provider, model = full_transcript_cache_key(cfg)
     cached = db.get_full_transcript_cache(conn, video_path, stt_provider=provider, stt_model=model)
     if cached is None or not cached.get("segments"):
@@ -1571,7 +1604,58 @@ def _missing_middle_hit(conn: sqlite3.Connection, video_path: Path, subs, cfg: C
     segments = _drop_repetition_loops(_drop_nonspeech(cached["segments"]))
     if not segments:
         return None
-    return missing_middle_evidence(subs, segments)
+    return missing_middle_evidence(subs, segments,
+                                   duration_s=get_duration_seconds(video_path))
+
+
+def _block_runs_hit(conn: sqlite3.Connection, video_path: Path, subs, cfg: Config,
+                    proven_block: bool = False) -> list:
+    """Point runs on the file on disk against the cached full transcript, or [].
+
+    proven_block: the file already had a block (resync or alass block fit), so a
+    short remainder counts -- 3 lines in a row 5s+ out. Not used otherwise: one
+    healthy SH file carries such a triple (repeated line, -13.7s)."""
+    provider, model = full_transcript_cache_key(cfg)
+    cached = db.get_full_transcript_cache(conn, video_path, stt_provider=provider, stt_model=model)
+    if cached is None or not cached.get("segments"):
+        return []
+    segments = _drop_repetition_loops(_drop_nonspeech(cached["segments"]))
+    if not segments:
+        return []
+    pts = dense_anchor_points(subs, segments)
+    runs = anchor_point_runs(pts)
+    if not runs and proven_block:
+        runs = anchor_point_runs(pts, k=3, min_dev=5.0, max_mad=1.0)
+    if not runs:
+        return runs
+    # Whisper timestamps drift for a minute at a time on some models (SH_S01E04 22:47,
+    # turbo -3.6s on a correct file). The audio's own speech pattern decides, when set up.
+    from verifyarr.vad import speech_timeline, shift_fits_speech
+    ivs = speech_timeline(video_path, cfg)
+    if not ivs:
+        return runs
+    kept = []
+    for r in runs:
+        cues = [(e.start / 1000.0, e.end / 1000.0) for e in subs.events
+                if r["from"] - 5 <= e.start / 1000.0 <= r["to"] + 5]
+        if shift_fits_speech(ivs, cues, r["dev"]):
+            kept.append(r)
+        else:
+            log.info("block run %s-%s (%+.1fs) not confirmed by VAD -- Whisper timing, not the file",
+                     _mmss(r["from"]), _mmss(r["to"]), r["dev"])
+    return kept
+
+
+def _vad_says_needs_full(video_path: Path, collected: dict, subs, cfg: Config) -> bool:
+    """Sampled clips miss blocks between them; VAD sees the whole file for CPU only."""
+    if cfg.whisper_mode != "sampled" or not cfg.escalate_sampled_to_full:
+        return False
+    if collected.get("full_coverage") or collected.get("skipped"):
+        return False
+    from verifyarr.vad import speech_timeline, block_witness
+    ivs = speech_timeline(video_path, cfg)
+    return bool(ivs) and block_witness(ivs, [(e.start / 1000.0, e.end / 1000.0)
+                                             for e in subs.events])
 
 
 def _swap_says_needs_full(collected: dict, subs, cfg: Config) -> bool:
@@ -1624,6 +1708,14 @@ def _screen_says_needs_full(collected: dict, cfg: Config, sync_blocks: Optional[
     # 283 sampled files that end correct and unflagged carry one.
     if any(s.get("anchor") and abs(s["anchor"]["shift"]) >= ANCHOR_HUGE_SINGLE_S
            for s in samples):
+        return True
+    # One anchor 2.5s+ out is a block witness (sparse sampling lands 0-1 clips
+    # in a 180s block). Dense evidence decides -- this only buys the look.
+    if any(s.get("anchor") and abs(s["anchor"]["shift"]) > ANCHOR_SUSPECT_THRESHOLD_S
+           for s in samples):
+        return True
+    # Three matched lines in a row at one offset: the block verdict needs more lines.
+    if anchor_point_runs(samples, k=3):
         return True
     if cfg.escalate_only_multi_block and not (sync_blocks or 0) > 1:
         return False
@@ -1789,10 +1881,10 @@ def correctness_and_finish(video_path: Path, subtitle_path: Path, lang: Optional
             screen_hit = _screen_says_needs_full(collected, cfg, blocks)
             fps_hit = not screen_hit and _fps_says_needs_full(collected, cfg)
             jitter_hit = not (screen_hit or fps_hit) and _jitter_says_needs_full(collected, cfg)
-            gap_hit = not (screen_hit or fps_hit or jitter_hit) \
-                and _missing_middle_says_needs_full(collected, current_subs, cfg)
-            swap_hit = not (screen_hit or fps_hit or jitter_hit or gap_hit) \
+            swap_hit = not (screen_hit or fps_hit or jitter_hit) \
                 and _swap_says_needs_full(collected, current_subs, cfg)
+            vad_hit = not (screen_hit or fps_hit or jitter_hit or swap_hit) \
+                and _vad_says_needs_full(video_path, collected, current_subs, cfg)
             if screen_hit:
                 log.info("%s: sampled clips disagree about the timing -- re-checking against "
                          "a full transcript", subtitle_path.name)
@@ -1802,13 +1894,13 @@ def correctness_and_finish(video_path: Path, subtitle_path: Path, lang: Optional
             elif jitter_hit:
                 log.info("%s: sampled anchors are noisy -- confirming against a full "
                          "transcript", subtitle_path.name)
-            elif gap_hit:
-                log.info("%s: subtitle has a long cue gap -- confirming against a full "
-                         "transcript", subtitle_path.name)
             elif swap_hit:
                 log.info("%s: many suspected swapped lines -- confirming against a full "
                          "transcript", subtitle_path.name)
-            if screen_hit or fps_hit or jitter_hit or gap_hit or swap_hit:
+            elif vad_hit:
+                log.info("%s: speech pattern suggests a block -- confirming against a full "
+                         "transcript", subtitle_path.name)
+            if screen_hit or fps_hit or jitter_hit or swap_hit or vad_hit:
                 with tempfile.TemporaryDirectory() as td2:
                     full = collect_samples_full(video_path, current_subs, lang, cfg, Path(td2),
                                                  conn, cancel_event=cancel_event)
@@ -2104,8 +2196,12 @@ def correctness_and_finish(video_path: Path, subtitle_path: Path, lang: Optional
                     # The remainder a repair leaves under every threshold: a run of anchors
                     # 1.5-2.5s off, silent on 3 of 3 such matrix rows before this.
                     run_offsets = anchor_run_offsets(result.get("samples") or [])
+                    # Lines still running together off the file: a half-done repair.
+                    block_left = _block_runs_hit(conn, video_path, current_subs, ev_cfg,
+                                                 proven_block=True)
                     if (result.get("flag") != "ok" or resync_still_bad
-                            or slope_breaks or unproven_step or run_offsets):
+                            or slope_breaks or unproven_step or run_offsets
+                            or block_left):
                         if result.get("flag") not in ("ok", "SUSPECT"):
                             row["correctness_flag"] = "unknown"
                             row["note"] = (row["note"] + " Correctness could not be "
@@ -2147,6 +2243,10 @@ def correctness_and_finish(video_path: Path, subtitle_path: Path, lang: Optional
                                                "file gives no anchor that proves every block "
                                                "was moved -- check it, or fetch a fresh "
                                                "subtitle.").strip()
+                            elif block_left:
+                                row["note"] = (row["note"] + " Block REMAINS after anchor "
+                                               f"resync: {_runs_text(block_left)} -- part of "
+                                               "the episode is still mistimed.").strip()
                             else:
                                 row["note"] = (row["note"] + " Correctness check failed "
                                                "on the resynced file.").strip()
@@ -2189,6 +2289,17 @@ def correctness_and_finish(video_path: Path, subtitle_path: Path, lang: Optional
                 # fall through to the "ok" branch below and be recorded as a passed check.
                 row["correctness_flag"] = "unknown"
                 row["note"] = (row["note"] + f" Correctness could not be determined: {result['flag']}.").strip()
+            elif (runs := _block_runs_hit(conn, video_path, current_subs, cfg,
+                                          proven_block=resolved_winner == "blocks")
+                    if (result.get("full_coverage") or escalated_samples is not None
+                        or cfg.whisper_mode == "full") else []):
+                # Detection only: part of the file sits at another offset.
+                row["correctness_flag"] = "SUSPECT"
+                row["note"] = (row["note"] + f" Part of the episode is out of sync: "
+                               f"{_runs_text(runs)} -- fetch a fresh subtitle.").strip()
+                row["auto_action"] = handle_suspect(subtitle_path, video_path, cfg, media_root, lang,
+                                                     bazarr_meta, history_index, cfg.correctness_auto_action,
+                                                     conn=conn, run_id=run_id, cancel_event=cancel_event)
             elif (jit := anchor_jitter((result.get("samples") if result.get("full_coverage")
                                         else escalated_samples) or [])) is not None \
                     and jit >= JITTER_MIN_MAD_S:
@@ -2202,7 +2313,10 @@ def correctness_and_finish(video_path: Path, subtitle_path: Path, lang: Optional
                                                      conn=conn, run_id=run_id, cancel_event=cancel_event)
             elif (mm := _missing_middle_hit(conn, video_path, current_subs, cfg)
                     if (result.get("full_coverage") or escalated_samples is not None)
-                    else None) is not None:
+                    else _missing_middle_probe(video_path, current_subs, cfg,
+                                               result.get("audio_lang") or lang,
+                                               cancel_event=cancel_event)
+                    if cfg.whisper_mode == "sampled" else None) is not None:
                 # Detection only: the surviving timings are correct, nothing to fix.
                 row["correctness_flag"] = "SUSPECT"
                 row["note"] = (row["note"] +

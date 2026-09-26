@@ -39,8 +39,12 @@ class ScreenTriggerTests(unittest.TestCase):
         # C_S03E09 piecewise_c: alass saw one offset, one anchor sat 20s out.
         self.assertTrue(P._screen_says_needs_full(_samples(19.96, 0.57, 0.52), _cfg(), 1))
 
-    def test_anchor_under_ten_seconds_alone_does_not(self):
-        self.assertFalse(P._screen_says_needs_full(_samples(8.8, 0.2, 0.1), _cfg(), 1))
+    def test_one_block_witness_buys_the_look(self):
+        # Sparse sampling lands 0-1 clips in a 90-180s block; one is enough to look.
+        self.assertTrue(P._screen_says_needs_full(_samples(4.4, 0.2, 0.1), _cfg(), 1))
+
+    def test_anchor_inside_whisper_noise_does_not(self):
+        self.assertFalse(P._screen_says_needs_full(_samples(2.0, 0.2, 0.1), _cfg(), 1))
 
     def test_switch_off_or_full_mode_never_escalates(self):
         s = _samples(19.96, 0.57)

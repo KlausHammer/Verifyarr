@@ -223,6 +223,9 @@ def run_vad_timeline(video_path: Path, binary: str, model: str,
     segments, then to dialogue density. Results are memoized per (path, mtime, size)."""
     if not binary or not model:
         return None
+    # The binary reads WAV only; on a video it hangs or fails (see speech_timeline).
+    if Path(video_path).suffix.lower() != ".wav":
+        return None
     try:
         st = Path(video_path).stat()
         key = (str(video_path), st.st_mtime_ns, st.st_size)
@@ -265,3 +268,99 @@ def run_vad_timeline(video_path: Path, binary: str, model: str,
                     "seems wrong", video_path)
     _VAD_MEMO[key] = intervals
     return intervals
+
+
+def speech_timeline(video_path: Path, cfg) -> Optional[list[tuple[float, float]]]:
+    """Real VAD speech intervals for the whole file, or None when VAD isn't set up.
+    whisper-vad-speech-segments wants WAV, so a video is decoded once to a temp WAV."""
+    binary, model = getattr(cfg, "vad_binary", ""), getattr(cfg, "vad_model", "")
+    if not binary or not model:
+        return None
+    try:
+        st = Path(video_path).stat()
+        key = ("wav", str(video_path), st.st_mtime_ns, st.st_size)
+    except OSError:
+        return None
+    if key in _VAD_MEMO:
+        return _VAD_MEMO[key]
+    out = run_vad_timeline(video_path, binary, model) if Path(video_path).suffix.lower() == ".wav" else None
+    if not out:
+        import tempfile
+        from verifyarr.sync_engine import extract_audio_wav
+        with tempfile.TemporaryDirectory() as td:
+            wav = Path(td) / "audio.wav"
+            out = run_vad_timeline(wav, binary, model) if extract_audio_wav(Path(video_path), wav) else None
+    _VAD_MEMO[key] = out
+    return out
+
+
+def shift_fits_speech(intervals: list[tuple[float, float]], cues: list[tuple[float, float]],
+                      shift: float, pad: float = 20.0, step: float = 0.05) -> bool:
+    """True when the cues sit on speech better moved by shift than where they are.
+    Score = cue time on speech minus cue time on silence (local pattern match)."""
+    if not cues:
+        return False
+    t0 = min(a for a, _ in cues) - pad + min(0.0, shift)
+    t1 = max(b for _, b in cues) + pad + max(0.0, shift)
+    n = int((t1 - t0) / step)
+    if n <= 0:
+        return False
+
+    def _mask(spans):
+        m = bytearray(n)
+        for a, b in spans:
+            for k in range(max(0, int((a - t0) / step)), min(n, int((b - t0) / step))):
+                m[k] = 1
+        return m
+
+    v = _mask([(a, b) for a, b in intervals if b >= t0 and a <= t1])
+
+    def _score(sh):
+        c = _mask([(a + sh, b + sh) for a, b in cues])
+        return sum((1 if x else -1) for x, y in zip(v, c) if y)
+
+    return _score(shift) > _score(0.0)
+
+
+def block_witness(intervals: list[tuple[float, float]], cues: list[tuple[float, float]],
+                  win: float = 60.0, search: float = 30.0, step: float = 0.1) -> bool:
+    """Cheap block suspicion from VAD alone (no Whisper): 60s cue windows, 30s apart,
+    each matched against speech at shifts +-30s. Healthy SH gives stray windows at the
+    search edge; blocks give consecutive windows agreeing on one shift. Measured (SH,
+    tiny): 6/6 silent sampled blocks trigger, 1/6 clean files (a wasted look, no flag).
+    True = worth buying the full transcript; the verdict is taken there."""
+    if not intervals or not cues:
+        return False
+    end = max(b for _, b in cues)
+    hits, t = [], 0.0
+    while t < end:
+        cw = [c for c in cues if t <= c[0] < t + win]
+        if len(cw) >= 6:
+            t0 = t - search - 5.0
+            n = int((win + 2 * search + 10.0) / step)
+            v = bytearray(n)
+            for a, b in intervals:
+                if b < t0 or a > t0 + n * step:
+                    continue
+                for k in range(max(0, int((a - t0) / step)), min(n, int((b - t0) / step))):
+                    v[k] = 1
+
+            def _score(sh):
+                c = bytearray(n)
+                for a, b in cw:
+                    for k in range(max(0, int((a + sh - t0) / step)), min(n, int((b + sh - t0) / step))):
+                        c[k] = 1
+                return sum((1 if x else -1) for x, y in zip(v, c) if y)
+
+            s0 = _score(0.0)
+            best_score, best = max((_score(k * 0.5), k * 0.5)
+                                   for k in range(int(-search * 2), int(search * 2) + 1))
+            total = sum(b - a for a, b in cw) / step
+            gain = (best_score - s0) / max(total, 1.0)
+            hits.append((t, best if abs(best) >= 2.0 and gain >= 0.25 else None, gain))
+        t += win / 2
+    for (t1, s1, g1), (t2, s2, _g2) in zip(hits, hits[1:]):
+        if s1 is not None and s2 is not None and abs(s1 - s2) <= 1.0 and abs(s1) <= search - 5.0 \
+                and t2 - t1 <= win / 2 + 0.1:
+            return True
+    return any(s is not None and abs(s) <= 10.0 and g >= 0.3 for _, s, g in hits)
