@@ -96,6 +96,22 @@ class SilentBlockTests(unittest.TestCase):
         self.assertTrue("Block boundary REMAINS" in note
                         or "NOT verified across the whole episode" in note, note[-200:])
 
+    def test_block_repair_edges_warn_full(self):
+        """SH_S01E01 block_rand0 full: alass' 2-blok-fit flyttede ogsaa de 13
+        korrekte linjer foer blokken 19,6 s. Kanterne kan ikke verificeres --
+        advar, behold rettelsen."""
+        row, rec = _run("SH_S01E01", "block_rand0", mode="full")
+        self.assertIn("sync block(s)", row.get("sync_status") or "")
+        self.assertEqual(row.get("correctness_flag"), "SUSPECT",
+                         f"silent (note: {(row.get('note') or '')[-200:]})")
+        self.assertGreater(rec.get("frac_le_1_0s"), 0.9)
+
+    def test_block_repair_edges_warn_sampled(self):
+        """SH_S01E04 block_rand2 sampled: 3 sync-blokke, 6 linjer tilbage."""
+        row, rec = _run("SH_S01E04", "block_rand2", mode="sampled")
+        self.assertIn("sync block(s)", row.get("sync_status") or "")
+        self.assertEqual(row.get("correctness_flag"), "SUSPECT")
+
     def test_escalated_block_file_is_judged_on_the_full_transcript(self):
         """C_S02E12 sampled piecewise_b: alass' 3-blok-fit eskalerer, men resync og
         recheck faldt tilbage til 16 samplede klip, og den halvt reparerede fil

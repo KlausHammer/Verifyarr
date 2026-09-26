@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import dataclasses
 import json
+import re
 import shutil
 import statistics
 import sqlite3
@@ -1590,6 +1591,19 @@ def _missing_middle_probe(video_path: Path, subs, cfg: Config, audio_lang: Optio
     return best
 
 
+def _block_repair_parts(sync_status: Optional[str]) -> int:
+    """Parts in a block repair on disk ("N sync block(s)" / "N anchor region(s)"), else 0."""
+    m = re.search(r"(\d+) (?:sync block|anchor region)\(s\)", sync_status or "")
+    return int(m.group(1)) if m else 0
+
+
+# A block repair is never verified line by line: its edges land where the anchors
+# put them. SH tiny: 60 of 68 "fixed" block rows kept 1-58 lines 2s+ off (some were
+# correct lines moved with the block). Keep the repair, flag it (arm 2: detect).
+BLOCK_REPAIR_NOTE = (" Block error repaired in {n} parts -- lines near the block edges "
+                     "cannot be verified; fetch a fresh subtitle.")
+
+
 def _runs_text(runs: list) -> str:
     return ", ".join(f"{_mmss(r['from'])}-{_mmss(r['to'])} ({r['dev']:+.1f}s)"
                      for r in runs[:4])
@@ -2287,7 +2301,7 @@ def correctness_and_finish(video_path: Path, subtitle_path: Path, lang: Optional
                                                  proven_block=True)
                     if (result.get("flag") != "ok" or resync_still_bad
                             or slope_breaks or unproven_step or run_offsets
-                            or block_left):
+                            or block_left or len(plan) >= 2):
                         if result.get("flag") not in ("ok", "SUSPECT"):
                             row["correctness_flag"] = "unknown"
                             row["note"] = (row["note"] + " Correctness could not be "
@@ -2333,6 +2347,9 @@ def correctness_and_finish(video_path: Path, subtitle_path: Path, lang: Optional
                                 row["note"] = (row["note"] + " Block REMAINS after anchor "
                                                f"resync: {_runs_text(block_left)} -- part of "
                                                "the episode is still mistimed.").strip()
+                            elif len(plan) >= 2:
+                                row["note"] = (row["note"]
+                                               + BLOCK_REPAIR_NOTE.format(n=len(plan))).strip()
                             else:
                                 row["note"] = (row["note"] + " Correctness check failed "
                                                "on the resynced file.").strip()
@@ -2383,6 +2400,12 @@ def correctness_and_finish(video_path: Path, subtitle_path: Path, lang: Optional
                 row["correctness_flag"] = "SUSPECT"
                 row["note"] = (row["note"] + f" Part of the episode is out of sync: "
                                f"{_runs_text(runs)} -- fetch a fresh subtitle.").strip()
+                row["auto_action"] = handle_suspect(subtitle_path, video_path, cfg, media_root, lang,
+                                                     bazarr_meta, history_index, cfg.correctness_auto_action,
+                                                     conn=conn, run_id=run_id, cancel_event=cancel_event)
+            elif (parts := _block_repair_parts(row.get("sync_status"))) >= 2:
+                row["correctness_flag"] = "SUSPECT"
+                row["note"] = (row["note"] + BLOCK_REPAIR_NOTE.format(n=parts)).strip()
                 row["auto_action"] = handle_suspect(subtitle_path, video_path, cfg, media_root, lang,
                                                      bazarr_meta, history_index, cfg.correctness_auto_action,
                                                      conn=conn, run_id=run_id, cancel_event=cancel_event)
