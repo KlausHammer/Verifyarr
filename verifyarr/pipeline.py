@@ -495,7 +495,7 @@ def apply_pending_sync(subtitle_path: Path, cfg: Config, row: dict, reason: str)
         row["note"] += (f" alass suggested Δ{max_shift_new:.2f}s, under the "
                         f"{cfg.min_change_seconds}s threshold — left as is ({reason}).")
         # Disk holds the original when presync fired; baseline never left temp.
-        return ambiguous.get("orig_subs") or ambiguous["old_subs"]
+        return ambiguous["orig_subs"]
     _write_fix(subtitle_path, cfg, cfg.media_root_for(subtitle_path), new_subs)
     row["sync_status"] = f"fixed (Δ{max_shift_new:.1f}s)"
     row["sync_max_shift_s"] = round(max_shift_new, 2) if max_shift_new is not None else None
@@ -737,8 +737,7 @@ def sync_pair(video_path: Path, subtitle_path: Path, lang: Optional[str], cfg: C
         # on top of a bad fit inherits its damage. Popped in correctness_and_finish; never
         # persisted (same handling as _ambiguous_sync).
         row["_pre_sync_subs"] = baseline_subs
-        if presync is not None:
-            row["_orig_subs"] = old_subs  # rate step measures the untouched file
+        row["_orig_subs"] = old_subs  # rate step measures the untouched file
         row["sync_status"] = f"fixed (Δ{max_shift:.1f}s)"
         row["note"] += presync_note + blocks_note + structural_note
     return row, current_subs
@@ -866,7 +865,7 @@ def _resolve_ambiguous_sync(conn: sqlite3.Connection, video_path: Path, subtitle
     cached."""
     old_subs, new_subs = ambiguous["old_subs"], ambiguous["new_subs"]
     blocks_subs = ambiguous.get("blocks_subs")
-    orig_subs = ambiguous.get("orig_subs") or old_subs
+    orig_subs = ambiguous["orig_subs"]
     had_presync = bool(ambiguous.get("had_presync"))
     single_block = bool(ambiguous.get("single_block"))
     transcript_lang = result.get("audio_lang")
@@ -2139,7 +2138,7 @@ def correctness_and_finish(video_path: Path, subtitle_path: Path, lang: Optional
             if ambiguous is not None and pre_sync_subs is None:
                 pre_sync_subs = ambiguous.get("old_subs")
             if ambiguous is not None and orig_subs is None:
-                orig_subs = ambiguous.get("orig_subs")
+                orig_subs = ambiguous["orig_subs"]
             resolved_winner = None
             # Resolution below may hand back sparse samples; the step test needs these.
             escalated_samples = result.get("samples") if result.get("full_coverage") else None
@@ -2176,7 +2175,7 @@ def correctness_and_finish(video_path: Path, subtitle_path: Path, lang: Optional
             # the verdict chain judges the corrected file.
             ramp_probe_saved = row.pop("_ramp_rescued", None)
             fps_fix = _try_rate_from_baseline(conn, video_path, subtitle_path, cfg, media_root,
-                                              orig_subs or pre_sync_subs or current_subs,
+                                              orig_subs or current_subs,
                                               current_subs)
             if fps_fix is None:
                 fps_fix = _try_fps_rescale(conn, video_path, subtitle_path, lang, cfg,

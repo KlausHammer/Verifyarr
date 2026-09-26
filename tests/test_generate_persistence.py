@@ -55,8 +55,9 @@ class FinishGenerated(TempAppCase):
                "structural_change": False, "sync_split_blocks": None, "sync_block_spread_s": None,
                "correctness_flag": "-", "correctness_avg_score": None, "note": "", "auto_action": "-"}
         if pending:
+            original = _subs(1000, 5000)
             row["_ambiguous_sync"] = {
-                "old_subs": _subs(1000, 5000), "new_subs": _subs(2400, 6400),
+                "old_subs": original, "orig_subs": original, "new_subs": _subs(2400, 6400),
                 "max_shift_new": max_shift, "blocks_subs": _subs(2400, 6600),
                 "max_shift_blocks": max_shift, "blocks_split_count": 2, "blocks_spread": 0.2,
                 "blocks_time_ranges": [], "structural": False,

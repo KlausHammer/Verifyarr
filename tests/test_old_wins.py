@@ -52,7 +52,7 @@ def _resolve(new_res, old_res, blocks_res=None, single_block=False):
             return {"avg_score": None, "flag": None, "samples": samples}
         return {"avg_score": 0.80, "flag": "ok", "samples": samples}
 
-    ambiguous = {"old_subs": old_subs, "new_subs": new_subs,
+    ambiguous = {"old_subs": old_subs, "orig_subs": old_subs, "new_subs": new_subs,
                  "max_shift_new": 8.4, "structural": False,
                  "single_block": single_block}
     if blocks_subs is not None:

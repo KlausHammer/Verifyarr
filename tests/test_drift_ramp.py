@@ -191,7 +191,8 @@ class RampDecisionUnitTests(unittest.TestCase):
             avg, fl = scores[key]
             return {"avg_score": avg, "flag": fl, "samples": samples}
 
-        ambiguous = {"old_subs": old_subs, "new_subs": new_subs, "blocks_subs": blocks_subs,
+        ambiguous = {"old_subs": old_subs, "orig_subs": old_subs, "new_subs": new_subs,
+                     "blocks_subs": blocks_subs,
                      "max_shift_new": 55.5, "max_shift_blocks": 60.0,
                      "blocks_split_count": 4, "blocks_spread": 50.0,
                      "blocks_time_ranges": [(0, 800), (800, 1600), (1600, 2400), (2400, 3200)],
