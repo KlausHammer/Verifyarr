@@ -436,11 +436,6 @@ def _migrate_clip_cache_key(conn: sqlite3.Connection) -> None:
     conn.commit()
 
 
-def init_db(path: Path) -> sqlite3.Connection:
-    """Bevaret navn for bagudkompatibilitet med `verifyarr.cli` — svarer nu til `connect(path)`."""
-    return connect(path)
-
-
 # --- files (sync/correctness status per video+subtitle+language) --------------------------------
 
 def should_skip(conn: sqlite3.Connection, video_path: Path, subtitle_path: Path, cfg=None) -> bool:
@@ -1372,8 +1367,3 @@ def set_setting_raw(conn: sqlite3.Connection, key: str, value: Optional[str]) ->
         ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at
     """, (key, value, now))
     conn.commit()
-
-
-def set_settings_raw(conn: sqlite3.Connection, values: dict) -> None:
-    for k, v in values.items():
-        set_setting_raw(conn, k, v)

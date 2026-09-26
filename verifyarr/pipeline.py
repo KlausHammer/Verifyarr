@@ -23,15 +23,13 @@ from verifyarr.settings import Config
 from verifyarr.subtitles import (
     load_subs, max_shift_stats, summarize_anchor_samples, ANCHOR_PREFER_MARGIN_S,
     ANCHOR_SUSPECT_THRESHOLD_S, plan_anchor_resync, apply_anchor_resync,
-    anchor_spread, ANCHOR_SCREEN_SPREAD_S, anchor_points,
-    tilt_from_points, vad_tilt_from_intervals, apply_fps_rescale, _spread,
+    anchor_spread, ANCHOR_SCREEN_SPREAD_S, vad_tilt_from_intervals, apply_fps_rescale, _spread,
     stretch_probe, STRETCH_MIN_POINTS, STRETCH_MIN_TILT_S, STRETCH_MAX_RATE,
     STRETCH_RHO_MIN, STRETCH_MIN_GAIN_S, STRETCH_MAX_RESID_S, STRETCH_MIN_KEEP_FRAC,
     anchor_drift_signature, max_quartile_residual_after, FPS_RESID_MAX_S,
     FPS_RATIOS, FPS_ANCHOR_TILT_MIN_S, FPS_BINNED_TILT_MIN_S, FPS_LOO_TILT_MIN_S,
     FPS_VAD_TILT_MIN_S, FPS_MIN_ANCHORS,
-    FPS_MAX_BASE_SPREAD_S, FPS_ANCHOR_TRIM_S,
-    rate_gates_pass, rate_is_flat, snap_rate, RATE_MIN_TILT_S,
+    FPS_MAX_BASE_SPREAD_S, rate_gates_pass, rate_is_flat, snap_rate, RATE_MIN_TILT_S,
 )
 from verifyarr.sync_engine import (
     resolve_alass_bin, resolve_alass_reference, run_alass, parse_alass_shift_blocks,
@@ -46,7 +44,7 @@ from verifyarr.correctness import (
     whisper_cost, anchor_slope_breaks, anchor_run_offsets, get_duration_seconds,
     anchor_jitter, JITTER_MIN_MAD_S, JITTER_ESCALATE_MAD_S,
     ANCHOR_RESYNC_INTERVAL_S, ANCHOR_SUSPECT_MIN_SAMPLES,
-    cue_gaps, all_gaps, missing_middle_evidence, MISSING_MIDDLE_ESCALATE_GAP_S,
+    all_gaps, missing_middle_evidence, MISSING_MIDDLE_ESCALATE_GAP_S,
     gap_probe_windows, gap_speech, MISSING_MIDDLE_MIN_SPEECH_S, missing_middle_min_words,
     anchor_block_clusters, anchor_point_runs, dense_anchor_points,
     full_transcript_cache_key,

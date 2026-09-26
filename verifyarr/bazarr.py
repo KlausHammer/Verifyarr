@@ -1,8 +1,6 @@
 """Bazarr API — history lookups/blacklist for automatic cleanup, and (auto-action=remediate)
-fetching a working replacement subtitle on its own. Blacklist/remediate are still
-series/episodes only — but the PURE lookup functions (bazarr_current_subtitle_path_movie,
-bazarr_history_score) work for both, since Bazarr's /movies endpoint has the exact same
-structure as /episodes."""
+fetching a working replacement subtitle on its own. Blacklist/remediate are series/episodes
+only."""
 
 from __future__ import annotations
 
@@ -18,7 +16,6 @@ from verifyarr import db
 from verifyarr.settings import Config
 from verifyarr.correctness import correctness_check
 from verifyarr.discovery import SUBTITLE_EXTS, _lang_from_name_parts
-
 
 
 def bazarr_map_path(cfg: Config, local_path: Path) -> str:
@@ -241,44 +238,6 @@ def bazarr_current_subtitle_path(cfg: Config, series_id, episode_id, lang: str) 
                 if s.get("code2") == lang and s.get("path"):
                     return s["path"]
     return None
-
-
-def bazarr_current_subtitle_path_movie(cfg: Config, radarr_id, lang: str) -> Optional[str]:
-    """The movie version of bazarr_current_subtitle_path — /movies has the exact same
-    subtitles[] structure as /episodes (confirmed against a real Bazarr instance), just
-    without the episode level. Movie support elsewhere in bazarr.py (blacklist/remediate)
-    is still series-only; only this function supports movies."""
-    resp = bazarr_request(cfg, "GET", "/movies", params={"radarrid[]": radarr_id})
-    movies = response_items(resp)
-    for m in movies:
-        if m.get("radarrId") == radarr_id:
-            for s in m.get("subtitles", []):
-                if s.get("code2") == lang and s.get("path"):
-                    return s["path"]
-    return None
-
-
-def bazarr_history_score(cfg: Config, kind: str, subtitles_path: str) -> Optional[float]:
-    """Bazarr's OWN judgment (0-100, from its matches/hash/release-group scoring) of the
-    subtitle last fetched/touched at this path — extracted from the history's `score` field
-    (a string like '94.17%'). None if no history entry exists for the path (e.g. a subtitle
-    that was already there and never went through Bazarr)."""
-    endpoint = "/movies/history" if kind == "movie" else "/episodes/history"
-    resp = bazarr_request(cfg, "GET", endpoint, params={"start": 0, "length": -1})
-    entries = response_items(resp)
-    if not entries:
-        return None
-    # Bazarr returns history newest-first, so the first match for this path is the latest —
-    # there's no reliable sortable timestamp field in the response to double-check that with
-    # (just a human string like "14 minutes ago").
-    best = next((e for e in entries if e.get("subtitles_path") == subtitles_path), None)
-    if best is None:
-        return None
-    raw = str(best.get("score") or "").rstrip("%")
-    try:
-        return float(raw)
-    except ValueError:
-        return None
 
 
 def bazarr_search_candidates(cfg: Config, episode_id, lang: str) -> list[dict]:

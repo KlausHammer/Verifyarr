@@ -43,7 +43,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from verifyarr import line_order as line_order_mod
 from verifyarr import correctness as correctness_mod
-from verifyarr.subtitles import load_subs, tokenize, ANCHOR_MIN_SHARED_TOKENS
+from verifyarr.subtitles import load_subs, tokenize
 
 MEDIA_DIR = Path("/mnt/c/Users/knham/Desktop/undertekst auto/Season 2")
 FIXTURES_DIR = Path(__file__).resolve().parent / "fixtures" / "whisper_full"

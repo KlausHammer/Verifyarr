@@ -21,7 +21,7 @@ from verifyarr.procprio import wrap_low_priority
 from verifyarr.settings import Config, VOCABULARY_HINT_MAX_CHARS
 from verifyarr.subtitles import (
     pick_dialogue_dense_time, subs_text_in_window, tokenize, is_nonspeech_annotation,
-    clip_anchor_shift, clip_anchors, anchors_applicable, ANCHOR_SUSPECT_THRESHOLD_S,
+    clip_anchors, anchors_applicable, ANCHOR_SUSPECT_THRESHOLD_S,
 )
 
 LANG_CODE_RE = re.compile(r"^[a-z]{2,3}$")
@@ -466,14 +466,6 @@ def _transcribe_with_fallback(cfg: Config, audio_path: Path, language: Optional[
                                 response_format=response_format, cancel_event=cancel_event)
 
 
-def transcribe(cfg: Config, audio_path: Path, language: str, cancel_event=None) -> str:
-    """/audio/transcriptions (not /audio/translations) at a KNOWN language — keeps the source
-    language. Plain text only; see transcribe_verbose when segment timing is needed too."""
-    if cfg.use_local_whisper:
-        return _run_local_whisper(cfg, audio_path, language, cancel_event=cancel_event)["text"]
-    return _transcribe_with_fallback(cfg, audio_path, language, "json", cancel_event=cancel_event)
-
-
 def transcribe_verbose(cfg: Config, audio_path: Path, language: Optional[str], cancel_event=None) -> dict:
     """Same call as transcribe(), but Whisper's full verbose_json response: {"text", "language",
     "segments": [{"start","end","text"}, ...]}. Same request, same price -- the segment timing
@@ -485,13 +477,6 @@ def transcribe_verbose(cfg: Config, audio_path: Path, language: Optional[str], c
     if cfg.use_local_whisper:
         return _run_local_whisper(cfg, audio_path, language, cancel_event=cancel_event)
     return _transcribe_with_fallback(cfg, audio_path, language, "verbose_json", cancel_event=cancel_event)
-
-
-def detect_language_and_transcribe(cfg: Config, audio_path: Path, cancel_event=None):
-    """No 'language' sent -> Whisper guesses itself. (language, text) -- kept for callers that
-    only need the flat text; correctness_check itself uses transcribe_verbose directly."""
-    result = transcribe_verbose(cfg, audio_path, None, cancel_event=cancel_event)
-    return result.get("language"), (result.get("text") or "").strip()
 
 
 def translate_text(text: str, target_lang: str, *, provider: str, api_key: str, llm_model: str,

@@ -350,7 +350,6 @@ class Config:
 
     @classmethod
     def from_db(cls, conn) -> "Config":
-        from verifyarr import db
         vals = get_all_settings(conn)
         return cls(
             movies_folder=Path(vals["general.movies_folder"]) if vals["general.movies_folder"] else None,

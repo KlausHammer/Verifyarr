@@ -42,7 +42,7 @@ from verifyarr.settings import Config
 from verifyarr.subtitles import load_subs
 
 from sync_verification import (
-    FIXTURES_DIR, MEDIA_DIR, load_fixture, fixture_paths, build_ground_truth, patch_whisper,
+    load_fixture, fixture_paths, build_ground_truth, patch_whisper,
 )
 
 # Episodes with a healthy, densely-anchored, low-residual ORIGINAL subtitle -- a clean enough

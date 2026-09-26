@@ -5,7 +5,6 @@ huller, hoved/hale-tjek for afkortning, klynge-detektor for blokke.
 """
 from __future__ import annotations
 
-import copy
 import random
 import sys
 import unittest

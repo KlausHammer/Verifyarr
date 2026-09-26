@@ -55,7 +55,7 @@ from verifyarr.correctness import (JobCancelled, _aggregate_correctness, _compar
 from verifyarr.settings import Config
 from verifyarr.subtitles import (
     pick_dialogue_dense_time, subs_fingerprint, subs_text_in_window, tokenize,
-    clip_anchor_shift, clip_anchors, anchors_applicable,
+    clip_anchors, anchors_applicable,
 )
 
 # Padding either side of a candidate's own [start, end] for AUDIO EXTRACTION only (not for
@@ -92,7 +92,6 @@ SWAP_GATE_ESCALATE_HEURISTIC = 6
 # Text-match window for the timing-independent scan (either side of cue start).
 SWAP_GATE_MATCH_WINDOW_S = 90.0
 SWAP_GATE_MIN_OVERLAP = 0.5
-
 
 
 def _split_two_lines(text: str) -> Optional[tuple[str, str]]:
@@ -864,14 +863,3 @@ def finalize_line_order(collected: dict, cfg: Config, cancel_event=None, compute
             "full_coverage": collected.get("full_coverage", False),
             "line_issues": line_issues, "line_flagged": line_flagged}
 
-
-def check_subtitle(video_path: Path, subs, sub_lang: Optional[str], cfg: Config, tmp_dir: Path,
-                    conn=None, cancel_event=None) -> dict:
-    """collect_samples() + finalize_line_order() in one call, with the LLM confirmation always
-    on — a plain end-to-end entry point for a caller that doesn't need cross-run caching.
-    pipeline.py calls the two halves separately instead, so it can reuse a cached collect_samples()
-    result instead of re-transcribing (see cache_key_for)."""
-    collected = collect_samples(video_path, subs, sub_lang, cfg, tmp_dir, conn=conn, cancel_event=cancel_event)
-    if collected.get("skipped"):
-        return collected
-    return finalize_line_order(collected, cfg, cancel_event=cancel_event, compute_swap_severity=True)

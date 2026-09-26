@@ -434,14 +434,6 @@ def clip_anchors(segments: list[dict], clip_start_sec: float, subs,
     return _robust_clip_shift(matched), points
 
 
-def clip_anchor_shift(segments: list[dict], clip_start_sec: float, subs,
-                      window_start_sec: float, window_end_sec: float) -> Optional[dict]:
-    """_match_segments_to_lines + _robust_clip_shift in one call -- the shape every caller
-    actually wants (a clip's confident shift estimate, or None). See both for the details."""
-    return clip_anchors(segments, clip_start_sec, subs,
-                        window_start_sec, window_end_sec)[0]
-
-
 def _spread(values) -> float:
     """Median absolute deviation -- the agreement measure behind every anchor gate."""
     vals = list(values)
