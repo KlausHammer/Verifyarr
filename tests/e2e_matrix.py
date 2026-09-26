@@ -477,6 +477,27 @@ def corrupt_uniform(subs, rng, shift_s=45.0):
             {"shift_s": shift_s, "dropped_before_zero": dropped})
 
 
+def _shift_block(events, b0: float, b1: float, shift: float) -> None:
+    """Moves every cue starting in [b0, b1) seconds by shift, in place."""
+    for e in events:
+        if b0 <= e.start / 1000.0 < b1:
+            e.start = max(0, int(e.start + shift * 1000))
+            e.end = max(e.start + 200, int(e.end + shift * 1000))
+
+
+def _fit_start(start: float, length: float, dur: float) -> float:
+    """A span start pulled back so the span ends inside the episode."""
+    return max(0.0, dur - length) if start + length > dur else start
+
+
+def _drop_span(out, g0: float, g1: float) -> list[int]:
+    """Removes cues lying wholly in [g0, g1] seconds; returns kept indices."""
+    kept = [i for i, e in enumerate(out.events)
+            if not (g0 * 1000 <= e.start and e.end <= g1 * 1000)]
+    out.events = [out.events[i] for i in kept]
+    return kept
+
+
 def corrupt_piecewise(subs, rng, n_blocks=6, lo=5.0, hi=15.0):
     """Each contiguous time block shifted by its own random +/-lo..hi seconds."""
     out = copy.deepcopy(subs)
@@ -485,11 +506,7 @@ def corrupt_piecewise(subs, rng, n_blocks=6, lo=5.0, hi=15.0):
     for b in range(n_blocks):
         mag = rng.uniform(lo, hi) * rng.choice((-1, 1))
         shifts.append(mag)
-        b0, b1 = dur * b / n_blocks, dur * (b + 1) / n_blocks
-        for e in out.events:
-            if b0 <= e.start / 1000.0 < b1:
-                e.start = max(0, int(e.start + mag * 1000))
-                e.end = max(e.start + 200, int(e.end + mag * 1000))
+        _shift_block(out.events, dur * b / n_blocks, dur * (b + 1) / n_blocks, mag)
     return out, None, {"block_shifts_s": [round(s, 2) for s in shifts]}
 
 
@@ -543,12 +560,9 @@ def corrupt_missing_middle(subs, rng, gap_seconds=300.0):
     out = copy.deepcopy(subs)
     dur = max(e.end for e in out.events) / 1000.0
     g0, g1 = dur * 0.4, dur * 0.4 + gap_seconds
-    kept = [i for i, e in enumerate(out.events)
-            if not (g0 * 1000 <= e.start and e.end <= g1 * 1000)]
-    removed = [i for i in range(len(out.events)) if i not in set(kept)]
-    out.events = [out.events[i] for i in kept]
+    kept = _drop_span(out, g0, g1)
     return out, kept, {"gap_start_s": round(g0, 1), "gap_end_s": round(g1, 1),
-                       "removed_lines": len(removed)}
+                       "removed_lines": len(subs.events) - len(kept)}
 
 
 def corrupt_swap(subs, rng, n=6):
@@ -686,13 +700,9 @@ def corrupt_hole_random(subs, rng, lo_s=60.0, hi_s=300.0):
     out = copy.deepcopy(subs)
     dur = max(e.end for e in out.events) / 1000.0
     size = rng.uniform(lo_s, hi_s)
-    g0 = dur * rng.uniform(0.10, 0.90)
-    if g0 + size > dur:
-        g0 = max(0.0, dur - size)
+    g0 = _fit_start(dur * rng.uniform(0.10, 0.90), size, dur)
     g1 = g0 + size
-    kept = [i for i, e in enumerate(out.events)
-            if not (g0 * 1000 <= e.start and e.end <= g1 * 1000)]
-    out.events = [out.events[i] for i in kept]
+    kept = _drop_span(out, g0, g1)
     return out, kept, {"gap_start_s": round(g0, 1), "gap_end_s": round(g1, 1),
                        "size_s": round(size, 1),
                        "removed_lines": len(subs.events) - len(kept)}
@@ -727,14 +737,9 @@ def corrupt_block_random(subs, rng, lo_len=90.0, hi_len=600.0, lo_shift=2.0, hi_
     out = copy.deepcopy(subs)
     dur = max(e.end for e in out.events) / 1000.0
     length = rng.uniform(lo_len, hi_len)
-    b0 = dur * rng.uniform(0.0, 0.95)
-    if b0 + length > dur:
-        b0 = max(0.0, dur - length)
+    b0 = _fit_start(dur * rng.uniform(0.0, 0.95), length, dur)
     shift = rng.uniform(lo_shift, hi_shift) * rng.choice((-1, 1))
-    for e in out.events:
-        if b0 <= e.start / 1000.0 < b0 + length:
-            e.start = max(0, int(e.start + shift * 1000))
-            e.end = max(e.start + 200, int(e.end + shift * 1000))
+    _shift_block(out.events, b0, b0 + length, shift)
     return out, None, {"block_start_s": round(b0, 1), "length_s": round(length, 1),
                        "shift_s": round(shift, 2)}
 
@@ -777,17 +782,12 @@ def corrupt_blocks_random(subs, rng, n_lo=2, n_hi=3):
     while len(blocks) < n and tries < 50:
         tries += 1
         length = rng.uniform(90.0, 300.0)
-        b0 = dur * rng.uniform(0.0, 0.95)
-        if b0 + length > dur:
-            b0 = max(0.0, dur - length)
+        b0 = _fit_start(dur * rng.uniform(0.0, 0.95), length, dur)
         if any(b0 < hi + 30 and b0 + length + 30 > lo for lo, hi, _ in blocks):
             continue
         blocks.append((b0, b0 + length, rng.uniform(2.0, 20.0) * rng.choice((-1, 1))))
     for b0, b1, shift in blocks:
-        for e in out.events:
-            if b0 <= e.start / 1000.0 < b1:
-                e.start = max(0, int(e.start + shift * 1000))
-                e.end = max(e.start + 200, int(e.end + shift * 1000))
+        _shift_block(out.events, b0, b1, shift)
     detail = {"blocks": [{"start_s": round(b0, 1), "length_s": round(b1 - b0, 1),
                           "shift_s": round(s, 2)} for b0, b1, s in blocks]}
     return out, None, detail
