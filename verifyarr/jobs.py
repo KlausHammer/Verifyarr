@@ -522,8 +522,13 @@ def _run_single(conn: sqlite3.Connection, run_id: int, cfg: Config, video: Path,
                  lang: Optional[str], bazarr_meta: Optional[dict], cancel_event: threading.Event) -> None:
     if not lang:
         lang = parse_lang_from_filename(subtitle)
-    row = process_pair(video, subtitle, lang, cfg, conn, bazarr_meta=bazarr_meta,
-                        run_id=run_id, cancel_event=cancel_event)
+    # One audio decode like a sweep: alass and VAD read the same WAV.
+    audio_cache: dict = {}
+    with tempfile.TemporaryDirectory(prefix="verifyarr-audio-") as audio_dir, \
+            _forget_wavs_after(audio_cache):
+        row = process_pair(video, subtitle, lang, cfg, conn, bazarr_meta=bazarr_meta,
+                           audio_cache=audio_cache, audio_cache_dir=Path(audio_dir),
+                           run_id=run_id, cancel_event=cancel_event)
     write_report([row], cfg.report_dir)
     db.bump_run_progress(conn, run_id, row)
 
