@@ -48,6 +48,7 @@ SCAN_STEP_SECONDS = 5.0
 
 # (video_path, mtime, size) -> [(start, end)] for binary VAD runs this process did.
 _VAD_MEMO = BoundedMemo(64)  # a sweep touches thousands of files
+_VAD_SAVED = BoundedMemo(256)  # speech_timeline keys already in vad_timeline_cache
 
 
 def _valid_interval(start: float, end: float) -> Optional[tuple[float, float]]:
@@ -279,9 +280,11 @@ def run_vad_timeline(video_path: Path, binary: str, model: str,
     return intervals
 
 
-def speech_timeline(video_path: Path, cfg) -> Optional[list[tuple[float, float]]]:
+def speech_timeline(video_path: Path, cfg, conn=None) -> Optional[list[tuple[float, float]]]:
     """Real VAD speech intervals for the whole file, or None when VAD isn't set up.
-    whisper-vad-speech-segments wants WAV, so a video is decoded once to a temp WAV."""
+    whisper-vad-speech-segments wants WAV, so a video is decoded once to a temp WAV.
+    With conn, the timeline is read from and kept in vad_timeline_cache: one decode
+    per video, not per process."""
     binary, model = getattr(cfg, "vad_binary", ""), getattr(cfg, "vad_model", "")
     if not binary or not model or not Path(binary).is_file() or not Path(model).is_file():
         return None  # not set up: skip the audio decode too
@@ -290,8 +293,28 @@ def speech_timeline(video_path: Path, cfg) -> Optional[list[tuple[float, float]]
         key = ("wav", str(video_path), st.st_mtime_ns, st.st_size)
     except OSError:
         return None
-    if key in _VAD_MEMO:
-        return _VAD_MEMO[key]
+    out = _VAD_MEMO.get(key)
+    if out is None and conn is not None:
+        from verifyarr import db
+        out = db.get_vad_timeline_cache(conn, video_path, str(model))
+        if out is not None:
+            _VAD_MEMO.put(key, out)
+            _VAD_SAVED.put(key, True)
+    if out is None:
+        out = _decode_timeline(video_path, st, binary, model)
+        if out is None:  # a failure is retried next time, not remembered
+            return None
+        _VAD_MEMO.put(key, out)
+    if conn is not None and key not in _VAD_SAVED:
+        from verifyarr import db
+        db.save_vad_timeline_cache(conn, video_path, str(model), out)
+        _VAD_SAVED.put(key, True)
+    return out
+
+
+def _decode_timeline(video_path: Path, st, binary: str, model: str
+                     ) -> Optional[list[tuple[float, float]]]:
+    """VAD over the file itself (WAV), alass' WAV of it, or a fresh temp WAV."""
     from verifyarr import sync_engine
     out = run_vad_timeline(video_path, binary, model) if Path(video_path).suffix.lower() == ".wav" else None
     known = sync_engine.KNOWN_WAVS.get(str(video_path))
@@ -304,10 +327,7 @@ def speech_timeline(video_path: Path, cfg) -> Optional[list[tuple[float, float]]
             wav = Path(td) / "audio.wav"
             out = (run_vad_timeline(wav, binary, model, memo=False)
                    if sync_engine.extract_audio_wav(Path(video_path), wav) else None)
-    if out is not None:  # a failure is retried next time, not remembered
-        _VAD_MEMO.put(key, out)
     return out
-
 
 def _mask(spans, t0: float, n: int, step: float) -> bytearray:
     """n slots of step seconds from t0; 1 where a span covers the slot."""

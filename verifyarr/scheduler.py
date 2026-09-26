@@ -59,6 +59,7 @@ def _prune_full_transcript_cache_job() -> None:
     sample-clip cache (90 vs 30 days): a full-track transcript is far more expensive to
     regenerate (a whole video's worth of Whisper calls, not one 30s clip)."""
     _prune_with_fresh_conn(db.prune_full_transcript_cache, 90, "cached full transcript(s)")
+    _prune_with_fresh_conn(db.prune_vad_timeline_cache, 90, "cached VAD timeline(s)")
     # Same daily pass cleans up generate_attempts -- a record older than 30 days is long past
     # both the retry cooldown and the 24-hour cap window it exists for (see generate.py).
     _prune_with_fresh_conn(db.prune_generate_attempts, 30,

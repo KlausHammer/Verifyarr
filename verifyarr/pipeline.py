@@ -1694,7 +1694,7 @@ def _block_runs_hit(conn: sqlite3.Connection, video_path: Path, subs, cfg: Confi
     # Whisper timestamps drift for a minute at a time on some models (SH_S01E04 22:47,
     # turbo -3.6s on a correct file). The audio's own speech pattern decides, when set up.
     from verifyarr.vad import speech_timeline, shift_fits_speech
-    ivs = speech_timeline(video_path, cfg)
+    ivs = speech_timeline(video_path, cfg, conn)
     if not ivs:
         return runs
     kept = []
@@ -1782,14 +1782,15 @@ def _rate_says_needs_full(collected: dict, cfg: Config) -> bool:
             and p["keep_frac"] >= 0.8)
 
 
-def _vad_says_needs_full(video_path: Path, collected: dict, subs, cfg: Config) -> bool:
+def _vad_says_needs_full(conn: sqlite3.Connection, video_path: Path, collected: dict, subs,
+                         cfg: Config) -> bool:
     """Sampled clips miss blocks between them; VAD sees the whole file for CPU only."""
     if cfg.whisper_mode != "sampled" or not cfg.escalate_sampled_to_full:
         return False
     if collected.get("full_coverage") or collected.get("skipped"):
         return False
     from verifyarr.vad import speech_timeline, block_witness
-    ivs = speech_timeline(video_path, cfg)
+    ivs = speech_timeline(video_path, cfg, conn)
     return bool(ivs) and block_witness(ivs, [(e.start / 1000.0, e.end / 1000.0)
                                              for e in subs.events])
 
@@ -2015,7 +2016,7 @@ def _gather_evidence(video_path: Path, subtitle_path: Path, lang: Optional[str],
              "sampled anchors are noisy -- confirming against a full transcript"),
             (lambda: _swap_says_needs_full(collected, current_subs, cfg),
              "many suspected swapped lines -- confirming against a full transcript"),
-            (lambda: _vad_says_needs_full(video_path, collected, current_subs, cfg),
+            (lambda: _vad_says_needs_full(conn, video_path, collected, current_subs, cfg),
              "speech pattern suggests a block -- confirming against a full transcript"),
         )
         why = next((msg for hit, msg in ladder if hit()), None)

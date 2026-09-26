@@ -244,6 +244,19 @@ CREATE TABLE IF NOT EXISTS video_full_transcript_cache (
 );
 CREATE INDEX IF NOT EXISTS ix_video_full_transcript_cache_created ON video_full_transcript_cache(created_at);
 
+-- One row per VIDEO: the Silero VAD speech timeline (vad.speech_timeline). Decoding a whole
+-- episode for it costs 30-100s on an N100, and the RAM memo is lost on restart. Checked on
+-- read like the full transcript: same VAD model, same video size/mtime.
+CREATE TABLE IF NOT EXISTS vad_timeline_cache (
+    video_path     TEXT PRIMARY KEY,
+    vad_model      TEXT NOT NULL,
+    video_mtime    REAL,
+    video_size     INTEGER,
+    intervals_json TEXT NOT NULL,   -- [[start, end], ...] seconds
+    created_at     TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS ix_vad_timeline_cache_created ON vad_timeline_cache(created_at);
+
 -- One row per (video, language) generation attempt (see generate.run_generation_batch). Two
 -- jobs, both of which need memory ACROSS runs:
 --   1. A failed attempt is not retried for generate.RETRY_COOLDOWN_HOURS. Generation is capped
@@ -1249,6 +1262,37 @@ def save_full_transcript_cache(conn: sqlite3.Connection, video_path: Path, spoke
     conn.commit()
 
 
+def get_vad_timeline_cache(conn: sqlite3.Connection, video_path: Path,
+                           vad_model: str) -> Optional[list[tuple[float, float]]]:
+    """Cached VAD intervals for this video under this VAD model, or None (miss/stale)."""
+    row = conn.execute(
+        "SELECT vad_model, video_mtime, video_size, intervals_json FROM vad_timeline_cache "
+        "WHERE video_path = ?", (str(video_path),)).fetchone()
+    if row is None or row["vad_model"] != vad_model:
+        return None
+    mtime, size = _video_signature(video_path)
+    if mtime is None or row["video_size"] != size or abs((row["video_mtime"] or 0.0) - mtime) > 1:
+        return None
+    return [(float(a), float(b)) for a, b in json.loads(row["intervals_json"])]
+
+
+def save_vad_timeline_cache(conn: sqlite3.Connection, video_path: Path, vad_model: str,
+                            intervals: list[tuple[float, float]]) -> None:
+    mtime, size = _video_signature(video_path)
+    if mtime is None:
+        return
+    conn.execute(
+        "INSERT INTO vad_timeline_cache (video_path, vad_model, video_mtime, video_size, "
+        "intervals_json, created_at) VALUES (?, ?, ?, ?, ?, ?) "
+        "ON CONFLICT(video_path) DO UPDATE SET vad_model=excluded.vad_model, "
+        "video_mtime=excluded.video_mtime, video_size=excluded.video_size, "
+        "intervals_json=excluded.intervals_json, created_at=excluded.created_at",
+        (str(video_path), vad_model, mtime, size, json.dumps([list(iv) for iv in intervals]),
+         datetime.now(timezone.utc).isoformat()),
+    )
+    conn.commit()
+
+
 def record_generate_attempt(conn: sqlite3.Connection, video_path: Path, lang: str, ok: bool,
                              error: Optional[str] = None) -> None:
     """Records the outcome of one (video, lang) generation attempt -- see generate.generate_one
@@ -1311,6 +1355,10 @@ def prune_full_transcript_cache(conn: sqlite3.Connection, max_age_days: int = 90
     transcript is far more expensive to regenerate (a whole movie's worth of Whisper calls, not
     one 30s clip), so there's more to lose by pruning it aggressively."""
     return _prune_older_than(conn, "video_full_transcript_cache", "created_at", max_age_days)
+
+
+def prune_vad_timeline_cache(conn: sqlite3.Connection, max_age_days: int = 90) -> int:
+    return _prune_older_than(conn, "vad_timeline_cache", "created_at", max_age_days)
 
 
 def bump_run_generated(conn: sqlite3.Connection, run_id: int, count: int = 1) -> None:
