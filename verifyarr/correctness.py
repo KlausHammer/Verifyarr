@@ -16,6 +16,7 @@ from typing import Optional
 import requests
 
 from verifyarr import log
+from verifyarr.memo import BoundedMemo
 from verifyarr import db
 from verifyarr import vad
 from verifyarr.procprio import wrap_low_priority
@@ -91,7 +92,7 @@ def detect_embedded_subtitle_langs(video_path: Path) -> set[str]:
     return langs
 
 
-_DURATION_MEMO: dict = {}
+_DURATION_MEMO = BoundedMemo(64)
 
 
 def get_duration_seconds(video_path: Path) -> Optional[float]:
@@ -110,9 +111,7 @@ def get_duration_seconds(video_path: Path) -> Optional[float]:
     except (TypeError, ValueError):
         out = None
     if key is not None and out is not None:
-        if len(_DURATION_MEMO) >= 64:
-            _DURATION_MEMO.pop(next(iter(_DURATION_MEMO)))
-        _DURATION_MEMO[key] = out
+        _DURATION_MEMO.put(key, out)
     return out
 
 

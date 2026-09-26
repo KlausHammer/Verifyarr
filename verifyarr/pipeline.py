@@ -19,6 +19,7 @@ from pathlib import Path
 from typing import Optional
 
 from verifyarr import log
+from verifyarr.memo import BoundedMemo
 from verifyarr import vad as vad_timeline
 from verifyarr.settings import Config
 from verifyarr.subtitles import (
@@ -1640,7 +1641,7 @@ def _mmss(sec: float) -> str:
     return f"{int(sec // 60)}:{int(sec % 60):02d}"
 
 
-_FULL_SEG_MEMO: dict = {}
+_FULL_SEG_MEMO = BoundedMemo(8)
 
 
 def _cached_full_segments(conn: sqlite3.Connection, video_path: Path, cfg: Config
@@ -1656,9 +1657,7 @@ def _cached_full_segments(conn: sqlite3.Connection, video_path: Path, cfg: Confi
     key = (str(video_path), provider, model, len(raw),
            json.dumps(raw[:2] + raw[-2:], sort_keys=True, default=str))
     if key not in _FULL_SEG_MEMO:
-        if len(_FULL_SEG_MEMO) >= 8:
-            _FULL_SEG_MEMO.pop(next(iter(_FULL_SEG_MEMO)))
-        _FULL_SEG_MEMO[key] = _drop_repetition_loops(_drop_nonspeech(raw))
+        _FULL_SEG_MEMO.put(key, _drop_repetition_loops(_drop_nonspeech(raw)))
     return _FULL_SEG_MEMO[key]
 
 

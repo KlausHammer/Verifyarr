@@ -34,6 +34,7 @@ from pathlib import Path
 from typing import Optional
 
 from verifyarr.procprio import wrap_low_priority
+from verifyarr.memo import BoundedMemo
 
 log = logging.getLogger("verifyarr")
 
@@ -46,14 +47,7 @@ NUDGE_SECONDS = (0.0, 10.0, -10.0, 20.0, -20.0, 30.0, -30.0)
 SCAN_STEP_SECONDS = 5.0
 
 # (video_path, mtime, size) -> [(start, end)] for binary VAD runs this process did.
-_VAD_MEMO: dict = {}
-_VAD_MEMO_MAX = 64  # the webapp lives for weeks; a sweep touches thousands of files
-
-
-def _memo_put(key, value) -> None:
-    if len(_VAD_MEMO) >= _VAD_MEMO_MAX:
-        _VAD_MEMO.pop(next(iter(_VAD_MEMO)))
-    _VAD_MEMO[key] = value
+_VAD_MEMO = BoundedMemo(64)  # a sweep touches thousands of files
 
 
 def _valid_interval(start: float, end: float) -> Optional[tuple[float, float]]:
@@ -281,7 +275,7 @@ def run_vad_timeline(video_path: Path, binary: str, model: str,
                     "treating as confirmed silence; check the binary's output format if that "
                     "seems wrong", video_path)
     if memo:  # temp WAVs are not memoized: their paths die with the run
-        _memo_put(key, intervals)
+        _VAD_MEMO.put(key, intervals)
     return intervals
 
 
@@ -311,7 +305,7 @@ def speech_timeline(video_path: Path, cfg) -> Optional[list[tuple[float, float]]
             out = (run_vad_timeline(wav, binary, model, memo=False)
                    if sync_engine.extract_audio_wav(Path(video_path), wav) else None)
     if out is not None:  # a failure is retried next time, not remembered
-        _memo_put(key, out)
+        _VAD_MEMO.put(key, out)
     return out
 
 
