@@ -11,18 +11,20 @@ completion once started; see _run_sweep for why)."""
 from __future__ import annotations
 
 import concurrent.futures
+import contextlib
 import dataclasses
 import logging
 import os
 import sqlite3
 import tempfile
 import threading
+import time
 from pathlib import Path
 from typing import Optional
 
 from verifyarr import log, HEADER, SUCCESS
 from verifyarr import db
-from verifyarr.settings import Config
+from verifyarr.settings import Config, DATA_DIR
 from verifyarr.discovery import (discover_pairs, discover_all_videos, discover_missing,
                                 parse_lang_from_filename, build_library_video_rows,
                                 infer_title_and_episode, resolve_embedded_cache)
@@ -134,6 +136,47 @@ def create_run(conn: sqlite3.Connection, trigger: str, mode: str, dry_run: bool,
     return db.create_run(conn, trigger, mode, dry_run, force, target_kind, target_title)
 
 
+# One run at a time across PROCESSES: the Bazarr hook (docker exec ... single) is its own
+# process and never saw JobRunner's in-process lock, so it could work a file a sweep was on.
+RUN_LOCK_PATH = DATA_DIR / "run.lock"
+# A hook waits this long for a running job, then gives up: the next sweep picks the file up,
+# and Bazarr's post-processing must not hang for hours.
+SINGLE_LOCK_WAIT_S = 900.0
+
+
+class RunLockBusy(Exception):
+    pass
+
+
+@contextlib.contextmanager
+def run_lock(wait_s: Optional[float], cancel_event: Optional[threading.Event] = None):
+    """Exclusive flock on RUN_LOCK_PATH; wait_s None waits for as long as it takes."""
+    import fcntl
+    try:
+        RUN_LOCK_PATH.parent.mkdir(parents=True, exist_ok=True)
+        f = open(RUN_LOCK_PATH, "a+")
+    except OSError as e:  # no writable data dir (dev box): run unlocked, as before
+        log.debug("run lock unavailable (%s) -- running unlocked", e)
+        yield
+        return
+    deadline = None if wait_s is None else time.monotonic() + wait_s
+    try:
+        while True:
+            try:
+                fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                break
+            except BlockingIOError:
+                if deadline is not None and time.monotonic() >= deadline:
+                    raise RunLockBusy()
+                if cancel_event is not None and cancel_event.wait(1.0):
+                    raise JobCancelled()
+                if cancel_event is None:
+                    time.sleep(1.0)
+        yield
+    finally:
+        f.close()  # closing releases the flock
+
+
 def execute_run(run_id: int, cfg: Config, conn: sqlite3.Connection, cancel_event: threading.Event,
                  mode: str, *, trigger: str = "", force: bool = False, video: Optional[Path] = None,
                  subtitle: Optional[Path] = None, lang: Optional[str] = None,
@@ -145,13 +188,20 @@ def execute_run(run_id: int, cfg: Config, conn: sqlite3.Connection, cancel_event
     root_log = logging.getLogger("verifyarr")
     root_log.addHandler(handler)
     status, error_message = "completed", None
+    wait_s = SINGLE_LOCK_WAIT_S if trigger.startswith("cli") and mode != "sweep" else None
     try:
-        if mode == "sweep":
-            _run_sweep(conn, run_id, cfg, force, cancel_event, kind=kind, title=title, season=season)
-        elif mode == "generate_single":
-            _run_generate_single(conn, run_id, cfg, video, lang, cancel_event)
-        else:
-            _run_single(conn, run_id, cfg, video, subtitle, lang, bazarr_meta, cancel_event)
+        with run_lock(wait_s, cancel_event):
+            if mode == "sweep":
+                _run_sweep(conn, run_id, cfg, force, cancel_event, kind=kind, title=title,
+                           season=season)
+            elif mode == "generate_single":
+                _run_generate_single(conn, run_id, cfg, video, lang, cancel_event)
+            else:
+                _run_single(conn, run_id, cfg, video, subtitle, lang, bazarr_meta, cancel_event)
+    except RunLockBusy:
+        log.warning("Another run is still active after %.0fs -- skipped; the next sweep "
+                    "picks this file up.", wait_s)
+        status, error_message = "failed", "another run was active; skipped"
     except JobCancelled:
         status = "cancelled"
     except Exception as e:
