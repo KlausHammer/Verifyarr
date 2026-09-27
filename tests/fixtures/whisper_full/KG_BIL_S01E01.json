@@ -1,0 +1,11 @@
+{
+ "slug": "KG_BIL_S01E01",
+ "video_name": "Billions - S01 E01 - Pilot (720p HDTV).mkv",
+ "subtitle_name": "Billions - S01 E01 - Pilot (720p HDTV).en.srt",
+ "duration_seconds": 3553.728,
+ "language": "en",
+ "stt_provider": "local",
+ "stt_model": "ggml-tiny.en.bin",
+ "segment_count": 0,
+ "segments": []
+}
