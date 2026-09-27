@@ -103,7 +103,7 @@ sys.path.insert(0, VWORK)
 from verifyarr import db, generate, line_order, pipeline, sync_engine
 from verifyarr.correctness import full_transcript_cache_key
 from verifyarr.settings import Config
-from verifyarr.subtitles import load_subs
+from verifyarr.subtitles import load_subs, speech_text
 
 FIX = Path("/home/hammer/Auto sync sub/verifyarr/tests/fixtures/whisper_full")
 SWEEP = Path("/mnt/c/Users/knham/Desktop/undertekst auto/whisper_gpu_staging/sweep")
@@ -496,6 +496,14 @@ def _fit_start(start: float, length: float, dur: float) -> float:
     return max(0.0, dur - length) if start + length > dur else start
 
 
+def _dialogue_removed(subs, kept) -> int:
+    """Removed cues that carry spoken words: sound descriptions and song lines
+    ("[GUNSHOTS]", "♪ ... ♪") are not dialogue and never count."""
+    keep = set(kept)
+    return sum(1 for i, e in enumerate(subs.events)
+               if i not in keep and speech_text(e.plaintext).split())
+
+
 def _drop_span(out, g0: float, g1: float) -> list[int]:
     """Removes cues lying wholly in [g0, g1] seconds; returns kept indices."""
     kept = [i for i, e in enumerate(out.events)
@@ -568,6 +576,7 @@ def corrupt_missing_middle(subs, rng, gap_seconds=300.0):
     g0, g1 = dur * 0.4, dur * 0.4 + gap_seconds
     kept = _drop_span(out, g0, g1)
     return out, kept, {"gap_start_s": round(g0, 1), "gap_end_s": round(g1, 1),
+                       "removed_dialogue": _dialogue_removed(subs, kept),
                        "removed_lines": len(subs.events) - len(kept)}
 
 
@@ -711,6 +720,7 @@ def corrupt_hole_random(subs, rng, lo_s=60.0, hi_s=300.0):
     kept = _drop_span(out, g0, g1)
     return out, kept, {"gap_start_s": round(g0, 1), "gap_end_s": round(g1, 1),
                        "size_s": round(size, 1),
+                       "removed_dialogue": _dialogue_removed(subs, kept),
                        "removed_lines": len(subs.events) - len(kept)}
 
 
@@ -723,6 +733,7 @@ def corrupt_trunc_start_random(subs, rng, lo_s=60.0, hi_s=300.0):
             if e.start / 1000.0 >= t0 + removed]
     out.events = [out.events[i] for i in kept]
     return out, kept, {"removed_s": round(removed, 1),
+                       "removed_dialogue": _dialogue_removed(subs, kept),
                        "removed_lines": len(subs.events) - len(kept)}
 
 
@@ -735,6 +746,7 @@ def corrupt_trunc_end_random(subs, rng, lo_s=60.0, hi_s=300.0):
             if e.start / 1000.0 < dur - removed]
     out.events = [out.events[i] for i in kept]
     return out, kept, {"removed_s": round(removed, 1),
+                       "removed_dialogue": _dialogue_removed(subs, kept),
                        "removed_lines": len(subs.events) - len(kept)}
 
 
