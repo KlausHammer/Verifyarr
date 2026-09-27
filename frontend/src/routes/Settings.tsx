@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react'
+import { createContext, useContext, useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react'
 import { useParams } from 'react-router-dom'
 import { api, ApiError } from '../api/client'
 import type {
@@ -139,7 +139,45 @@ function Tip({ text }: { text: string }) {
   )
 }
 
-function Field({ label, tip, children }: { label: string; tip?: string; children: ReactNode }) {
+// Simple shows what most people change; Advanced adds the knobs that still change results or
+// cost. Internal calibration stays out of both.
+type SettingsMode = 'simple' | 'advanced'
+const MODE_KEY = 'verifyarr.settingsMode'
+const ModeContext = createContext<SettingsMode>('simple')
+
+function readMode(): SettingsMode {
+  try {
+    return localStorage.getItem(MODE_KEY) === 'advanced' ? 'advanced' : 'simple'
+  } catch {
+    return 'simple'
+  }
+}
+
+function Advanced({ children }: { children: ReactNode }) {
+  return useContext(ModeContext) === 'advanced' ? <>{children}</> : null
+}
+
+function ModeToggle({ mode, onChange }: { mode: SettingsMode; onChange: (m: SettingsMode) => void }) {
+  return (
+    <div className={styles.modeToggle} role="group" aria-label="Settings detail">
+      {(['simple', 'advanced'] as const).map((m) => (
+        <button
+          key={m}
+          type="button"
+          className={mode === m ? styles.modeActive : undefined}
+          aria-pressed={mode === m}
+          onClick={() => onChange(m)}
+        >
+          {m === 'simple' ? 'Simple' : 'Advanced'}
+        </button>
+      ))}
+    </div>
+  )
+}
+
+function Field({ label, tip, advanced, children }: { label: string; tip?: string; advanced?: boolean; children: ReactNode }) {
+  const mode = useContext(ModeContext)
+  if (advanced && mode !== 'advanced') return null
   return (
     <div className="field">
       <label>
@@ -526,14 +564,30 @@ function SyncTab() {
       }}
     >
       {loadError && <div className="error-banner">{loadError}</div>}
-      <Field label="Split penalty" tip="Usually somewhere in 1-20. Lower values split the sync into more, smaller segments.">
-        <input
-          type="number"
-          value={data.split_penalty}
-          onChange={(e) => setData({ ...data, split_penalty: Number(e.target.value) })}
-        />
+      <Field
+        label="Whisper mode"
+        tip="Sampled: short clips spread over the file (fast, cheap); anything suspicious still gets the whole transcript. Full transcript: transcribes the whole episode/movie every time -- the most thorough, but far more Whisper work per file (local Whisper: time; cloud: API cost/quota)."
+      >
+        <select value={data.whisper_mode} onChange={(e) => setData({ ...data, whisper_mode: e.target.value as SyncSettings['whisper_mode'] })}>
+          <option value="sampled">Sampled clips</option>
+          <option value="full">Full episode/movie transcript</option>
+        </select>
       </Field>
-      <Field label="Min. change (seconds)" tip="Ignore corrections smaller than this.">
+      {data.whisper_mode === 'sampled' && (
+        <Field
+          label="Clips per 10 minutes"
+          tip="How many 30s audio clips to check per 10 minutes of video (at least 3), placed where there is dialogue. Long films get proportionally more. More clips notice more on their own but cost more Whisper time. 0 = a fixed 16 clips per file."
+        >
+          <input
+            type="number"
+            step="0.5"
+            min="0"
+            value={data.clips_per_10min}
+            onChange={(e) => setData({ ...data, clips_per_10min: Number(e.target.value) })}
+          />
+        </Field>
+      )}
+      <Field advanced label="Min. change (seconds)" tip="Corrections smaller than this are not written. 0.25s is below what a viewer notices.">
         <input
           type="number"
           step="0.05"
@@ -541,123 +595,79 @@ function SyncTab() {
           onChange={(e) => setData({ ...data, min_change_seconds: Number(e.target.value) })}
         />
       </Field>
-      <Field
-        label="Whisper mode"
-        tip="Sampled: a handful of short clips (fast, cheap). Full transcript: transcribes the whole episode/movie once, then checks sync, correctness, and line order against ALL of it -- far more thorough, but far more Whisper work per file (local Whisper: mostly time; cloud: real API cost/quota)."
-      >
-        <select value={data.whisper_mode} onChange={(e) => setData({ ...data, whisper_mode: e.target.value as SyncSettings['whisper_mode'] })}>
-          <option value="sampled">Sampled clips</option>
-          <option value="full">Full episode/movie transcript</option>
-        </select>
-      </Field>
-      <Field label="Whisper samples per file" tip="How many audio clips to sample per file when checking correctness. Spread evenly, each picked from nearby dialogue. In Full transcript mode, this is only used as a base density multiplier -- see that mode's own tip.">
-        <input
-          type="number"
-          value={data.sample_count}
-          onChange={(e) => setData({ ...data, sample_count: Number(e.target.value) })}
-        />
-      </Field>
-      <Field label="Clip length (s)" tip="Length of each sampled audio clip sent for transcription. 60s is the default for a reason: the timing check needs at least 3 matched lines inside ONE clip, which a 30s clip rarely has — dropping to 30 makes desync detection much weaker while saving very little.">
-        <input
-          type="number"
-          value={data.clip_seconds}
-          onChange={(e) => setData({ ...data, clip_seconds: Number(e.target.value) })}
-        />
-      </Field>
-      <Field label="Comparison window (min)" tip="How much subtitle text around each sample point to compare the transcript against.">
-        <input
-          type="number"
-          step="0.1"
-          value={data.window_minutes}
-          onChange={(e) => setData({ ...data, window_minutes: Number(e.target.value) })}
-        />
-      </Field>
-      <Field label="Overlap threshold" tip="Minimum word-overlap for a sample to count as a match. 0.25 works well in practice.">
-        <input
-          type="number"
-          step="0.01"
-          value={data.overlap_threshold}
-          onChange={(e) => setData({ ...data, overlap_threshold: Number(e.target.value) })}
-        />
-      </Field>
-      <Field
-        label="Suspicious block spread (s)"
-        tip="If alass needs sync blocks with shifts spread further apart than this AND at least one Whisper sample fails on its own, flag SUSPECT even though a majority of samples passed — catches a subtitle that's only right for part of the episode."
-      >
-        <input
-          type="number"
-          step="1"
-          value={data.block_spread_suspect_threshold_s}
-          onChange={(e) => setData({ ...data, block_spread_suspect_threshold_s: Number(e.target.value) })}
-        />
-      </Field>
-      <div className={styles.checkRow}>
-        <input
-          id="anchor_check_enabled"
-          type="checkbox"
-          checked={data.anchor_check_enabled}
-          onChange={(e) => setData({ ...data, anchor_check_enabled: e.target.checked })}
-        />
-        <label htmlFor="anchor_check_enabled">
-          Whisper anchor escalation
-          <Tip text="Flag SUSPECT when at least 3 Whisper-verified lines show a timing mismatch of more than ~2.5s, even though the overall average passed. Validated on 52 real episodes: found 9 genuinely misaligned files that alass had called 'already in sync', with no false alarms. Only works for subtitles in the spoken language (an English audio track gives Danish subtitles no anchors)." />
-        </label>
-      </div>
 
-      <div className={styles.checkRow}>
-        <input
-          id="anchor_resync_enabled"
-          type="checkbox"
-          checked={data.anchor_resync_enabled}
-          disabled={!data.anchor_check_enabled}
-          onChange={(e) => setData({ ...data, anchor_resync_enabled: e.target.checked })}
-        />
-        <label htmlFor="anchor_resync_enabled">
-          Re-sync from the anchors instead of only flagging
-          <Tip text="When the anchors prove a file is mis-timed, they have also measured BY HOW MUCH — so the file gets corrected rather than just reported. Handles a file that needs different offsets in different stretches, not only one global shift. The correction is re-measured against the audio before anything is written, and a file whose timing drifts continuously (rather than shifting in blocks) is left alone for the ordinary SUSPECT handling. Needs the anchor escalation above." />
-        </label>
-      </div>
+      <Advanced>
+        <h3 style={{ marginBottom: 4 }}>Framerate and drift</h3>
+        <div className={styles.checkRow}>
+          <input
+            id="fps_check_enabled"
+            type="checkbox"
+            checked={data.fps_check_enabled}
+            onChange={(e) => setData({ ...data, fps_check_enabled: e.target.checked })}
+          />
+          <label htmlFor="fps_check_enabled">
+            Fix framerate and speed errors
+            <Tip text="Finds subtitles made for another framerate or speed (24 vs 23.976, PAL 25) that slowly walk out of sync, and rescales them. Only rewrites once the whole transcript and the audio's own speech pattern agree." />
+          </label>
+        </div>
+        {data.whisper_mode === 'sampled' && (
+          <Field
+            label="Drift look-closer threshold (s)"
+            tip="If the clips drift apart by at least this much from the start to the end of the file, the whole file is transcribed to check for a framerate/speed error. It never fixes anything on its own. Lower catches smaller drift but transcribes more healthy files. Measured: real 0.1% drift 0.8-1.7s, healthy files up to 0.9s. 0 = off."
+          >
+            <input
+              type="number"
+              step="0.1"
+              min="0"
+              disabled={!data.fps_check_enabled}
+              value={data.clip_tilt_escalate_s}
+              onChange={(e) => setData({ ...data, clip_tilt_escalate_s: Number(e.target.value) })}
+            />
+          </Field>
+        )}
 
-      <h3 style={{ marginBottom: 4 }}>Line-order check</h3>
-      <p className="text-dim" style={{ fontSize: 12.5, maxWidth: 480, marginTop: 0, marginBottom: 14 }}>
-        Catches two-line subtitle entries where the lines are in the wrong order (line 2 spoken
-        before line 1). Turn it on or off from Settings → Automation → What runs — these fields
-        just fine-tune it once it's on.
-      </p>
-      <div className={styles.checkRow}>
-        <input
-          id="line_order_audio_confirm"
-          type="checkbox"
-          checked={data.line_order_audio_confirm}
-          onChange={(e) => setData({ ...data, line_order_audio_confirm: e.target.checked })}
-        />
-        <label htmlFor="line_order_audio_confirm">
-          Act on the audio check
-          <Tip text="The audio check always runs -- this just decides whether to act on it. On: confirmed swaps get auto-fixed. Off: only flagged for you to check." />
-        </label>
-      </div>
-      <div className={styles.row}>
-        <Field
-          label="Widespread-swap threshold (%)"
-          tip="Share of tested candidates that must be confirmed swapped by Whisper before it's noted as a widespread pattern -- every individually confirmed line still gets auto-fixed either way."
-        >
+        <h3 style={{ marginBottom: 4 }}>Blocks and offsets</h3>
+        {data.whisper_mode === 'sampled' && (
+          <div className={styles.checkRow}>
+            <input
+              id="escalate_sampled_to_full"
+              type="checkbox"
+              checked={data.escalate_sampled_to_full}
+              onChange={(e) => setData({ ...data, escalate_sampled_to_full: e.target.checked })}
+            />
+            <label htmlFor="escalate_sampled_to_full">
+              Transcribe the whole file when the clips see a problem
+              <Tip text="Clips that disagree, a possible block, noisy timing, many swapped lines or lines after the audio ends: the whole file is transcribed before deciding. Off saves Whisper time on those files, but blocks between clips go unnoticed and fewer can be repaired. The framerate check above has its own switch." />
+            </label>
+          </div>
+        )}
+        <div className={styles.checkRow}>
           <input
-            type="number" step="1" min="1" max="100"
-            value={Math.round(data.line_order_swap_threshold_pct * 100)}
-            onChange={(e) => setData({ ...data, line_order_swap_threshold_pct: Number(e.target.value) / 100 })}
+            id="anchor_check_enabled"
+            type="checkbox"
+            checked={data.anchor_check_enabled}
+            onChange={(e) => setData({ ...data, anchor_check_enabled: e.target.checked })}
           />
-        </Field>
-        <Field
-          label="Widespread-swap minimum count"
-          tip="Minimum confirmed count needed too, so a tiny sample can't trigger this on its own."
-        >
+          <label htmlFor="anchor_check_enabled">
+            Whisper anchor check
+            <Tip text="Flags a file when Whisper-verified lines show a timing mismatch of more than ~2.5s, even though the text matches overall. Only works for subtitles in the spoken language." />
+          </label>
+        </div>
+        <div className={styles.checkRow}>
           <input
-            type="number" step="1" min="1" max="100"
-            value={data.line_order_swap_threshold_min}
-            onChange={(e) => setData({ ...data, line_order_swap_threshold_min: Number(e.target.value) })}
+            id="anchor_resync_enabled"
+            type="checkbox"
+            checked={data.anchor_resync_enabled}
+            disabled={!data.anchor_check_enabled}
+            onChange={(e) => setData({ ...data, anchor_resync_enabled: e.target.checked })}
           />
-        </Field>
-      </div>
+          <label htmlFor="anchor_resync_enabled">
+            Re-sync from the anchors instead of only flagging
+            <Tip text="When the anchors show a file is mis-timed, they also measured by how much -- so the file is corrected, stretch by stretch, instead of just reported. The result is re-measured against the audio before anything is written. Needs the anchor check above." />
+          </label>
+        </div>
+
+      </Advanced>
       <SaveBar busy={busy} saved={saved} error={error} />
     </form>
   )
@@ -710,31 +720,22 @@ function CorrectnessTab() {
             onChange={(e) => setData({ ...data, use_local_whisper: e.target.checked })}
           />
           <span className="text-dim" style={{ fontSize: 12.5 }}>
-            {data.use_local_whisper ? 'On — the Whisper model/fallback fields below are unused' : 'Off'}
+            {data.use_local_whisper ? 'On' : 'Off'}
           </span>
         </label>
       </Field>
 
       {data.use_local_whisper && (
         <>
+          <Field advanced label="Model file path" tip="A ggml model file. Every threshold is measured on tiny.en (the default) -- other models transcribe differently and are not calibrated.">
+            <input
+              type="text"
+              value={data.local_whisper_model}
+              onChange={(e) => setData({ ...data, local_whisper_model: e.target.value })}
+            />
+          </Field>
           <div className={styles.row}>
-            <Field label="whisper.cpp binary path">
-              <input
-                type="text"
-                value={data.local_whisper_binary}
-                onChange={(e) => setData({ ...data, local_whisper_binary: e.target.value })}
-              />
-            </Field>
-            <Field label="Model file path" tip="A ggml model file, e.g. ggml-small.bin. Defaults to docker-compose's WHISPER_MODEL env var — downloaded automatically on first use if it isn't already baked into the image.">
-              <input
-                type="text"
-                value={data.local_whisper_model}
-                onChange={(e) => setData({ ...data, local_whisper_model: e.target.value })}
-              />
-            </Field>
-          </div>
-          <div className={styles.row}>
-            <Field label="Use GPU" tip="Off forces CPU-only (-ng) even if the binary was built with Vulkan/GPU support.">
+            <Field advanced label="Use GPU" tip="Off forces CPU-only (-ng) even if the binary was built with Vulkan/GPU support.">
               <label style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                 <input
                   type="checkbox"
@@ -743,7 +744,7 @@ function CorrectnessTab() {
                 />
               </label>
             </Field>
-            <Field label="CPU threads">
+            <Field advanced label="CPU threads">
               <input
                 type="number"
                 min={1}
@@ -770,32 +771,15 @@ function CorrectnessTab() {
             />
           </Field>
           <div className={styles.row}>
-            <Field label="Whisper model">
-              <input type="text" value={data.groq_model} onChange={(e) => setData({ ...data, groq_model: e.target.value })} />
-            </Field>
-            <Field
-              label="Whisper fallback model"
-              tip="Used only if the main model hits its rate limit. Pick a different model for it to actually help."
-            >
-              <input
-                type="text"
-                value={data.groq_model_fallback}
-                onChange={(e) => setData({ ...data, groq_model_fallback: e.target.value })}
-              />
-            </Field>
-          </div>
-          <div className={styles.row}>
-            <Field label="Translation model (LLM)">
+            {!data.use_local_whisper && (
+              <Field advanced label="Whisper model">
+                <input type="text" value={data.groq_model} onChange={(e) => setData({ ...data, groq_model: e.target.value })} />
+              </Field>
+            )}
+            <Field advanced label="Translation model (LLM)">
               <input type="text" value={data.groq_llm_model} onChange={(e) => setData({ ...data, groq_llm_model: e.target.value })} />
             </Field>
           </div>
-          <Field label="Translation fallback model">
-            <input
-              type="text"
-              value={data.groq_llm_model_fallback}
-              onChange={(e) => setData({ ...data, groq_llm_model_fallback: e.target.value })}
-            />
-          </Field>
         </>
       )}
 
@@ -814,41 +798,27 @@ function CorrectnessTab() {
             />
           </Field>
           <div className={styles.row}>
-            <Field label="Whisper model">
-              <input
-                type="text"
-                value={data.openrouter_stt_model}
-                onChange={(e) => setData({ ...data, openrouter_stt_model: e.target.value })}
-              />
-            </Field>
-            <Field label="Whisper fallback model">
-              <input
-                type="text"
-                value={data.openrouter_stt_model_fallback}
-                onChange={(e) => setData({ ...data, openrouter_stt_model_fallback: e.target.value })}
-              />
-            </Field>
-          </div>
-          <div className={styles.row}>
-            <Field label="Translation model (LLM)">
+            {!data.use_local_whisper && (
+              <Field advanced label="Whisper model">
+                <input
+                  type="text"
+                  value={data.openrouter_stt_model}
+                  onChange={(e) => setData({ ...data, openrouter_stt_model: e.target.value })}
+                />
+              </Field>
+            )}
+            <Field advanced label="Translation model (LLM)">
               <input
                 type="text"
                 value={data.openrouter_llm_model}
                 onChange={(e) => setData({ ...data, openrouter_llm_model: e.target.value })}
               />
             </Field>
-            <Field label="Translation fallback model">
-              <input
-                type="text"
-                value={data.openrouter_llm_model_fallback}
-                onChange={(e) => setData({ ...data, openrouter_llm_model_fallback: e.target.value })}
-              />
-            </Field>
           </div>
         </>
       )}
 
-      <Field label="Required audio language" tip="Empty = run regardless of spoken language.">
+      <Field advanced label="Required audio language" tip="Files whose audio track is another language are skipped. Timing anchors need the subtitle in the spoken language. Empty = run regardless.">
         <input
           type="text"
           value={data.require_audio_lang}
@@ -923,24 +893,10 @@ function GenerateTab() {
             />
           </Field>
           <div className={styles.row}>
-            <Field label="Whisper model">
+            <Field advanced label="Whisper model">
               <input type="text" value={data.groq_stt_model} onChange={(e) => setData({ ...data, groq_stt_model: e.target.value })} />
             </Field>
-            <Field label="Whisper fallback model" tip="Used only if the main model hits its rate limit.">
-              <input
-                type="text"
-                value={data.groq_stt_model_fallback}
-                onChange={(e) => setData({ ...data, groq_stt_model_fallback: e.target.value })}
-              />
-            </Field>
           </div>
-          <Field label="Chunk length (seconds)" tip="How much audio to send per request. Groq's per-request size limit gives plenty of headroom at this length.">
-            <input
-              type="number" step="30" min="30"
-              value={data.chunk_seconds_groq}
-              onChange={(e) => setData({ ...data, chunk_seconds_groq: Number(e.target.value) })}
-            />
-          </Field>
         </>
       )}
 
@@ -959,28 +915,14 @@ function GenerateTab() {
             />
           </Field>
           <div className={styles.row}>
-            <Field label="Whisper model">
+            <Field advanced label="Whisper model">
               <input
                 type="text"
                 value={data.openrouter_stt_model}
                 onChange={(e) => setData({ ...data, openrouter_stt_model: e.target.value })}
               />
             </Field>
-            <Field label="Whisper fallback model">
-              <input
-                type="text"
-                value={data.openrouter_stt_model_fallback}
-                onChange={(e) => setData({ ...data, openrouter_stt_model_fallback: e.target.value })}
-              />
-            </Field>
           </div>
-          <Field label="Chunk length (seconds)">
-            <input
-              type="number" step="30" min="30"
-              value={data.chunk_seconds_openrouter}
-              onChange={(e) => setData({ ...data, chunk_seconds_openrouter: Number(e.target.value) })}
-            />
-          </Field>
         </>
       )}
 
@@ -1011,14 +953,14 @@ function GenerateTab() {
             />
           </Field>
           <div className={styles.row}>
-            <Field label="Whisper model">
+            <Field advanced label="Whisper model">
               <input
                 type="text"
                 value={data.cloudflare_stt_model}
                 onChange={(e) => setData({ ...data, cloudflare_stt_model: e.target.value })}
               />
             </Field>
-            <Field label="Chunk length (seconds)" tip="Undocumented limit — tune against your own account (see note above).">
+            <Field advanced label="Chunk length (seconds)" tip="Undocumented limit — tune against your own account (see note above).">
               <input
                 type="number" step="10" min="10"
                 value={data.chunk_seconds_cloudflare}
@@ -1030,14 +972,7 @@ function GenerateTab() {
       )}
 
       <div className={styles.row}>
-        <Field label="Audio bitrate (kbps)" tip="Lower = smaller uploads, fits more minutes per request. 64 is a reasonable default for speech.">
-          <input
-            type="number" step="8" min="16"
-            value={data.audio_bitrate_kbps}
-            onChange={(e) => setData({ ...data, audio_bitrate_kbps: Number(e.target.value) })}
-          />
-        </Field>
-        <Field
+        <Field advanced
           label="Assume spoken language"
           tip="Fallback when neither the provider nor the file's own audio-language tag can tell us what's spoken. Leave empty to skip a video rather than guess."
         >
@@ -1049,7 +984,7 @@ function GenerateTab() {
           />
         </Field>
       </div>
-      <Field
+      <Field advanced
         label="Vocabulary hint (Groq/OpenRouter only)"
         tip="A short, plain comma-separated list of names Whisper is likely to mishear (e.g. show/character names) -- helps with proper nouns. Keep it a plain list, not a labeled sentence ('Characters: ...') -- that shape was observed to make Whisper hallucinate extra dialogue near the end of a chunk. Saved as a single line, capped at 200 characters."
       >
@@ -1096,15 +1031,8 @@ function GenerateTab() {
             </Field>
           )}
           <div className={styles.row}>
-            <Field label="Translation model">
+            <Field advanced label="Translation model">
               <input type="text" value={data.groq_llm_model} onChange={(e) => setData({ ...data, groq_llm_model: e.target.value })} />
-            </Field>
-            <Field label="Translation fallback model">
-              <input
-                type="text"
-                value={data.groq_llm_model_fallback}
-                onChange={(e) => setData({ ...data, groq_llm_model_fallback: e.target.value })}
-              />
             </Field>
           </div>
         </>
@@ -1127,18 +1055,11 @@ function GenerateTab() {
             </Field>
           )}
           <div className={styles.row}>
-            <Field label="Translation model">
+            <Field advanced label="Translation model">
               <input
                 type="text"
                 value={data.openrouter_llm_model}
                 onChange={(e) => setData({ ...data, openrouter_llm_model: e.target.value })}
-              />
-            </Field>
-            <Field label="Translation fallback model">
-              <input
-                type="text"
-                value={data.openrouter_llm_model_fallback}
-                onChange={(e) => setData({ ...data, openrouter_llm_model_fallback: e.target.value })}
               />
             </Field>
           </div>
@@ -1160,31 +1081,14 @@ function GenerateTab() {
             />
           </Field>
           <div className={styles.row}>
-            <Field label="Translation model">
+            <Field advanced label="Translation model">
               <input type="text" value={data.gemini_llm_model} onChange={(e) => setData({ ...data, gemini_llm_model: e.target.value })} />
-            </Field>
-            <Field label="Translation fallback model">
-              <input
-                type="text"
-                value={data.gemini_llm_model_fallback}
-                onChange={(e) => setData({ ...data, gemini_llm_model_fallback: e.target.value })}
-              />
             </Field>
           </div>
         </>
       )}
 
       <div className={styles.row}>
-        <Field
-          label="Lines per translation call"
-          tip="How many subtitle lines to batch into one translation request. Higher = fewer API calls; lower = safer against a provider's per-request token limit."
-        >
-          <input
-            type="number" step="1" min="1"
-            value={data.translate_batch_size}
-            onChange={(e) => setData({ ...data, translate_batch_size: Number(e.target.value) })}
-          />
-        </Field>
         <Field
           label="Max. videos per day"
           tip="Caps how many DISTINCT videos get a subtitle generated in any 24 hours -- counted across every sweep, poll and scheduled run together, so a busy day can't quietly multiply it. Translating an already-transcribed video into extra languages doesn't count again. A manual Generate click ignores this."
@@ -1250,14 +1154,17 @@ function AutomationTab() {
         <div className="error-banner">{whatRuns.loadError || automationLoadError}</div>
       )}
       <WhatRunsTable {...whatRuns} />
-      <Field label="Max. remediation attempts">
+      <Field
+        label="Max. remediation attempts"
+        tip="How many replacement subtitles to try from Bazarr's providers. If none of them passes the check, the original is put back and stays flagged."
+      >
         <input
           type="number"
           value={data.remediate_max_attempts}
           onChange={(e) => setData({ ...data, remediate_max_attempts: Number(e.target.value) })}
         />
       </Field>
-      <Field
+      <Field advanced
         label="Minimum Bazarr score to try (remediation, %)"
         tip="Bazarr's own match score for a candidate -- one below this is skipped during remediation. 0 = try everything."
       >
@@ -1659,10 +1566,24 @@ function AccountTab() {
 export default function Settings() {
   const { tab } = useParams()
   const active = tab ?? 'general'
+  const [mode, setMode] = useState<SettingsMode>(readMode)
+
+  function changeMode(m: SettingsMode) {
+    setMode(m)
+    try {
+      localStorage.setItem(MODE_KEY, m)
+    } catch {
+      // private window etc.: the choice just isn't remembered
+    }
+  }
 
   return (
+    <ModeContext.Provider value={mode}>
     <div>
-      <h1>Settings</h1>
+      <div className={styles.header}>
+        <h1>Settings</h1>
+        <ModeToggle mode={mode} onChange={changeMode} />
+      </div>
       {active === 'general' && <GeneralTab />}
       {active === 'sync' && <SyncTab />}
       {active === 'correctness' && <CorrectnessTab />}
@@ -1673,5 +1594,6 @@ export default function Settings() {
       {active === 'log' && <LogTab />}
       {active === 'account' && <AccountTab />}
     </div>
+    </ModeContext.Provider>
   )
 }

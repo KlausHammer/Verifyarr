@@ -207,3 +207,33 @@
   color: var(--text-faint);
   margin-right: 8px;
 }
+
+.header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.modeToggle {
+  display: inline-flex;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  overflow: hidden;
+}
+.modeToggle button {
+  background: none;
+  border: none;
+  padding: 6px 14px;
+  font-size: 13px;
+  color: var(--text-dim);
+  cursor: pointer;
+}
+.modeToggle button + button {
+  border-left: 1px solid var(--border);
+}
+.modeToggle .modeActive {
+  background: var(--accent);
+  color: #082e28;
+}

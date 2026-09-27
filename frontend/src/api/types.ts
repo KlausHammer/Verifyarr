@@ -192,12 +192,16 @@ export interface SyncSettings {
   min_change_seconds: number
   sample_count: number
   clip_seconds: number
+  clips_per_10min: number
+  clip_tilt_escalate_s: number
   window_minutes: number
   overlap_threshold: number
   block_spread_suspect_threshold_s: number
   whisper_mode: 'sampled' | 'full'
   anchor_check_enabled: boolean
   anchor_resync_enabled: boolean
+  escalate_sampled_to_full: boolean
+  fps_check_enabled: boolean
   line_order_enabled: boolean
   line_order_audio_confirm: boolean
   line_order_swap_threshold_pct: number
