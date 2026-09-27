@@ -634,7 +634,8 @@ def _compare_transcript_to_window(cfg: Config, transcript: str, window_text: str
         compare_text = translated if translated is not None else window_text
     t_tokens, w_tokens = tokenize(transcript), tokenize(compare_text)
     score = (len(t_tokens & w_tokens) / len(t_tokens)) if t_tokens else None
-    return {"transcript_excerpt": transcript[:160], "score": round(score, 3) if score is not None else None}
+    return {"transcript_excerpt": transcript[:160], "score": round(score, 3) if score is not None else None,
+            "sub_tokens": len(w_tokens)}
 
 
 def _aggregate_correctness(samples: list[dict], cfg: Config) -> tuple[Optional[float], str]:
@@ -884,7 +885,8 @@ def anchor_point_runs(samples: list[dict], k: int = POINT_RUN_K,
                       min_dev: float = POINT_RUN_MIN_DEV_S,
                       max_mad: float = POINT_RUN_MAX_MAD_S) -> list[dict]:
     """Stretches where k consecutive matched lines share one offset away from the
-    file's: [{"from","to","dev","n"}], merged. Uses anchor_points (audio, cue)."""
+    file's: [{"from","to","dev","n","cue_from","cue_to"}], merged. from/to are audio
+    times, cue_from/cue_to the run's own cue times. Uses anchor_points (audio, cue)."""
     pts: dict[float, float] = {}
     for s in samples or []:
         for a, c in s.get("anchor_points") or []:
@@ -900,12 +902,15 @@ def anchor_point_runs(samples: list[dict], k: int = POINT_RUN_K,
         if abs(m) < min_dev or statistics.median(abs(x - m) for x in win) > max_mad:
             continue
         lo, hi = seq[i][0], seq[i + k - 1][0]
+        cues = [a - sh for a, sh in seq[i:i + k]]
         if runs and lo <= runs[-1]["to"] and (runs[-1]["dev"] > 0) == (m > 0):
             r = runs[-1]
             r["to"], r["n"] = hi, r["n"] + 1
             r["dev"] = m if abs(m) > abs(r["dev"]) else r["dev"]
+            r["cue_from"], r["cue_to"] = min(r["cue_from"], *cues), max(r["cue_to"], *cues)
         else:
-            runs.append({"from": lo, "to": hi, "dev": round(m, 2), "n": k})
+            runs.append({"from": lo, "to": hi, "dev": round(m, 2), "n": k,
+                         "cue_from": min(cues), "cue_to": max(cues)})
     for r in runs:
         r["dev"] = round(r["dev"], 2)
     return runs

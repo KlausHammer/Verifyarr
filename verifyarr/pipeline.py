@@ -1696,6 +1696,11 @@ def _missing_middle_hit(conn: sqlite3.Connection, video_path: Path, subs, cfg: C
                                    min_words=_min_words(cfg))
 
 
+# How far a displaced line is looked for. 30/60s missed commercial cuts (-82s, -106s);
+# +-180s: 110/110 cut and 44/44 block files run, healthy SH+KG peak unchanged (<= 2.0s).
+BLOCK_RUN_REACH_S = 180.0
+
+
 def _block_runs_hit(conn: sqlite3.Connection, video_path: Path, subs, cfg: Config,
                     proven_block: bool = False) -> list:
     """Point runs on the file on disk against the cached full transcript, or [].
@@ -1706,7 +1711,7 @@ def _block_runs_hit(conn: sqlite3.Connection, video_path: Path, subs, cfg: Confi
     segments = _cached_full_segments(conn, video_path, cfg)
     if not segments:
         return []
-    pts = dense_anchor_points(subs, segments)
+    pts = dense_anchor_points(subs, segments, before_s=BLOCK_RUN_REACH_S, after_s=BLOCK_RUN_REACH_S)
     runs = anchor_point_runs(pts)
     if not runs and proven_block:
         runs = anchor_point_runs(pts, k=3, min_dev=5.0, max_mad=1.0)
@@ -1720,8 +1725,9 @@ def _block_runs_hit(conn: sqlite3.Connection, video_path: Path, subs, cfg: Confi
         return runs
     kept = []
     for r in runs:
+        # The run's own cues: they sit dev away from its audio span.
         cues = [(e.start / 1000.0, e.end / 1000.0) for e in subs.events
-                if r["from"] - 5 <= e.start / 1000.0 <= r["to"] + 5]
+                if r["cue_from"] - 5 <= e.start / 1000.0 <= r["cue_to"] + 5]
         if shift_fits_speech(ivs, cues, r["dev"]):
             kept.append(r)
         else:
@@ -2179,14 +2185,28 @@ def correctness_and_finish(video_path: Path, subtitle_path: Path, lang: Optional
                 row["correctness_avg_score"] = round(result["avg_score"], 3) if result["avg_score"] is not None else None
                 row["correctness_audio_lang"] = result.get("audio_lang")
                 row["correctness_samples"] = result.get("samples")
+            def rate_fixes():
+                # Any rate from the original, then the discrete 0.1% path.
+                fix = _try_rate_from_baseline(conn, video_path, subtitle_path, cfg, media_root,
+                                              orig_subs or current_subs, current_subs)
+                if fix is not None:
+                    return fix
+                fps_ev = result
+                if escalated_samples is not None and not result.get("full_coverage"):
+                    # Resolution handed back sparse clips; re-read the kept file on the
+                    # cached full transcript (KG_BOB 0.1%, 5 clips).
+                    _, fps_ev, _ = _recheck_after_resync(
+                        video_path, current_subs, lang, ev_cfg, conn, collected, result,
+                        cancel_event=cancel_event)
+                return _try_fps_rescale(conn, video_path, subtitle_path, lang, cfg,
+                                        media_root, current_subs, fps_ev)
+
             rate_fix = None
             vetoed = row.pop("_vetoed_bad_fit", False)
             if vetoed:
                 # A rate error is measured on the untouched original, not on alass'
-                # fit -- the veto must not skip it (KG_BMS 4.6% drift, sampled).
-                rate_fix = _try_rate_from_baseline(conn, video_path, subtitle_path, cfg,
-                                                   media_root, orig_subs or current_subs,
-                                                   current_subs)
+                # fit -- the veto must not skip it (KG_BMS 4.6%, KG_BOB 0.1%).
+                rate_fix = rate_fixes()
             if vetoed and rate_fix is None:
                 # Anchors disproved alass' fit; the original was kept unwritten.
                 # Flagged, not silently kept: the file alass moved is suspect.
@@ -2210,12 +2230,7 @@ def correctness_and_finish(video_path: Path, subtitle_path: Path, lang: Optional
             # gathered against cue times this fix just changed, so re-gather before
             # the verdict chain judges the corrected file.
             ramp_probe_saved = row.pop("_ramp_rescued", None)
-            fps_fix = rate_fix or _try_rate_from_baseline(conn, video_path, subtitle_path, cfg,
-                                                          media_root, orig_subs or current_subs,
-                                                          current_subs)
-            if fps_fix is None:
-                fps_fix = _try_fps_rescale(conn, video_path, subtitle_path, lang, cfg,
-                                           media_root, current_subs, result)
+            fps_fix = rate_fix or rate_fixes()
             if fps_fix is None and ramp_probe_saved is not None:
                 # The normal path cannot fire here (new's SUSPECT flag, or a
                 # second-path pool under the strict keep bar) -- but the rescue
