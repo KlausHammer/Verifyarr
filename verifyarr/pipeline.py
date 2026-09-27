@@ -2202,10 +2202,10 @@ def correctness_and_finish(video_path: Path, subtitle_path: Path, lang: Optional
             fps_fix = _try_rate_from_baseline(conn, video_path, subtitle_path, cfg, media_root,
                                               orig_subs or current_subs,
                                               current_subs)
-            if fps_fix is None and cfg.rate_legacy_paths:
+            if fps_fix is None:
                 fps_fix = _try_fps_rescale(conn, video_path, subtitle_path, lang, cfg,
                                            media_root, current_subs, result)
-            if fps_fix is None and ramp_probe_saved is not None and cfg.rate_legacy_paths:
+            if fps_fix is None and ramp_probe_saved is not None:
                 # The normal path cannot fire here (new's SUSPECT flag, or a
                 # second-path pool under the strict keep bar) -- but the rescue
                 # already verified this probe end to end, so apply it directly.

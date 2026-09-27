@@ -232,7 +232,6 @@ class Config:
     escalate_only_multi_block: bool
     fps_check_enabled: bool
     fps_require_full_coverage: bool
-    rate_legacy_paths: bool
 
     # Line-order check (see line_order.py). Off by default, opt-in.
     line_order_enabled: bool
@@ -403,7 +402,6 @@ class Config:
             escalate_only_multi_block=vals["sync.escalate_only_multi_block"],
             fps_check_enabled=vals["sync.fps_check_enabled"],
             fps_require_full_coverage=vals["sync.fps_require_full_coverage"],
-            rate_legacy_paths=vals["sync.rate_legacy_paths"],
             require_audio_lang=vals["correctness.require_audio_lang"] or None,
             whisper_mode=vals["sync.whisper_mode"],
             line_order_enabled=vals["sync.line_order_enabled"],
@@ -649,10 +647,6 @@ SETTING_DEFS: dict = {
     # once flipped one file's verdict; that did not show up here, so it stays a switch rather than
     # a rule.
     "sync.fps_require_full_coverage": ("sync", "bool", False),
-    # After alass, the rate from the original file over the full transcript
-    # (_try_rate_from_baseline) is the one rate fixer. On brings back the two older
-    # ones behind it: the discrete 0.1% framerate path and the ramp-rescue stretch.
-    "sync.rate_legacy_paths": ("sync", "bool", False),
     # Off by default, opt-in — see line_order.py.
     "sync.line_order_enabled":       ("sync", "bool", False),
     "sync.line_order_audio_confirm": ("sync", "bool", False),
