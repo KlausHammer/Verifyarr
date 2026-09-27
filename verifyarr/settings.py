@@ -172,9 +172,8 @@ class Config:
     vad_binary: str
     vad_model: str
     vad_min_speech_seconds: float
-    # ONE count for both series and movies -- a longer file isn't harder to verify, it's still
-    # the same "does this dialogue match the audio" question, so there's no reason to sample it
-    # more. 5 rather than 3 because of the TIMING screen, not the content check: content
+    # Full-mode size and the fixed count when clips_per_10min is 0 (sampled clips scale with
+    # length, see sync.clips_per_10min). 5 rather than 3 because of the TIMING screen, not the content check: content
     # separates perfectly at 3 clips, but 3 clips only produce ~2.3 confident anchors and catch
     # 7 of 10 mis-timed files, where 5 clips produce ~3.9 and catch 9 of 10 (see
     # pipeline._screen_says_needs_full).
@@ -232,6 +231,7 @@ class Config:
     escalate_only_multi_block: bool
     fps_check_enabled: bool
     fps_require_full_coverage: bool
+    clips_per_10min: float
 
     # Line-order check (see line_order.py). Off by default, opt-in.
     line_order_enabled: bool
@@ -402,6 +402,7 @@ class Config:
             escalate_only_multi_block=vals["sync.escalate_only_multi_block"],
             fps_check_enabled=vals["sync.fps_check_enabled"],
             fps_require_full_coverage=vals["sync.fps_require_full_coverage"],
+            clips_per_10min=vals["sync.clips_per_10min"],
             require_audio_lang=vals["correctness.require_audio_lang"] or None,
             whisper_mode=vals["sync.whisper_mode"],
             line_order_enabled=vals["sync.line_order_enabled"],
@@ -572,8 +573,8 @@ SETTING_DEFS: dict = {
     "sync.min_change_seconds": ("sync", "float", 0.25),
     # Whisper sampling parameters — the same knobs control both how well sync finds the
     # shift and how well the correctness check compares, hence grouped with sync tuning.
-    # ONE count for both series and movies — a longer file isn't harder to verify, no reason
-    # to sample it more.
+    # Sampled mode uses sync.clips_per_10min instead when it is set (default); this count
+    # sizes full mode and the fixed-count fallback.
     # 16 short clips, not 5 long ones. Coverage dominates clip length, and the measure that
     # settles it is how often a broken file reaches the user with NEITHER a fix NOR a warning --
     # a silent pass is the only failure that actually hurts. Over 268 rows per scenario on all 15
@@ -597,6 +598,12 @@ SETTING_DEFS: dict = {
     # does not. This also corrects finding 2 ("coverage beats clip length"), whose trade-off
     # was priced in audio SECONDS -- 16x15 and 16x30 cost the same, so it never existed.
     "sync.clip_seconds":        ("sync", "int", 30),
+    # Sampled clips scale with length: 2 per 10 minutes, at least 3 (the screen needs 3
+    # matches). A fixed 16 gave a 2-hour film 1.3 per 10 min. Measured on 9 episodes of
+    # 42-59 min: 1.3/2/3/4 per 10 min and a fixed 16 detect and fix the same, one block
+    # aside that only 16 happened to land on. 0 = use sample_count (the old fixed count).
+    # sample_count still sizes full mode (x FULL_MODE_SAMPLE_MULTIPLIER).
+    "sync.clips_per_10min":     ("sync", "float", 2.0),
     "sync.window_minutes":      ("sync", "float", 0.5),
     "sync.overlap_threshold":   ("sync", "float", 0.25),
     # sampled | full -- see Config.whisper_mode.

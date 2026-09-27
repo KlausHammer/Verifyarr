@@ -4,6 +4,7 @@ subtitle's word content. See `correctness_check` for the main flow and scoring l
 from __future__ import annotations
 
 import bisect
+import math
 import json
 import statistics
 import re
@@ -93,6 +94,18 @@ def detect_embedded_subtitle_langs(video_path: Path) -> set[str]:
 
 
 _DURATION_MEMO = BoundedMemo(64)
+
+
+SAMPLED_MIN_CLIPS = 3
+
+
+def sample_count_for(cfg: Config, duration: Optional[float]) -> int:
+    """Sampled clips for a file this long: sync.clips_per_10min (at least 3), or the
+    fixed sample_count when that is 0."""
+    per10 = getattr(cfg, "clips_per_10min", 0.0) or 0.0
+    if per10 > 0 and duration:
+        return max(SAMPLED_MIN_CLIPS, math.ceil(duration / 600.0 * per10))
+    return max(1, cfg.sample_count)
 
 
 def get_duration_seconds(video_path: Path) -> Optional[float]:
@@ -1197,12 +1210,11 @@ def correctness_check(video_path: Path, subs: "pysubs2.SSAFile", sub_lang: Optio
         reason = f"speech is '{audio_lang}' (per the file's metadata), not '{cfg.require_audio_lang}' — skipped"
         return {"skipped": True, "reason": reason}
 
-    # ONE sample count for both series and movies — a longer file isn't harder to verify,
-    # it's still the same "does this dialogue match the audio" question. duration is split
-    # into cfg.sample_count equal regions (spread evenly across the whole file), and in each
+    # Clip count scales with length (sample_count_for: 2 per 10 min). duration is split
+    # into that many equal regions (spread evenly across the whole file), and in each
     # region the most dialogue-dense clip start (pick_dialogue_dense_time) is picked instead
     # of a blind timestamp — avoids landing a sample on a silent or action-heavy stretch.
-    n = max(1, cfg.sample_count)
+    n = sample_count_for(cfg, duration)
     regions = [(duration * i / n, duration * (i + 1) / n) for i in range(n)]
     transcript_lang = audio_lang or cfg.require_audio_lang
 

@@ -51,7 +51,7 @@ from verifyarr import generate
 from verifyarr import correctness
 from verifyarr.correctness import (JobCancelled, _aggregate_correctness, _compare_transcript_to_window,
                                     detect_audio_language_ffprobe, extract_clip,
-                                    get_duration_seconds, transcribe_verbose)
+                                    get_duration_seconds, sample_count_for, transcribe_verbose)
 from verifyarr.settings import Config
 from verifyarr.subtitles import (
     pick_dialogue_dense_time, subs_fingerprint, subs_text_in_window, tokenize,
@@ -152,7 +152,7 @@ def cache_key_for(subs, cfg: Config) -> str:
     verdicts until the subtitle itself changes. Same (provider, model) pair the full-transcript
     cache is keyed on, from the one function, so the two can't drift apart."""
     provider, model = correctness.full_transcript_cache_key(cfg)
-    return (f"v{CACHE_SCHEMA}:{subs_fingerprint(subs)}:{cfg.sample_count}:{cfg.clip_seconds}:"
+    return (f"v{CACHE_SCHEMA}:{subs_fingerprint(subs)}:{cfg.sample_count}:{cfg.clips_per_10min}:{cfg.clip_seconds}:"
             f"{cfg.window_minutes}:{cfg.whisper_mode}:{provider}:{model}")
 
 
@@ -471,7 +471,7 @@ def collect_samples(video_path: Path, subs, sub_lang: Optional[str], cfg: Config
         return {"skipped": True, "reason": reason}
     lang = audio_lang or cfg.require_audio_lang
 
-    n = max(1, cfg.sample_count)
+    n = sample_count_for(cfg, duration)
     regions = [(duration * i / n, duration * (i + 1) / n) for i in range(n)]
     clusters = _cluster_windows(candidates) if candidates else []
     # Speech timeline for VAD-guided filler placement (see vad.py; None keeps today's
