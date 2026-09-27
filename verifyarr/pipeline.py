@@ -2179,7 +2179,15 @@ def correctness_and_finish(video_path: Path, subtitle_path: Path, lang: Optional
                 row["correctness_avg_score"] = round(result["avg_score"], 3) if result["avg_score"] is not None else None
                 row["correctness_audio_lang"] = result.get("audio_lang")
                 row["correctness_samples"] = result.get("samples")
-            if row.pop("_vetoed_bad_fit", False):
+            rate_fix = None
+            vetoed = row.pop("_vetoed_bad_fit", False)
+            if vetoed:
+                # A rate error is measured on the untouched original, not on alass'
+                # fit -- the veto must not skip it (KG_BMS 4.6% drift, sampled).
+                rate_fix = _try_rate_from_baseline(conn, video_path, subtitle_path, cfg,
+                                                   media_root, orig_subs or current_subs,
+                                                   current_subs)
+            if vetoed and rate_fix is None:
                 # Anchors disproved alass' fit; the original was kept unwritten.
                 # Flagged, not silently kept: the file alass moved is suspect.
                 row["correctness_flag"] = "SUSPECT"
@@ -2202,9 +2210,9 @@ def correctness_and_finish(video_path: Path, subtitle_path: Path, lang: Optional
             # gathered against cue times this fix just changed, so re-gather before
             # the verdict chain judges the corrected file.
             ramp_probe_saved = row.pop("_ramp_rescued", None)
-            fps_fix = _try_rate_from_baseline(conn, video_path, subtitle_path, cfg, media_root,
-                                              orig_subs or current_subs,
-                                              current_subs)
+            fps_fix = rate_fix or _try_rate_from_baseline(conn, video_path, subtitle_path, cfg,
+                                                          media_root, orig_subs or current_subs,
+                                                          current_subs)
             if fps_fix is None:
                 fps_fix = _try_fps_rescale(conn, video_path, subtitle_path, lang, cfg,
                                            media_root, current_subs, result)
