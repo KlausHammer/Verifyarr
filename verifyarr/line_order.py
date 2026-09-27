@@ -136,7 +136,8 @@ def all_two_line_events(subs) -> list[tuple[int, str, str, int, int]]:
 
 # Bump when the cached payload changes shape (pipeline._cache_json): rows written
 # before it (v1: no full_coverage/fps_points) are then re-collected, not misread.
-CACHE_SCHEMA = 2
+# v3: every region keeps its timing clip.
+CACHE_SCHEMA = 3
 
 
 def cache_key_for(subs, cfg: Config) -> str:
@@ -479,21 +480,25 @@ def collect_samples(video_path: Path, subs, sub_lang: Optional[str], cfg: Config
     # subtitle's own timing and are never moved.
     timeline, timeline_whole = vad.timeline_for_video(conn, video_path, cfg)
 
-    # One slot per region: ("heuristic", cluster, None) if a candidate cluster starts in it,
-    # else ("filler", start_sec, (region_start, region_end)) at that region's most dialogue-
-    # dense point. A cluster only ever starts in exactly one region, so no cluster can be picked
-    # twice here. The bounds travel with the slot so a cache hit can be checked against them.
+    # One ("filler", start_sec, (region_start, region_end)) per region at its most dialogue-
+    # dense point, plus ("heuristic", cluster, None) for a candidate cluster starting in it.
+    # A cluster only ever starts in exactly one region, so no cluster can be picked twice
+    # here. The bounds travel with the slot so a cache hit can be checked against them.
     slots: list[tuple[str, object, Optional[tuple[float, float]]]] = []
+    heuristic_slots: list[tuple[str, object, Optional[tuple[float, float]]]] = []
     for region_start, region_end in regions:
         in_region = next((c for c in clusters if region_start <= c["clip_start"] < region_end), None)
         if in_region is not None:
-            slots.append(("heuristic", in_region, None))
-        else:
-            base = pick_dialogue_dense_time(subs, region_start, region_end, cfg.clip_seconds)
-            start = vad.pick_sample_time(subs, timeline, region_start, region_end,
-                                         cfg.clip_seconds, base, cfg.vad_min_speech_seconds,
-                                         whole_file=timeline_whole)
-            slots.append(("filler", start, (region_start, region_end)))
+            heuristic_slots.append(("heuristic", in_region, None))
+        # Every region keeps its timing clip: a swap check spans only its line pair
+        # (1-2 anchor points) and used to take the slot (Community: 2-4 of 5).
+        base = pick_dialogue_dense_time(subs, region_start, region_end, cfg.clip_seconds)
+        start = vad.pick_sample_time(subs, timeline, region_start, region_end,
+                                     cfg.clip_seconds, base, cfg.vad_min_speech_seconds,
+                                     whole_file=timeline_whole)
+        slots.append(("filler", start, (region_start, region_end)))
+    # After the fillers, so filler slot numbers stay the region index (cache key).
+    slots.extend(heuristic_slots)
 
     if extra_target_ranges:
         # A slot's own chosen position (its clip's start) is what "covers" a target range, not

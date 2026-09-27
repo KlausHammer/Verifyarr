@@ -84,8 +84,10 @@ class DriftRampPipelineTests(unittest.TestCase):
     def test_drift_swap_sampled(self):
         """SH_S01E03 drift_swap sampled: swap + drift, rampen skal stadig ses."""
         row, rec = _run("SH_S01E03", "drift_swap")
-        self.assertIn("stretch", row.get("sync_status") or "",
-                      f"no rate fix applied: {row.get('sync_status')}")
+        # The screen's presync may take the rate before alass (enough timing clips).
+        rate_fixed = ("stretch" in (row.get("sync_status") or "")
+                      or "Pre-sync before alass: rate" in (row.get("note") or ""))
+        self.assertTrue(rate_fixed, f"no rate fix applied: {row.get('sync_status')}")
         self.assertGreaterEqual(rec.get("frac_le_1_0s"), 0.90,
                                 f"still broken: rec={rec.get('frac_le_1_0s')}")
 
