@@ -394,6 +394,12 @@ def connect(path: Optional[Path] = None) -> sqlite3.Connection:
     except sqlite3.OperationalError:
         pass  # column already exists
     try:
+        # Why a file is SUSPECT (pipeline.REASON_*), for the UI; NULL on older rows.
+        conn.execute("ALTER TABLE files ADD COLUMN reason TEXT")
+        conn.commit()
+    except sqlite3.OperationalError:
+        pass  # column already exists
+    try:
         conn.execute("ALTER TABLE video_transcript_cache ADD COLUMN segments_json TEXT")
         conn.commit()
     except sqlite3.OperationalError:
@@ -539,11 +545,11 @@ def update_state(conn: sqlite3.Connection, video_path: Path, subtitle_path: Path
                             series_or_movie_title, video_mtime, video_size, subtitle_mtime,
                             subtitle_size, last_processed, sync_status, sync_max_shift_s,
                             structural_change, sync_split_blocks, sync_block_spread_s,
-                            correctness_flag,
+                            correctness_flag, reason,
                             correctness_avg_score, line_order_fixed, line_order_flagged,
                             line_order_cache_key, line_order_cache_json,
                             note, auto_action, last_run_id)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(subtitle_path) WHERE subtitle_path IS NOT NULL DO UPDATE SET
             video_path=excluded.video_path, lang=excluded.lang, media_root=excluded.media_root,
             season_episode=excluded.season_episode, series_or_movie_title=excluded.series_or_movie_title,
@@ -552,7 +558,7 @@ def update_state(conn: sqlite3.Connection, video_path: Path, subtitle_path: Path
             last_processed=excluded.last_processed, sync_status=excluded.sync_status,
             sync_max_shift_s=excluded.sync_max_shift_s, structural_change=excluded.structural_change,
             sync_split_blocks=excluded.sync_split_blocks, sync_block_spread_s=excluded.sync_block_spread_s,
-            correctness_flag=excluded.correctness_flag,
+            correctness_flag=excluded.correctness_flag, reason=excluded.reason,
             correctness_avg_score=excluded.correctness_avg_score,
             line_order_fixed=excluded.line_order_fixed, line_order_flagged=excluded.line_order_flagged,
             -- Only overwritten when THIS run actually collected fresh line-order/correctness
@@ -566,7 +572,9 @@ def update_state(conn: sqlite3.Connection, video_path: Path, subtitle_path: Path
           video_mtime, video_size, subtitle_mtime, subtitle_size, now,
           row.get("sync_status"), row.get("sync_max_shift_s"), int(bool(row.get("structural_change"))),
           row.get("sync_split_blocks"), row.get("sync_block_spread_s"),
-          row.get("correctness_flag"), row.get("correctness_avg_score"),
+          row.get("correctness_flag"),
+          row.get("reason") if row.get("correctness_flag") == "SUSPECT" else None,
+          row.get("correctness_avg_score"),
           row.get("line_order_fixed"), row.get("line_order_flagged"),
           row.get("line_order_cache_key"), row.get("line_order_cache_json"),
           row.get("note"), row.get("auto_action"), run_id))
@@ -647,7 +655,8 @@ def get_line_order_cache(conn: sqlite3.Connection, subtitle_path: Path) -> Optio
 
 def list_files(conn: sqlite3.Connection, q: Optional[str] = None, flag: Optional[str] = None,
                status: Optional[str] = None, lang: Optional[str] = None,
-               sort: str = "-last_processed", page: int = 1, page_size: int = 50):
+               sort: str = "-last_processed", page: int = 1, page_size: int = 50,
+               reason: Optional[str] = None):
     where, params = [], []
     if q:
         where.append("(video_path LIKE ? OR subtitle_path LIKE ? OR series_or_movie_title LIKE ?)")
@@ -661,6 +670,12 @@ def list_files(conn: sqlite3.Connection, q: Optional[str] = None, flag: Optional
     if lang:
         where.append("lang = ?")
         params.append(lang)
+    if reason == "other":
+        # Flagged before reasons were recorded, or by a path without one.
+        where.append("correctness_flag = 'SUSPECT' AND reason IS NULL")
+    elif reason:
+        where.append("reason = ?")
+        params.append(reason)
     where_sql = f"WHERE {' AND '.join(where)}" if where else ""
 
     sort_col = sort.lstrip("-")
@@ -677,6 +692,15 @@ def list_files(conn: sqlite3.Connection, q: Optional[str] = None, flag: Optional
         params + [page_size, offset],
     ).fetchall()
     return rows, total
+
+
+def attention_counts(conn: sqlite3.Connection) -> dict:
+    """SUSPECT files per reason ("other" when none was recorded), for "Needs attention"."""
+    rows = conn.execute(
+        "SELECT COALESCE(reason, 'other') AS reason, COUNT(*) AS n FROM files "
+        "WHERE correctness_flag = 'SUSPECT' GROUP BY 1 ORDER BY n DESC"
+    ).fetchall()
+    return {r["reason"]: r["n"] for r in rows}
 
 
 # --- runs (one per sweep/single run) -------------------------------------------------------------

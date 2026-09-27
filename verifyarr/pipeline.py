@@ -1684,6 +1684,23 @@ def _block_repair_parts(row: dict) -> int:
 # A block repair is never verified line by line: its edges land where the anchors
 # put them. SH tiny: 60 of 68 "fixed" block rows kept 1-58 lines 2s+ off (some were
 # correct lines moved with the block). Keep the repair, flag it (arm 2: detect).
+# Why a file is SUSPECT, for the UI (files.reason); the note keeps the technical detail.
+REASON_WRONG_SUBTITLE = "wrong_subtitle"
+REASON_PARTLY_OUT_OF_SYNC = "partly_out_of_sync"
+REASON_MISSING_LINES = "missing_lines"
+REASON_PAST_AUDIO_END = "past_audio_end"
+REASON_LINES_OUT_OF_ORDER = "lines_out_of_order"
+REASON_UNRELIABLE_TIMING = "unreliable_timing"
+
+def _timing_reason(result: dict, escalated_samples: Optional[list]) -> str:
+    """Anchors condemned the timing: noisy per line, or a stretch at another offset."""
+    jit = anchor_jitter((result.get("samples") if result.get("full_coverage")
+                         else escalated_samples) or [])
+    if jit is not None and jit >= JITTER_MIN_MAD_S:
+        return REASON_UNRELIABLE_TIMING
+    return REASON_PARTLY_OUT_OF_SYNC
+
+
 BLOCK_REPAIR_NOTE = (" Block error repaired in {n} parts -- lines near the block edges "
                      "cannot be verified; fetch a fresh subtitle.")
 
@@ -2013,8 +2030,9 @@ def _row_cost(row: dict) -> dict:
 def _detection_note(conn: sqlite3.Connection, video_path: Path, current_subs, cfg: Config,
                     row: dict, result: dict, resolved_winner: Optional[str],
                     escalated_samples: Optional[list], lang: Optional[str],
-                    cancel_event=None) -> Optional[str]:
-    """The last detectors of the verdict chain, in order; the first note that fires, or None.
+                    cancel_event=None) -> Optional[tuple[str, str]]:
+    """The last detectors of the verdict chain, in order; (reason, note) of the first that
+    fires, or None.
     Each is evaluated only when the ones before it stayed quiet."""
     have_full = bool(result.get("full_coverage")) or escalated_samples is not None
     runs = (_block_runs_hit(conn, video_path, current_subs, cfg,
@@ -2022,16 +2040,16 @@ def _detection_note(conn: sqlite3.Connection, video_path: Path, current_subs, cf
             if have_full or cfg.whisper_mode == "full" else [])
     if runs:
         # Part of the file sits at another offset.
-        return (f" Part of the episode is out of sync: {_runs_text(runs)} -- fetch a fresh "
+        return REASON_PARTLY_OUT_OF_SYNC, (f" Part of the episode is out of sync: {_runs_text(runs)} -- fetch a fresh "
                 "subtitle.")
     parts = _block_repair_parts(row)
     if parts >= 2:
-        return BLOCK_REPAIR_NOTE.format(n=parts)
+        return REASON_PARTLY_OUT_OF_SYNC, BLOCK_REPAIR_NOTE.format(n=parts)
     jit = anchor_jitter((result.get("samples") if result.get("full_coverage")
                          else escalated_samples) or [])
     if jit is not None and jit >= JITTER_MIN_MAD_S:
         # Per-cue noise has no offset to fix. Full coverage only.
-        return (f" Cue timing is noisy: lines within one clip disagree by {jit:.2f}s "
+        return REASON_UNRELIABLE_TIMING, (f" Cue timing is noisy: lines within one clip disagree by {jit:.2f}s "
                 "(median) -- no single offset fixes that; fetch a fresh subtitle.")
     if have_full:
         mm = _missing_middle_hit(conn, video_path, current_subs, cfg)
@@ -2042,14 +2060,14 @@ def _detection_note(conn: sqlite3.Connection, video_path: Path, current_subs, cf
         mm = None
     if mm is not None:
         # The surviving timings are correct, nothing to fix.
-        return (f" Subtitle has no lines for {mm['gap_end'] - mm['gap_start']:.0f} s "
+        return REASON_MISSING_LINES, (f" Subtitle has no lines for {mm['gap_end'] - mm['gap_start']:.0f} s "
                 f"at {_mmss(mm['gap_start'])}-{_mmss(mm['gap_end'])} where the audio "
                 f"has {mm['speech_s']:.0f} s of speech -- part of the episode is "
                 "missing; fetch a fresh subtitle.")
     over = overrun_evidence(current_subs, get_duration_seconds(video_path))
     if over is not None:
         # Evidence that something is wrong, not what: no fix follows from it.
-        return (f" {over['n']} subtitle line(s) run up to {over['over_s']:.0f}s past the end "
+        return REASON_PAST_AUDIO_END, (f" {over['n']} subtitle line(s) run up to {over['over_s']:.0f}s past the end "
                 "of the audio -- the subtitle does not fit this video; fetch a fresh subtitle.")
     return None
 
@@ -2217,6 +2235,7 @@ def correctness_and_finish(video_path: Path, subtitle_path: Path, lang: Optional
                     row["sync_split_blocks"] = None
                     row["sync_block_spread_s"] = None
                 row["correctness_flag"] = "SUSPECT"
+                row["reason"] = REASON_LINES_OUT_OF_ORDER
                 row["note"] = (row["note"] + f" Many swapped lines ({swap_ev['swapped']} of "
                                f"{swap_ev['checked']} tested) -- fetch a fresh subtitle.").strip()
                 row["line_order_fixed"] = 0
@@ -2281,6 +2300,7 @@ def correctness_and_finish(video_path: Path, subtitle_path: Path, lang: Optional
                 # Anchors disproved alass' fit; the original was kept unwritten.
                 # Flagged, not silently kept: the file alass moved is suspect.
                 row["correctness_flag"] = "SUSPECT"
+                row["reason"] = REASON_PARTLY_OUT_OF_SYNC
                 row["note"] = (row["note"] + " Fetch a fresh subtitle.").strip()
                 row["line_order_fixed"] = 0
                 row["line_order_flagged"] = len(result.get("line_issues") or []) \
@@ -2360,6 +2380,7 @@ def correctness_and_finish(video_path: Path, subtitle_path: Path, lang: Optional
                               and s["score"] >= cfg.overlap_threshold]
             if result["flag"] == "SUSPECT":
                 row["correctness_flag"] = "SUSPECT"
+                row["reason"] = REASON_WRONG_SUBTITLE
                 excerpts = " || ".join(
                     f"{s['start']}s: \"{s.get('transcript_excerpt', s.get('error', ''))}\""
                     for s in result["samples"]
@@ -2388,6 +2409,7 @@ def correctness_and_finish(video_path: Path, subtitle_path: Path, lang: Optional
                 # sample still matching; one bad sample alone is exactly what majority-vote is
                 # designed to overrule) -- both agreeing is what escalates it.
                 row["correctness_flag"] = "SUSPECT"
+                row["reason"] = REASON_PARTLY_OUT_OF_SYNC
                 failing = [s for s in result["samples"]
                            if s.get("score") is not None and s["score"] < cfg.overlap_threshold]
                 kept = ("kept 'blocks' over its single-offset fit, but "
@@ -2486,6 +2508,7 @@ def correctness_and_finish(video_path: Path, subtitle_path: Path, lang: Optional
                                            f"{result['flag']}.").strip()
                         else:
                             row["correctness_flag"] = "SUSPECT"
+                            row["reason"] = _timing_reason(result, escalated_samples)
                             if resync_still_bad:
                                 worst = max(abs(s["anchor"]["shift"])
                                             for s in resync_still_bad)
@@ -2547,6 +2570,7 @@ def correctness_and_finish(video_path: Path, subtitle_path: Path, lang: Optional
                         row["line_order_cache_json"] = _cache_json(collected)
                 else:
                     row["correctness_flag"] = "SUSPECT"
+                    row["reason"] = _timing_reason(result, escalated_samples)
                     row["note"] = (row["note"] +
                                     f" Escalated to SUSPECT: {len(bad)} Whisper anchor(s) show a confirmed "
                                     f"timing mismatch of up to {worst:.1f}s at [{where}], even though "
@@ -2564,7 +2588,8 @@ def correctness_and_finish(video_path: Path, subtitle_path: Path, lang: Optional
                                               cancel_event)) is not None:
                 # Detection only (arm 2): flagged, never rewritten.
                 row["correctness_flag"] = "SUSPECT"
-                row["note"] = (row["note"] + detected).strip()
+                row["reason"], note = detected
+                row["note"] = (row["note"] + note).strip()
                 row["auto_action"] = act_on_suspect()
             else:
                 row["correctness_flag"] = "ok"

@@ -1230,7 +1230,8 @@ def main(argv=None):
                                 f"{slug}.{model}.{mode}.{audio}.{name}", mode,
                                 audio_cache)
                             after_ev = list(after.events)
-                            rec.update(flag=row.get("correctness_flag"), sync=row.get("sync_status"),
+                            rec.update(flag=row.get("correctness_flag"), reason=row.get("reason"),
+                                       sync=row.get("sync_status"),
                                        lo_fixed=row.get("line_order_fixed"),
                                        lo_flagged=row.get("line_order_flagged"),
                                        lo_fixed_indices=row.get("lo_fixed_indices", []),

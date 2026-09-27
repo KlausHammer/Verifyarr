@@ -52,7 +52,8 @@ class DetectionOrderTests(unittest.TestCase):
         with mock.patch.object(P, "_block_runs_hit",
                                return_value=[{"from": 60, "to": 120, "dev": 4.0, "n": 6}]), \
                 mock.patch.object(P, "_missing_middle_hit") as mm:
-            note = self._call()
+            reason, note = self._call()
+        self.assertEqual(reason, P.REASON_PARTLY_OUT_OF_SYNC)
         self.assertIn("out of sync", note)
         mm.assert_not_called()
 
@@ -63,8 +64,20 @@ class DetectionOrderTests(unittest.TestCase):
                 mock.patch.object(P, "_missing_middle_hit",
                                   return_value={"gap_start": 60.0, "gap_end": 200.0,
                                                 "speech_s": 40.0}):
-            note = self._call()
+            reason, note = self._call()
+        self.assertEqual(reason, P.REASON_MISSING_LINES)
         self.assertIn("no lines for 140 s", note)
+
+    def test_speech_past_the_audio_end_is_its_own_reason(self):
+        from verifyarr import pipeline as P
+        with mock.patch.object(P, "_block_runs_hit", return_value=[]), \
+                mock.patch.object(P, "anchor_jitter", return_value=None), \
+                mock.patch.object(P, "_missing_middle_hit", return_value=None), \
+                mock.patch.object(P, "get_duration_seconds", return_value=1200.0), \
+                mock.patch.object(P, "overrun_evidence", return_value={"n": 4, "over_s": 66.0}):
+            reason, note = self._call()
+        self.assertEqual(reason, P.REASON_PAST_AUDIO_END)
+        self.assertIn("past the end", note)
 
 if __name__ == "__main__":
     unittest.main()

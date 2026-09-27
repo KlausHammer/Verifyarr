@@ -21,6 +21,12 @@ def summary(user=Depends(require_auth), conn=Depends(get_conn)):
     return db.summary_stats(conn)
 
 
+@router.get("/attention")
+def attention(user=Depends(require_auth), conn=Depends(get_conn)):
+    """Flagged files per reason, largest first -- the dashboard's "Needs attention"."""
+    return {"items": [{"reason": k, "count": v} for k, v in db.attention_counts(conn).items()]}
+
+
 @router.get("/match-rate")
 def match_rate(group_by: str = Query("day", pattern="^(day|week)$"),
                days: int = Query(MATCH_RATE_DEFAULT_DAYS, ge=MATCH_RATE_MIN_DAYS, le=MATCH_RATE_MAX_DAYS),

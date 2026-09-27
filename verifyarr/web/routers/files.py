@@ -21,9 +21,10 @@ router = APIRouter(prefix="/api/files", tags=["files"])
 def list_files(q: Optional[str] = None, flag: Optional[str] = None, status: Optional[str] = None,
                lang: Optional[str] = None, sort: str = "-last_processed",
                page: int = Query(1, ge=1), page_size: int = Query(50, ge=1, le=5000),
+               reason: Optional[str] = None,
                user=Depends(require_auth), conn=Depends(get_conn)):
     rows, total = db.list_files(conn, q=q, flag=flag, status=status, lang=lang, sort=sort,
-                                 page=page, page_size=page_size)
+                                 page=page, page_size=page_size, reason=reason)
     return {"items": [serialize_row(r) for r in rows], "total": total, "page": page, "page_size": page_size}
 
 
