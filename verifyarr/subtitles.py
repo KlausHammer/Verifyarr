@@ -88,8 +88,19 @@ def max_shift_stats(old: "pysubs2.SSAFile", new: "pysubs2.SSAFile"):
     return max(diffs), sum(diffs) / n, len(old_ev), len(new_ev)
 
 
+_ASIDE_RE = re.compile(r"[\[(][^\[\]()]*[\])]")
+
+
+def speech_text(text: str) -> str:
+    """Text that is spoken dialogue: lines with a music note and every bracketed
+    aside ("[VOMITING]", "(music)") removed. Not every subtitle or model marks songs
+    and sounds, so what is marked never counts -- on either side."""
+    lines = (text or "").replace("\\N", "\n").split("\n")
+    return _ASIDE_RE.sub(" ", " ".join(ln for ln in lines if "♪" not in ln and "♫" not in ln))
+
+
 def tokenize(text: str) -> set[str]:
-    return {w.lower() for w in WORD_RE.findall(text or "")} - STOPWORDS
+    return {w.lower() for w in WORD_RE.findall(speech_text(text))} - STOPWORDS
 
 
 # A whisper segment whose ENTIRE text is a bracketed/parenthetical sound-effect or audio-condition

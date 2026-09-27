@@ -49,6 +49,7 @@ from verifyarr.correctness import (
     ANCHOR_RESYNC_INTERVAL_S, ANCHOR_SUSPECT_MIN_SAMPLES,
     all_gaps, missing_middle_evidence, MISSING_MIDDLE_ESCALATE_GAP_S,
     gap_probe_windows, gap_speech, clears_missing_middle, missing_middle_min_words,
+    declared_music_gap,
     anchor_block_clusters, anchor_point_runs, dense_anchor_points,
     full_transcript_cache_key,
 )
@@ -1595,6 +1596,8 @@ def _missing_middle_probe(conn: sqlite3.Connection, video_path: Path, subs, cfg:
     best = None
     with tempfile.TemporaryDirectory() as td:
         for g0, g1 in all_gaps(subs, duration, MISSING_MIDDLE_ESCALATE_GAP_S):
+            if declared_music_gap(subs, g0, g1):
+                continue
             segs, secs, words = [], 0.0, 0
             for start, dur in gap_probe_windows(g0, g1, float(cfg.clip_seconds)):
                 for sg in _gap_clip_segments(conn, video_path, start, dur, cfg, audio_lang,

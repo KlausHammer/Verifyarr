@@ -114,6 +114,26 @@ class MissingMiddleTests(unittest.TestCase):
         self.assertIsNone(C.missing_middle_evidence(subs, segs))
 
 
+class DeclaredMusicGapTests(unittest.TestCase):
+    def _song_gap(self, cue_text, gap_s=43.0):
+        subs = _subs((0, 10, "a"), (100, 102, cue_text), (102 + gap_s, 110 + gap_s, "b"))
+        lyrics = " ".join(f"w{i}" for i in range(60))  # tiny writes lyrics without ♪
+        segs = _segs((105, 100 + gap_s, lyrics))
+        return C.missing_middle_evidence(subs, segs, min_words=50)
+
+    def test_song_announced_by_the_subtitle_is_not_a_hole(self):
+        # Breaking Bad S01E01 55:01: 43s song after this cue, 60 words on tiny.
+        self.assertIsNone(self._song_gap('[MICK HARVEY\'S\\N"OUT OF TIME, MAN" PLAYS]'))
+        self.assertIsNone(self._song_gap("[♪♪♪]"))
+
+    def test_other_cues_still_open_a_hole(self):
+        self.assertIsNotNone(self._song_gap("[VOMITING]"))
+        self.assertIsNotNone(self._song_gap("♪ Give me the hope ♪"))  # lyrics are speech
+
+    def test_long_gap_after_music_cue_is_still_judged(self):
+        self.assertIsNotNone(self._song_gap("[MUSIC PLAYING]", gap_s=300.0))
+
+
 class MatrixModelKeyTests(unittest.TestCase):
     def test_cfg_names_the_tested_model(self):
         # Transcript cache and hole bar key on the tested model, not the default.

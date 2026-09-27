@@ -22,7 +22,7 @@ from verifyarr import vad
 from verifyarr.procprio import wrap_low_priority
 from verifyarr.settings import Config, VOCABULARY_HINT_MAX_CHARS
 from verifyarr.subtitles import (
-    pick_dialogue_dense_time, subs_text_in_window, tokenize, is_nonspeech_annotation,
+    pick_dialogue_dense_time, subs_text_in_window, tokenize, is_nonspeech_annotation, speech_text,
     clip_anchors, anchors_applicable, ANCHOR_SUSPECT_THRESHOLD_S,
 )
 
@@ -813,8 +813,27 @@ def gap_speech(segments: list[dict], g0: float, g1: float) -> tuple[float, int]:
         if min(en, g1) - max(st, g0) > 0:
             secs += min(en, g1) - max(st, g0)
         if g0 <= st < g1:
-            words += len((s.get("text") or "").split())
+            words += len(speech_text(s.get("text") or "").split())
     return secs, words
+
+
+# A gap the subtitle itself opens with a music description ("[MICK HARVEY'S "OUT
+# OF TIME, MAN" PLAYS]", "[♪♪♪]") is a song, not missing dialogue: tiny writes
+# the lyrics without ♪ (Breaking Bad S01E01 55:01, 60 words in 43s). Whole-cue
+# descriptions only -- lyric lines are subtitled speech. Capped: a song, not an act.
+MUSIC_CUE_RE = re.compile(
+    r"^\s*[\[(][^\])]*(?:\b(?:PLAYS|PLAYING|MUSIC|SONG|SINGING|SINGS)\b|♪)[^\])]*[\])]\s*$",
+    re.IGNORECASE)
+DECLARED_MUSIC_MAX_S = 240.0
+
+
+def declared_music_gap(subs, g0: float, g1: float) -> bool:
+    """True when the cue the gap opens after is a music description and the gap
+    is song-sized."""
+    if g1 - g0 > DECLARED_MUSIC_MAX_S:
+        return False
+    return any(abs(e.end / 1000.0 - g0) < 0.001 and MUSIC_CUE_RE.match(e.plaintext)
+               for e in subs.events)
 
 
 def missing_middle_evidence(subs, segments: list[dict],
@@ -828,6 +847,8 @@ def missing_middle_evidence(subs, segments: list[dict],
     min_words = MISSING_MIDDLE_MIN_WORDS if min_words is None else min_words
     gaps = all_gaps(subs, duration_s) if duration_s else cue_gaps(subs)
     for g0, g1 in gaps:
+        if declared_music_gap(subs, g0, g1):
+            continue
         secs, words = gap_speech(segments, g0, g1)
         if clears_missing_middle(secs, words, min_words) \
                 and (best is None or secs > best["speech_s"]):
