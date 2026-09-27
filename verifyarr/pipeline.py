@@ -49,7 +49,7 @@ from verifyarr.correctness import (
     ANCHOR_RESYNC_INTERVAL_S, ANCHOR_SUSPECT_MIN_SAMPLES,
     all_gaps, missing_middle_evidence, MISSING_MIDDLE_ESCALATE_GAP_S,
     gap_probe_windows, gap_speech, clears_missing_middle, missing_middle_min_words,
-    declared_music_gap,
+    declared_music_gap, overrun_evidence,
     anchor_block_clusters, anchor_point_runs, dense_anchor_points,
     full_transcript_cache_key,
 )
@@ -58,7 +58,7 @@ from verifyarr.correctness import (
 from verifyarr.generate import _drop_nonspeech, _drop_repetition_loops
 from verifyarr.fileops import backup_subtitle, quarantine_subtitle
 from verifyarr.bazarr import (
-    bazarr_map_path, bazarr_blacklist, remediate_suspect, remediate_without_history,
+    bazarr_map_path, bazarr_blacklist, remediate_suspect, remediate_without_history, REMEDIATED_PREFIX,
     request_replacement_fire_and_forget,
 )
 from verifyarr import db
@@ -75,6 +75,20 @@ def _try_quarantine(subtitle_path: Path, cfg: Config, media_root: Path):
         return quarantine_subtitle(subtitle_path, cfg.quarantine_dir, media_root), None
     except Exception as e:
         return None, str(e)
+
+
+def _keep_original_unless_remediated(subtitle_path: Path, original: Optional[bytes],
+                                     outcome: str) -> str:
+    """No verified replacement within remediate_max_attempts: the original goes back in
+    place, still flagged SUSPECT (user's rule: mark it wrong, keep it)."""
+    if original is None or outcome.startswith(REMEDIATED_PREFIX):
+        return outcome
+    try:
+        subtitle_path.parent.mkdir(parents=True, exist_ok=True)
+        subtitle_path.write_bytes(original)
+    except OSError as e:
+        return f"{outcome}; could not restore the original: {e}"
+    return f"{outcome}; original kept, marked wrong"
 
 
 def handle_suspect(subtitle_path: Path, video_path: Path, cfg: Config, media_root: Path,
@@ -98,6 +112,14 @@ def handle_suspect(subtitle_path: Path, video_path: Path, cfg: Config, media_roo
         return "none (action=off)"
     if cfg.dry_run:
         return f"would {auto_action} [dry-run]"
+
+    # In memory: blacklisting deletes the file, and a failed remediation puts it back.
+    original = None
+    if auto_action == "remediate":
+        try:
+            original = subtitle_path.read_bytes()
+        except OSError as e:
+            log.warning("Could not read %s before remediating: %s", subtitle_path, e)
 
     if auto_action == "quarantine":
         dest, error = _try_quarantine(subtitle_path, cfg, media_root)
@@ -128,9 +150,10 @@ def handle_suspect(subtitle_path: Path, video_path: Path, cfg: Config, media_roo
             ids = db.get_bazarr_ids_for_video(conn, video_path)
             if ids and ids.get("kind") == "series" and ids.get("series_id") and ids.get("episode_id"):
                 if auto_action == "remediate":
-                    msg += "; " + remediate_without_history(
-                        video_path, cfg, lang, ids["series_id"], ids["episode_id"],
-                        cancel_event=cancel_event, conn=conn, run_id=run_id)
+                    msg += "; " + _keep_original_unless_remediated(
+                        subtitle_path, original, remediate_without_history(
+                            video_path, cfg, lang, ids["series_id"], ids["episode_id"],
+                            cancel_event=cancel_event, conn=conn, run_id=run_id))
                 else:
                     msg += "; " + request_replacement_fire_and_forget(
                         cfg, ids["series_id"], ids["episode_id"], lang)
@@ -169,8 +192,10 @@ def handle_suspect(subtitle_path: Path, video_path: Path, cfg: Config, media_roo
 
     if auto_action != "remediate":
         return msg
-    return msg + "; " + remediate_suspect(subtitle_path, video_path, cfg, media_root, lang, meta,
-                                           cancel_event=cancel_event, conn=conn, run_id=run_id)
+    return msg + "; " + _keep_original_unless_remediated(
+        subtitle_path, original, remediate_suspect(subtitle_path, video_path, cfg, media_root,
+                                                   lang, meta, cancel_event=cancel_event,
+                                                   conn=conn, run_id=run_id))
 
 
 # Below this nothing is worth rewriting a file for. A subtitle that is off by less than
@@ -291,9 +316,13 @@ def _screen_pair(video_path: Path, subtitle_path: Path, lang: Optional[str], cfg
     if out["verdict"] == "ok" and subs.events:
         duration = get_duration_seconds(video_path)
         tail = duration - max(e.end for e in subs.events) / 1000.0 if duration else None
+        over = overrun_evidence(subs, duration)
         if tail is not None and tail > SCREEN_MAX_TAIL_GAP_S:
             out["verdict"] = "unknown"
             out["reason"] = f"subtitle ends {tail:.0f}s before the audio"
+        elif over is not None:
+            out["verdict"] = "unknown"
+            out["reason"] = f"{over['n']} line(s) after the audio ends"
     return out
 
 
@@ -1040,15 +1069,17 @@ def _resolve_ambiguous_sync(conn: sqlite3.Connection, video_path: Path, subtitle
 
     # Veto a timing-disproven winner: >= 3 own anchors > 2.5 s out while old is
     # clearly better on the same clips AND on average. Never overrules a ramp
-    # rescue, nor a decisive content gap (anchors don't outvote clearly better
-    # text matching -- see CONTENT_SCORE_TIE_MARGIN above).
+    # rescue, nor a decisive content gap FOR the winner (anchors don't outvote
+    # clearly better text matching -- see CONTENT_SCORE_TIE_MARGIN above). Old's
+    # text winning outright counts too: an unproven old otherwise fell back to a
+    # disproven new (KG_BOB trunc_start: 0.87 vs 0.75, 0.1s vs 13.9s).
     vetoed_from = None
     if winner in ("new", "blocks") and not ramp_decided:
         wt, ot = timing.get(winner), timing.get("old")
         ws = (scored.get(winner) or {}).get("avg_score")
         os_ = (scored.get("old") or {}).get("avg_score")
         content_tie = (ws is not None and os_ is not None
-                       and abs(ws - os_) <= CONTENT_SCORE_TIE_MARGIN)
+                       and os_ >= ws - CONTENT_SCORE_TIE_MARGIN)
         if wt is not None and ot is not None and content_tie:
             bad = sum(1 for s in wt["regions"].values()
                       if abs(s) > ANCHOR_SUSPECT_THRESHOLD_S)
@@ -1822,6 +1853,13 @@ def _vad_says_needs_full(conn: sqlite3.Connection, video_path: Path, collected: 
                                              for e in subs.events])
 
 
+def _overrun_says_needs_full(video_path: Path, collected: dict, subs, cfg: Config) -> bool:
+    """Speech after the audio ends: something is wrong somewhere, look at all of it."""
+    if cfg.whisper_mode != "sampled" or collected.get("full_coverage") or collected.get("skipped"):
+        return False
+    return overrun_evidence(subs, get_duration_seconds(video_path)) is not None
+
+
 def _swap_says_needs_full(collected: dict, subs, cfg: Config) -> bool:
     """Many heuristic hits buy the full-transcript look; the verdict needs it."""
     if cfg.whisper_mode != "sampled" or not cfg.escalate_sampled_to_full:
@@ -1984,6 +2022,11 @@ def _detection_note(conn: sqlite3.Connection, video_path: Path, current_subs, cf
                 f"at {_mmss(mm['gap_start'])}-{_mmss(mm['gap_end'])} where the audio "
                 f"has {mm['speech_s']:.0f} s of speech -- part of the episode is "
                 "missing; fetch a fresh subtitle.")
+    over = overrun_evidence(current_subs, get_duration_seconds(video_path))
+    if over is not None:
+        # Evidence that something is wrong, not what: no fix follows from it.
+        return (f" {over['n']} subtitle line(s) run up to {over['over_s']:.0f}s past the end "
+                "of the audio -- the subtitle does not fit this video; fetch a fresh subtitle.")
     return None
 
 
@@ -2045,6 +2088,8 @@ def _gather_evidence(video_path: Path, subtitle_path: Path, lang: Optional[str],
              "many suspected swapped lines -- confirming against a full transcript"),
             (lambda: _vad_says_needs_full(conn, video_path, collected, current_subs, cfg),
              "speech pattern suggests a block -- confirming against a full transcript"),
+            (lambda: _overrun_says_needs_full(video_path, collected, current_subs, cfg),
+             "lines after the audio ends -- checking against a full transcript"),
         )
         why = next((msg for hit, msg in ladder if hit()), None)
         if why is not None:

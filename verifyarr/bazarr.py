@@ -387,6 +387,10 @@ def _find_fresh_local_subtitle(video_path: Path, lang: Optional[str], newer_than
     return max(candidates, key=_mtime) if candidates else None
 
 
+# A remediation result starting with this found a verified replacement.
+REMEDIATED_PREFIX = "remediated: "
+
+
 def _remediate(video_path: Path, series_id, episode_id, lang: Optional[str], cfg: Config,
                 tried_subs_ids: set, cancel_event=None, conn=None, run_id: Optional[int] = None,
                 try_auto_download_wait: bool = True) -> str:
@@ -402,9 +406,8 @@ def _remediate(video_path: Path, series_id, episode_id, lang: Optional[str], cfg
          setting — the point is to test candidates Bazarr itself would reject, with our check
          as the judge). automation.remediate_min_score is our OWN, separate threshold on that
          same Bazarr score — candidates below it are never even downloaded.
-      3. If nothing works, the language is left missing (Bazarr's normal "subtitle missing"
-         state — its periodic search will try again later), and the attempt is logged in the
-         returned message."""
+      3. If nothing works, the caller puts the original back, still flagged
+         (pipeline.handle_suspect), and the attempts are logged in the returned message."""
     log_lines: list[str] = []
 
     def try_current_file_and_maybe_blacklist(source: str, max_wait_s: float = 12.0) -> Optional[str]:
@@ -430,7 +433,7 @@ def _remediate(video_path: Path, series_id, episode_id, lang: Optional[str], cfg
                                             cancel_event=cancel_event)
         if result["ok"]:
             log_lines.append(f"{source}: passed (score={result['avg_score']})")
-            return "remediated: " + " | ".join(log_lines)
+            return REMEDIATED_PREFIX + " | ".join(log_lines)
         log_lines.append(f"{source}: {result['flag']} (score={result['avg_score']})")
         # find provider/subs_id for THIS specific file via the history, so we blacklist exactly it
         hist = bazarr_request(cfg, "GET", "/episodes/history", params={"episodeid": episode_id, "length": -1})
@@ -493,8 +496,7 @@ def _remediate(video_path: Path, series_id, episode_id, lang: Optional[str], cfg
     total = (1 if try_auto_download_wait else 0) + attempts
     auto_part = "1 auto + " if try_auto_download_wait else ""
     return (f"no usable subtitle found after {total} attempt(s) "
-            f"({auto_part}{attempts} manual) — language left as "
-            f"missing. " + " | ".join(log_lines))
+            f"({auto_part}{attempts} manual). " + " | ".join(log_lines))
 
 
 def remediate_suspect(subtitle_path: Path, video_path: Path, cfg: Config, media_root: Path,

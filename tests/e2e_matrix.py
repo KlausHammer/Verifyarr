@@ -101,6 +101,7 @@ VWORK = _os.environ.get("VERIFYARR_UNDER_TEST", str(Path(__file__).resolve().par
 sys.path.insert(0, VWORK)
 
 from verifyarr import db, generate, line_order, pipeline, sync_engine
+from verifyarr.correctness import get_duration_seconds as _get_duration, overrun_evidence as _overrun
 from verifyarr.correctness import full_transcript_cache_key
 from verifyarr.settings import Config
 from verifyarr.subtitles import load_subs, speech_text
@@ -1251,6 +1252,10 @@ def main(argv=None):
                                        # [[sample_start, content score], ...] on the FINAL file.
                                        score_map=[[s.get("start"), s.get("score"), s.get("sub_tokens")]
                                                   for s in (row.get("correctness_samples") or [])])
+                            # Speech past the audio end, injected file vs final file.
+                            _dur = _get_duration(video)
+                            rec["overrun_in"] = _overrun(corrupted, _dur)
+                            rec["overrun_out"] = _overrun(after, _dur)
                             if name in TIMING_SCENARIOS or name == "clean":
                                 rec["injected_p50"] = summarize(
                                     timing_errors(ref, list(corrupted.events), kept)).get("p50")

@@ -134,6 +134,18 @@ class DeclaredMusicGapTests(unittest.TestCase):
         self.assertIsNotNone(self._song_gap("[MUSIC PLAYING]", gap_s=300.0))
 
 
+class OverrunTests(unittest.TestCase):
+    def test_speech_after_the_audio_ends_is_evidence(self):
+        subs = _subs((0, 10, "a"), (1195, 1198, "late line"), (1210, 1212, "later"))
+        self.assertEqual(C.overrun_evidence(subs, 1200.0), {"n": 1, "over_s": 12.0})
+
+    def test_ending_inside_the_audio_or_non_speech_is_not(self):
+        self.assertIsNone(C.overrun_evidence(_subs((0, 10, "a"), (1199, 1201, "b")), 1200.0))
+        self.assertIsNone(C.overrun_evidence(_subs((0, 10, "a"), (1250, 1255, "[MUSIC]"),
+                                                   (1260, 1262, "♪ la la ♪")), 1200.0))
+        self.assertIsNone(C.overrun_evidence(_subs((0, 10, "a")), None))
+
+
 class MatrixModelKeyTests(unittest.TestCase):
     def test_cfg_names_the_tested_model(self):
         # Transcript cache and hole bar key on the tested model, not the default.

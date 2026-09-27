@@ -850,6 +850,22 @@ def declared_music_gap(subs, g0: float, g1: float) -> bool:
                for e in subs.events)
 
 
+# Speech after the audio ends cannot be right; says only THAT something is wrong
+# (cut version, drift, offset, wrong file). Healthy SH+KG end 1-78s early.
+OVERRUN_TOLERANCE_S = 1.0
+
+
+def overrun_evidence(subs, duration_s: Optional[float]) -> Optional[dict]:
+    """Speech cues starting after the audio ends: {"n", "over_s"}, or None."""
+    if not duration_s or subs is None:
+        return None
+    past = [e for e in subs.events if e.start / 1000.0 > duration_s + OVERRUN_TOLERANCE_S
+            and speech_text(e.text).strip()]
+    if not past:
+        return None
+    return {"n": len(past), "over_s": round(max(e.end for e in past) / 1000.0 - duration_s, 1)}
+
+
 def missing_middle_evidence(subs, segments: list[dict],
                             duration_s: Optional[float] = None,
                             min_words: Optional[int] = None) -> Optional[dict]:
