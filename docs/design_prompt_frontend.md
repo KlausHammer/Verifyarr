@@ -64,7 +64,7 @@ about subtitles - every verdict must say in plain words what happened and what t
    raw note; check history table (time, result, score, audio language); actions: Re-check,
    Fetch replacement, Generate with Whisper, Quarantine, Blacklist.
 8. **Activity**: jobs table (#, type, target, status, started, duration, files processed /
-   changed / flagged / errors); filter by status.
+   changed / flagged / errors).
 9. **Job detail**: live progress bar and counters, live log (auto-scroll, pause on scroll-up,
    CopyLogButton), Cancel (ConfirmDialog), link to the files it changed or flagged.
 10. **Stats**: match rate over time, score distribution, average score by language, movies vs
