@@ -111,7 +111,10 @@ DIRS = {
     "C_S02": Path("/mnt/c/Users/knham/Desktop/undertekst auto/Season 2"),
     "C_S03": Path("/mnt/c/Users/knham/Desktop/undertekst auto/Season 3"),
     "SH_S01": Path("/mnt/c/Users/knham/Desktop/undertekst auto/Slow Horse/Season 1"),
+    # User-confirmed correct episodes from other shows (2026-09-27).
+    "KG_": Path("/mnt/c/Users/knham/Desktop/undertekst auto/Known Good"),
 }
+SWEEP_LINUX = SWEEP.parent / "sweep_linux"
 WAV_DIR = Path("/mnt/c/Users/knham/Desktop/undertekst auto/whisper_gpu_staging/wav")
 TURBO = "turbo"
 SWEEP_MODELS = ["base.en-cpu", "base.en-greedy-cpu", "base.en-q5_1-cpu",
@@ -223,6 +226,9 @@ def audio_evidence(model, slug, fx):
     if model == TURBO:
         return fx["language"], fx["segments"]
     path = SWEEP / model / f"{slug}.json"
+    if not path.exists():
+        # Transcribed on Linux with the sweep's flags (tiny: C_S02 rest, Known Good).
+        path = SWEEP_LINUX / model / f"{slug}.json"
     if not path.exists():
         return None
     # errors="replace": whisper.cpp writes a truncated multibyte sequence now and
