@@ -32,7 +32,7 @@ from verifyarr.subtitles import (
     FPS_RATIOS, FPS_ANCHOR_TILT_MIN_S, FPS_BINNED_TILT_MIN_S, FPS_LOO_TILT_MIN_S,
     FPS_VAD_TILT_MIN_S, FPS_MIN_ANCHORS,
     FPS_MAX_BASE_SPREAD_S, rate_gates_pass, rate_is_flat, snap_rate, RATE_MIN_TILT_S,
-    probe_gates_pass, stretch_ratio, stretch_name,
+    probe_gates_pass, stretch_ratio, stretch_name, _theil_tilt,
 )
 from verifyarr.sync_engine import (
     resolve_alass_bin, resolve_alass_reference, run_alass, parse_alass_shift_blocks,
@@ -1840,6 +1840,29 @@ def _rate_says_needs_full(collected: dict, cfg: Config) -> bool:
             and p["keep_frac"] >= 0.8)
 
 
+CLIP_TILT_MIN_CLIPS = 3
+CLIP_TILT_MIN_COVER = 0.6
+
+
+def _clip_tilt_says_needs_full(video_path: Path, collected: dict, cfg: Config) -> bool:
+    """Clip offsets walking start to end (the user's start/end test): buy the full
+    transcript. Few clips cannot pass the fps trigger's bins; this only buys the look."""
+    if (cfg.whisper_mode != "sampled" or not cfg.fps_check_enabled
+            or cfg.clip_tilt_escalate_s <= 0
+            or collected.get("full_coverage") or collected.get("skipped")):
+        return False
+    pts = sorted((s["start"], s["anchor"]["shift"]) for s in collected.get("samples") or []
+                 if s.get("anchor") and s["anchor"].get("shift") is not None)
+    duration = get_duration_seconds(video_path)
+    if len(pts) < CLIP_TILT_MIN_CLIPS or not duration:
+        return False
+    span = pts[-1][0] - pts[0][0]
+    if span < CLIP_TILT_MIN_COVER * duration:
+        return False
+    tilt = _theil_tilt(pts)
+    return tilt is not None and abs(tilt / span * duration) >= cfg.clip_tilt_escalate_s
+
+
 def _vad_says_needs_full(conn: sqlite3.Connection, video_path: Path, collected: dict, subs,
                          cfg: Config) -> bool:
     """Sampled clips miss blocks between them; VAD sees the whole file for CPU only."""
@@ -1855,7 +1878,8 @@ def _vad_says_needs_full(conn: sqlite3.Connection, video_path: Path, collected: 
 
 def _overrun_says_needs_full(video_path: Path, collected: dict, subs, cfg: Config) -> bool:
     """Speech after the audio ends: something is wrong somewhere, look at all of it."""
-    if cfg.whisper_mode != "sampled" or collected.get("full_coverage") or collected.get("skipped"):
+    if (cfg.whisper_mode != "sampled" or not cfg.escalate_sampled_to_full
+            or collected.get("full_coverage") or collected.get("skipped")):
         return False
     return overrun_evidence(subs, get_duration_seconds(video_path)) is not None
 
@@ -2080,7 +2104,8 @@ def _gather_evidence(video_path: Path, subtitle_path: Path, lang: Optional[str],
             (lambda: _screen_says_needs_full(collected, cfg, blocks),
              "sampled clips disagree about the timing -- re-checking against a full transcript"),
             (lambda: (_fps_says_needs_full(collected, cfg)
-                      or _rate_says_needs_full(collected, cfg)),
+                      or _rate_says_needs_full(collected, cfg)
+                      or _clip_tilt_says_needs_full(video_path, collected, cfg)),
              "pooled anchors show a global drift signature -- confirming against a full transcript"),
             (lambda: _jitter_says_needs_full(collected, cfg),
              "sampled anchors are noisy -- confirming against a full transcript"),

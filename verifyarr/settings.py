@@ -232,6 +232,7 @@ class Config:
     fps_check_enabled: bool
     fps_require_full_coverage: bool
     clips_per_10min: float
+    clip_tilt_escalate_s: float
 
     # Line-order check (see line_order.py). Off by default, opt-in.
     line_order_enabled: bool
@@ -403,6 +404,7 @@ class Config:
             fps_check_enabled=vals["sync.fps_check_enabled"],
             fps_require_full_coverage=vals["sync.fps_require_full_coverage"],
             clips_per_10min=vals["sync.clips_per_10min"],
+            clip_tilt_escalate_s=vals["sync.clip_tilt_escalate_s"],
             require_audio_lang=vals["correctness.require_audio_lang"] or None,
             whisper_mode=vals["sync.whisper_mode"],
             line_order_enabled=vals["sync.line_order_enabled"],
@@ -604,6 +606,10 @@ SETTING_DEFS: dict = {
     # aside that only 16 happened to land on. 0 = use sample_count (the old fixed count).
     # sample_count still sizes full mode (x FULL_MODE_SAMPLE_MULTIPLIER).
     "sync.clips_per_10min":     ("sync", "float", 2.0),
+    # Sampled clips whose offsets walk this far start-to-end buy the full transcript
+    # (a rate check, never a fix). Measured: real 0.1% drift 0.83-1.69s, healthy up to
+    # 0.90s (1 of 11). The 8-of-16-bin fps trigger cannot pass under 8 clips. 0 = off.
+    "sync.clip_tilt_escalate_s": ("sync", "float", 0.7),
     "sync.window_minutes":      ("sync", "float", 0.5),
     "sync.overlap_threshold":   ("sync", "float", 0.25),
     # sampled | full -- see Config.whisper_mode.
