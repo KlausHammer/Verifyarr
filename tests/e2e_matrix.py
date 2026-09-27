@@ -142,7 +142,7 @@ def scores_recovery(slug, scenario):
 # Randomised families (seeded per scenario name).
 BLOCK_SCENARIOS = ({f"block_rand{i}" for i in range(4)}
                    | {f"blocks_rand{i}" for i in range(2)}
-                   | {f"cutsteps_rand{i}" for i in range(4)})
+                   | {f"cutsteps_rand{i}" for i in range(10)})
 HOLE_SCENARIOS = ({f"hole_rand{i}" for i in range(4)}
                   | {f"trunc_start_rand{i}" for i in range(2)}
                   | {f"trunc_end_rand{i}" for i in range(2)})
@@ -1021,7 +1021,7 @@ SCENARIOS = {
     "blocks_rand0": corrupt_blocks_random, "blocks_rand1": corrupt_blocks_random,
     **{f"drift_rand{i}": corrupt_drift_random for i in range(6)},
     **{f"ratio_rand{i}": corrupt_ratio_random for i in range(4)},
-    **{f"cutsteps_rand{i}": corrupt_cutsteps_random for i in range(4)},
+    **{f"cutsteps_rand{i}": corrupt_cutsteps_random for i in range(10)},
     # Old name kept so historical commands and jsonl comparisons still resolve.
     "gap": corrupt_missing_middle,
 }
@@ -1247,7 +1247,10 @@ def main(argv=None):
                                        anchor_map=[[s.get("start"), int(s.get("anchor") is not None),
                                                     round((s.get("anchor") or {}).get("shift", 0.0), 2),
                                                     (s.get("anchor") or {}).get("mad")]
-                                                   for s in (row.get("correctness_samples") or [])])
+                                                   for s in (row.get("correctness_samples") or [])],
+                                       # [[sample_start, content score], ...] on the FINAL file.
+                                       score_map=[[s.get("start"), s.get("score"), s.get("sub_tokens")]
+                                                  for s in (row.get("correctness_samples") or [])])
                             if name in TIMING_SCENARIOS or name == "clean":
                                 rec["injected_p50"] = summarize(
                                     timing_errors(ref, list(corrupted.events), kept)).get("p50")
