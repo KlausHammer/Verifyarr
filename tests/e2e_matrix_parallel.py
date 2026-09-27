@@ -60,7 +60,7 @@ def main():
     for flag in ("--scenarios", "--mode", "--audio-confirm", "--out", "--redo",
                  "--fresh-db", "--escalate-min-bad", "--no-escalate", "--suspect-min",
                  "--escalate-any-block", "--escalate-on",
-                 "--sample-count", "--clip-seconds", "--fps-sampled-fix"):
+                 "--sample-count", "--clip-seconds", "--fps-sampled-fix", "--clips-per-10"):
         if flag in sys.argv:
             if flag in ("--redo", "--fresh-db", "--no-escalate", "--escalate-any-block",
                         "--escalate-on", "--fps-sampled-fix"):

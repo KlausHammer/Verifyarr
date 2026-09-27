@@ -141,7 +141,8 @@ def scores_recovery(slug, scenario):
         and slug not in DRIFT_CASE_SLUGS
 # Randomised families (seeded per scenario name).
 BLOCK_SCENARIOS = ({f"block_rand{i}" for i in range(4)}
-                   | {f"blocks_rand{i}" for i in range(2)})
+                   | {f"blocks_rand{i}" for i in range(2)}
+                   | {f"cutsteps_rand{i}" for i in range(4)})
 HOLE_SCENARIOS = ({f"hole_rand{i}" for i in range(4)}
                   | {f"trunc_start_rand{i}" for i in range(2)}
                   | {f"trunc_end_rand{i}" for i in range(2)})
@@ -811,6 +812,20 @@ def corrupt_blocks_random(subs, rng, n_lo=2, n_hi=3):
     return out, None, detail
 
 
+def corrupt_cutsteps_random(subs, rng, n_lo=1, n_hi=3, lo_s=2.0, hi_s=120.0):
+    """Commercial breaks: the subtitle was timed to a version with 1-3 breaks the video
+    no longer has (or the reverse). Everything after each break moves by its length,
+    so the offsets add up to the end of the file -- a staircase, not an island."""
+    out = copy.deepcopy(subs)
+    dur = max(e.end for e in out.events) / 1000.0
+    sign = rng.choice((-1, 1))
+    cuts = sorted((dur * rng.uniform(0.10, 0.90), sign * rng.uniform(lo_s, hi_s))
+                  for _ in range(rng.randint(n_lo, n_hi)))
+    for t, shift in cuts:
+        _shift_block(out.events, t, dur + 1.0, shift)
+    return out, None, {"cuts": [{"at_s": round(t, 1), "shift_s": round(s, 2)} for t, s in cuts]}
+
+
 def corrupt_dropdup(subs, rng, frac=0.05):
     """5% of cues dropped and 5% duplicated in place -- merge/OCR damage. The timings
     that survive are CORRECT, so the pass mark is that nothing is broken: no crash, no
@@ -1006,6 +1021,7 @@ SCENARIOS = {
     "blocks_rand0": corrupt_blocks_random, "blocks_rand1": corrupt_blocks_random,
     **{f"drift_rand{i}": corrupt_drift_random for i in range(6)},
     **{f"ratio_rand{i}": corrupt_ratio_random for i in range(4)},
+    **{f"cutsteps_rand{i}": corrupt_cutsteps_random for i in range(4)},
     # Old name kept so historical commands and jsonl comparisons still resolve.
     "gap": corrupt_missing_middle,
 }
@@ -1094,6 +1110,8 @@ def main(argv=None):
         esc_over["escalate_sampled_to_full"] = True
     if "--sample-count" in argv:
         esc_over["sample_count"] = int(argv[argv.index("--sample-count") + 1])
+    if "--clips-per-10" in argv:
+        esc_over["clips_per_10min"] = float(argv[argv.index("--clips-per-10") + 1])
     if "--clip-seconds" in argv:
         esc_over["clip_seconds"] = int(argv[argv.index("--clip-seconds") + 1])
     if "--fps-sampled-fix" in argv:
