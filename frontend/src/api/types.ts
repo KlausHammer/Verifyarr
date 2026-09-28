@@ -23,9 +23,8 @@ export interface FileRow {
   sync_split_blocks: number | null
   sync_block_spread_s: number | null
   correctness_flag: string | null
-  /** Why the file is SUSPECT: wrong_subtitle | partly_out_of_sync | missing_lines |
-   * past_audio_end | lines_out_of_order | unreliable_timing; null otherwise or on old rows. */
-  reason: string | null
+  /** Why the file is SUSPECT; null otherwise or on old rows. */
+  reason: SuspectReason | null
   correctness_avg_score: number | null
   line_order_fixed: number | null
   line_order_flagged: number | null
@@ -299,7 +298,16 @@ export interface AllSettings {
   log: LogSettings
 }
 
+/** files.reason -- mirrors verifyarr/pipeline.py REASON_*. */
+export type SuspectReason =
+  | 'wrong_subtitle'
+  | 'partly_out_of_sync'
+  | 'missing_lines'
+  | 'past_audio_end'
+  | 'lines_out_of_order'
+  | 'unreliable_timing'
+
 /** GET /api/stats/attention -- flagged files per reason, largest first ("other" = no reason recorded). */
 export interface AttentionResponse {
-  items: { reason: string; count: number }[]
+  items: { reason: SuspectReason | 'other'; count: number }[]
 }

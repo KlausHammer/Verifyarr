@@ -35,6 +35,7 @@ CREATE TABLE IF NOT EXISTS files (
     sync_block_spread_s    REAL,   -- max(shift_blocks) - min(shift_blocks); see Config.
                                     -- block_spread_suspect_threshold_s
     correctness_flag       TEXT,
+    reason                 TEXT,     -- why SUSPECT (pipeline.REASON_*); NULL otherwise/older rows
     correctness_avg_score  REAL,
     line_order_fixed       INTEGER,  -- see line_order.py. NULL = not checked (feature off),
     line_order_flagged     INTEGER,  -- 0 = checked and nothing found, >0 = counts from last run.
@@ -674,7 +675,8 @@ def list_files(conn: sqlite3.Connection, q: Optional[str] = None, flag: Optional
         # Flagged before reasons were recorded, or by a path without one.
         where.append("correctness_flag = 'SUSPECT' AND reason IS NULL")
     elif reason:
-        where.append("reason = ?")
+        # Same population as attention_counts (and ix_files_flag narrows the scan).
+        where.append("correctness_flag = 'SUSPECT' AND reason = ?")
         params.append(reason)
     where_sql = f"WHERE {' AND '.join(where)}" if where else ""
 
@@ -698,7 +700,7 @@ def attention_counts(conn: sqlite3.Connection) -> dict:
     """SUSPECT files per reason ("other" when none was recorded), for "Needs attention"."""
     rows = conn.execute(
         "SELECT COALESCE(reason, 'other') AS reason, COUNT(*) AS n FROM files "
-        "WHERE correctness_flag = 'SUSPECT' GROUP BY 1 ORDER BY n DESC"
+        "WHERE correctness_flag = 'SUSPECT' GROUP BY 1 ORDER BY n DESC, reason"
     ).fetchall()
     return {r["reason"]: r["n"] for r in rows}
 
