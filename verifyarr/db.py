@@ -655,6 +655,13 @@ def list_files(conn: sqlite3.Connection, q: Optional[str] = None, flag: Optional
     return rows, total
 
 
+def set_auto_action(conn: sqlite3.Connection, subtitle_path: Path, auto_action: Optional[str]) -> None:
+    """Records what was done to a file without touching its verdict."""
+    conn.execute("UPDATE files SET auto_action = ? WHERE subtitle_path = ?",
+                 (auto_action, str(subtitle_path)))
+    conn.commit()
+
+
 def attention_counts(conn: sqlite3.Connection) -> dict:
     """SUSPECT files per reason ("other" when none was recorded), for "Needs attention"."""
     rows = conn.execute(

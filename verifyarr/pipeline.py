@@ -2182,9 +2182,20 @@ def correctness_and_finish(video_path: Path, subtitle_path: Path, lang: Optional
 
     def act_on_suspect():
         """The configured auto-action for a SUSPECT file (quarantine/blacklist/remediate)."""
-        return handle_suspect(subtitle_path, video_path, cfg, media_root, lang, bazarr_meta,
-                              history_index, cfg.correctness_auto_action, conn=conn,
-                              run_id=run_id, cancel_event=cancel_event)
+        outcome = handle_suspect(subtitle_path, video_path, cfg, media_root, lang, bazarr_meta,
+                                 history_index, cfg.correctness_auto_action, conn=conn,
+                                 run_id=run_id, cancel_event=cancel_event)
+        if "; " + REMEDIATED_PREFIX in outcome:
+            row["_remediated"] = True
+        return outcome
+
+    def save_row():
+        # A passed replacement already saved its own verdict; the old one must not overwrite it.
+        if row.pop("_remediated", False):
+            db.set_auto_action(conn, subtitle_path, row.get("auto_action"))
+        else:
+            update_state(conn, video_path, subtitle_path, row, run_id=run_id,
+                         media_root=media_root)
     # Per file, so the row can report what this check actually cost -- and what the caches saved.
     # The screen's own spend is carried in the row (see _row_cost) rather than left in the
     # counter: in a sweep it was charged before this file's turn came round.
@@ -2258,8 +2269,7 @@ def correctness_and_finish(video_path: Path, subtitle_path: Path, lang: Optional
                 row["line_order_swap_rate"] = result.get("swap_rate")
                 row["auto_action"] = act_on_suspect()
                 row["whisper_cost"] = _row_cost(row)
-                update_state(conn, video_path, subtitle_path, row, run_id=run_id,
-                             media_root=media_root)
+                save_row()
                 return row
 
             # A fix sync_pair deferred writing (an alass result held back together
@@ -2321,8 +2331,7 @@ def correctness_and_finish(video_path: Path, subtitle_path: Path, lang: Optional
                     if isinstance(result, dict) else 0
                 row["auto_action"] = act_on_suspect()
                 row["whisper_cost"] = _row_cost(row)
-                update_state(conn, video_path, subtitle_path, row, run_id=run_id,
-                             media_root=media_root)
+                save_row()
                 return row
 
             # A 24fps subtitle on 23.976fps audio (or the reverse) drifts ~1s per 17
@@ -2646,5 +2655,5 @@ def correctness_and_finish(video_path: Path, subtitle_path: Path, lang: Optional
     if "_ambiguous_sync" in row:
         apply_pending_sync(subtitle_path, cfg, row, reason=f"correctness check: {row.get('correctness_flag')}")
     row["whisper_cost"] = _row_cost(row)
-    update_state(conn, video_path, subtitle_path, row, run_id=run_id, media_root=media_root)
+    save_row()
     return row

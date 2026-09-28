@@ -46,5 +46,49 @@ class KeepOriginalTests(unittest.TestCase):
         self.assertFalse(content)
 
 
+class ReplacementVerdictTests(unittest.TestCase):
+    def test_a_passed_replacement_keeps_its_own_verdict(self):
+        """The old SUSPECT verdict must not overwrite the row the replacement saved."""
+        import copy
+        import dataclasses
+        import random
+        sys.path.insert(0, str(Path(__file__).resolve().parent))
+        import e2e_matrix as M
+        from verifyarr import db
+
+        slug, model = "SH_S01E01", "tiny.en-greedy-cpu"
+        if not (M.SWEEP / model / f"{slug}.json").exists():
+            self.skipTest("needs whisper_gpu_staging sweep data")
+        fx = M.fixture(slug)
+        video = M.media_dir(slug) / fx["video_name"]
+        if not video.exists():
+            self.skipTest(f"no video for {slug}")
+        lang, segments = M.audio_evidence(model, slug, fx)
+        corrupted, _, _ = M.corrupt_wrong_episode(
+            copy.deepcopy(M.subs_for(slug, fx)), random.Random("remediate"), slug)
+        with tempfile.TemporaryDirectory() as td:
+            work = Path(td)
+            conn = db.connect(work / "t.db")
+            cfg = dataclasses.replace(M.cfg_for(conn, "sampled", "on", groq_model=model),
+                                      correctness_auto_action="remediate")
+
+            def replaced(subtitle_path, video_path, *a, conn=None, run_id=None, **k):
+                db.update_state(conn, video_path, subtitle_path,
+                                {"lang": "en", "sync_status": "already in sync",
+                                 "correctness_flag": "ok", "note": "replacement"}, run_id=run_id)
+                return "blacklisted in Bazarr; " + pipeline.REMEDIATED_PREFIX + "attempt 1: passed"
+
+            with mock.patch.object(pipeline, "handle_suspect", replaced):
+                M.run_one(work, video, corrupted, lang, segments, cfg, conn, "t", "sampled",
+                          M.audio_cache_for(slug, video))
+            row = conn.execute("SELECT correctness_flag, reason, note, auto_action FROM files "
+                               "WHERE subtitle_path IS NOT NULL").fetchone()
+            conn.close()
+        self.assertEqual(row["correctness_flag"], "ok", row["note"])
+        self.assertIsNone(row["reason"])
+        self.assertEqual(row["note"], "replacement")
+        self.assertIn(pipeline.REMEDIATED_PREFIX, row["auto_action"])
+
+
 if __name__ == "__main__":
     unittest.main()
