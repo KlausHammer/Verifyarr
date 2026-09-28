@@ -1,6 +1,7 @@
 """files.reason: why a file is SUSPECT, stored, filtered and counted for the UI."""
 from __future__ import annotations
 
+import sqlite3
 import sys
 import tempfile
 import unittest
@@ -40,6 +41,24 @@ class ReasonTests(unittest.TestCase):
         self.assertEqual(files_router.list_files(reason="other", page=1, page_size=50, user=None, conn=self.conn)["total"], 1)
         self.assertEqual(stats_router.attention(user=None, conn=self.conn)["items"][0],
                          {"reason": "past_audio_end", "count": 2})
+
+    def test_unknown_reason_is_rejected(self):
+        from fastapi import HTTPException
+        with self.assertRaises(HTTPException) as ctx:
+            files_router.list_files(reason="wrong_subtitel", page=1, page_size=50,
+                                    user=None, conn=self.conn)
+        self.assertEqual(ctx.exception.status_code, 422)
+
+    def test_old_database_gets_the_reason_column(self):
+        path = Path(self.td.name) / "old.db"
+        db.connect(path).close()
+        c = sqlite3.connect(path)
+        c.execute("ALTER TABLE files DROP COLUMN reason")
+        c.commit()
+        c.close()
+        conn = db.connect(path)
+        self.assertIn("reason", {r[1] for r in conn.execute("PRAGMA table_info(files)")})
+        conn.close()
 
     def test_a_file_that_passes_again_loses_its_reason(self):
         self._save("a", "SUSPECT", pipeline.REASON_MISSING_LINES)

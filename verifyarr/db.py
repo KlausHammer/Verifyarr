@@ -297,6 +297,47 @@ CREATE INDEX IF NOT EXISTS ix_generate_attempts_at ON generate_attempts(attempte
 """
 
 
+# Columns added after their table first shipped: "CREATE TABLE IF NOT EXISTS" adds nothing
+# to an existing table. library_videos is pure cache, so empty/default values are harmless.
+_ADDED_COLUMNS = (
+    ("library_videos", "kind", "TEXT NOT NULL DEFAULT 'series'"),
+    ("library_videos", "video_mtime", "REAL"),
+    ("library_videos", "video_size", "INTEGER"),
+    ("library_videos", "embedded_langs_json", "TEXT"),
+    ("library_videos", "bazarr_matched", "INTEGER NOT NULL DEFAULT 0"),
+    ("library_videos", "series_id", "INTEGER"),
+    ("library_videos", "episode_id", "INTEGER"),
+    ("library_videos", "radarr_id", "INTEGER"),
+    ("files", "line_order_fixed", "INTEGER"),
+    ("files", "line_order_flagged", "INTEGER"),
+    ("files", "line_order_cache_key", "TEXT"),
+    ("files", "line_order_cache_json", "TEXT"),
+    ("files", "sync_block_spread_s", "REAL"),
+    ("files", "reason", "TEXT"),  # why SUSPECT (pipeline.REASON_*); NULL on older rows
+    ("runs", "target_kind", "TEXT"),
+    ("runs", "target_title", "TEXT"),
+    ("runs", "files_generated", "INTEGER DEFAULT 0"),
+    ("video_transcript_cache", "segments_json", "TEXT"),
+    ("video_transcript_cache", "video_mtime", "REAL"),
+    ("video_transcript_cache", "video_size", "INTEGER"),
+    ("video_transcript_cache", "clip_seconds", "REAL"),
+    ("video_full_transcript_cache", "stt_model", "TEXT"),
+    ("video_full_transcript_cache", "video_mtime", "REAL"),
+    ("video_full_transcript_cache", "video_size", "INTEGER"),
+    ("video_transcript_cache", "stt_provider", "TEXT"),
+    ("video_transcript_cache", "stt_model", "TEXT"),
+)
+
+
+def _add_column(conn: sqlite3.Connection, table: str, col: str, decl: str) -> None:
+    """Adds a missing column. Any other failure (e.g. a locked database) raises instead of
+    leaving the column silently missing for every later write."""
+    if col in {r[1] for r in conn.execute(f"PRAGMA table_info({table})")}:
+        return
+    conn.execute(f"ALTER TABLE {table} ADD COLUMN {col} {decl}")
+    conn.commit()
+
+
 def connect(path: Optional[Path] = None) -> sqlite3.Connection:
     """Opens a new connection. `path` is optional only to make unit testing easier — normal
     use is `db.connect()` with no arguments, which uses the fixed path from
@@ -343,91 +384,9 @@ def connect(path: Optional[Path] = None) -> sqlite3.Connection:
     # existed for a user — "CREATE TABLE IF NOT EXISTS" alone adds nothing to an existing
     # table. library_videos is pure cache (see replace_library_videos), so no data is lost
     # by the column just showing up empty/default at the next (re)scan.
-    try:
-        conn.execute("ALTER TABLE library_videos ADD COLUMN kind TEXT NOT NULL DEFAULT 'series'")
-        conn.commit()
-    except sqlite3.OperationalError:
-        pass  # column already exists
+    for table, col, decl in _ADDED_COLUMNS:
+        _add_column(conn, table, col, decl)
     conn.execute("CREATE INDEX IF NOT EXISTS ix_library_videos_kind ON library_videos(kind)")
-    for col, coltype in (("video_mtime", "REAL"), ("video_size", "INTEGER")):
-        try:
-            conn.execute(f"ALTER TABLE library_videos ADD COLUMN {col} {coltype}")
-            conn.commit()
-        except sqlite3.OperationalError:
-            pass  # column already exists
-    try:
-        conn.execute("ALTER TABLE library_videos ADD COLUMN embedded_langs_json TEXT")
-        conn.commit()
-    except sqlite3.OperationalError:
-        pass  # column already exists
-    try:
-        conn.execute("ALTER TABLE library_videos ADD COLUMN bazarr_matched INTEGER NOT NULL DEFAULT 0")
-        conn.commit()
-    except sqlite3.OperationalError:
-        pass  # column already exists
-    for col in ("series_id", "episode_id", "radarr_id"):
-        try:
-            conn.execute(f"ALTER TABLE library_videos ADD COLUMN {col} INTEGER")
-            conn.commit()
-        except sqlite3.OperationalError:
-            pass  # column already exists
-    for col in ("line_order_fixed", "line_order_flagged"):
-        try:
-            conn.execute(f"ALTER TABLE files ADD COLUMN {col} INTEGER")
-            conn.commit()
-        except sqlite3.OperationalError:
-            pass  # column already exists
-    for col in ("line_order_cache_key", "line_order_cache_json"):
-        try:
-            conn.execute(f"ALTER TABLE files ADD COLUMN {col} TEXT")
-            conn.commit()
-        except sqlite3.OperationalError:
-            pass  # column already exists
-    for col in ("target_kind", "target_title"):
-        try:
-            conn.execute(f"ALTER TABLE runs ADD COLUMN {col} TEXT")
-            conn.commit()
-        except sqlite3.OperationalError:
-            pass  # column already exists
-    try:
-        conn.execute("ALTER TABLE files ADD COLUMN sync_block_spread_s REAL")
-        conn.commit()
-    except sqlite3.OperationalError:
-        pass  # column already exists
-    try:
-        # Why a file is SUSPECT (pipeline.REASON_*), for the UI; NULL on older rows.
-        conn.execute("ALTER TABLE files ADD COLUMN reason TEXT")
-        conn.commit()
-    except sqlite3.OperationalError:
-        pass  # column already exists
-    try:
-        conn.execute("ALTER TABLE video_transcript_cache ADD COLUMN segments_json TEXT")
-        conn.commit()
-    except sqlite3.OperationalError:
-        pass  # column already exists
-    for col, typ in (("video_mtime", "REAL"), ("video_size", "INTEGER"), ("clip_seconds", "REAL")):
-        try:
-            conn.execute(f"ALTER TABLE video_transcript_cache ADD COLUMN {col} {typ}")
-            conn.commit()
-        except sqlite3.OperationalError:
-            pass  # column already exists
-    try:
-        conn.execute("ALTER TABLE runs ADD COLUMN files_generated INTEGER DEFAULT 0")
-        conn.commit()
-    except sqlite3.OperationalError:
-        pass  # column already exists
-    for col, coltype in (("stt_model", "TEXT"), ("video_mtime", "REAL"), ("video_size", "INTEGER")):
-        try:
-            conn.execute(f"ALTER TABLE video_full_transcript_cache ADD COLUMN {col} {coltype}")
-            conn.commit()
-        except sqlite3.OperationalError:
-            pass  # column already exists
-    for col, coltype in (("stt_provider", "TEXT"), ("stt_model", "TEXT")):
-        try:
-            conn.execute(f"ALTER TABLE video_transcript_cache ADD COLUMN {col} {coltype}")
-            conn.commit()
-        except sqlite3.OperationalError:
-            pass  # column already exists
     _migrate_clip_cache_key(conn)
     conn.commit()
     return conn

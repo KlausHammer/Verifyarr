@@ -10,7 +10,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 
 from verifyarr import db, jobs
 from verifyarr.bazarr import bazarr_build_history_index, bazarr_map_path
-from verifyarr.pipeline import handle_suspect
+from verifyarr.pipeline import REASONS, handle_suspect
 from verifyarr.settings import Config
 from verifyarr.web.deps import get_conn, require_auth, serialize_row
 
@@ -23,6 +23,8 @@ def list_files(q: Optional[str] = None, flag: Optional[str] = None, status: Opti
                page: int = Query(1, ge=1), page_size: int = Query(50, ge=1, le=5000),
                reason: Optional[str] = None,
                user=Depends(require_auth), conn=Depends(get_conn)):
+    if reason and reason != "other" and reason not in REASONS:
+        raise HTTPException(status_code=422, detail=f"unknown reason: {reason}")
     rows, total = db.list_files(conn, q=q, flag=flag, status=status, lang=lang, sort=sort,
                                  page=page, page_size=page_size, reason=reason)
     return {"items": [serialize_row(r) for r in rows], "total": total, "page": page, "page_size": page_size}

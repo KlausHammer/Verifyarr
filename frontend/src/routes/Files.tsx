@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 import { api, ApiError } from '../api/client'
-import type { FileRow, Paginated, RunRow } from '../api/types'
+import type { FileRow, Paginated, RunRow, SuspectReason } from '../api/types'
 import { fileName, formatRelative } from '../lib/format'
 import StatusPill from '../components/StatusPill'
 import styles from './Files.module.css'
@@ -23,6 +23,17 @@ function LineOrderCell({ f }: { f: FileRow }) {
   return <span className="pill pill-ok">ok</span>
 }
 
+// files.reason; "other" = flagged before reasons were recorded.
+const REASON_LABELS: Record<SuspectReason | 'other', string> = {
+  wrong_subtitle: 'Wrong subtitle',
+  partly_out_of_sync: 'Partly out of sync',
+  missing_lines: 'Missing lines',
+  past_audio_end: "Doesn't fit this video",
+  lines_out_of_order: 'Lines out of order',
+  unreliable_timing: 'Unreliable timing',
+  other: 'Other',
+}
+
 export default function Files() {
   const [params, setParams] = useSearchParams()
   const [data, setData] = useState<Paginated<FileRow> | null>(null)
@@ -38,6 +49,7 @@ export default function Files() {
 
   const q = params.get('q') ?? ''
   const flag = params.get('flag') ?? ''
+  const reason = params.get('reason') ?? ''
   const status = params.get('status') ?? ''
   const lang = params.get('lang') ?? ''
   const page = Number(params.get('page') ?? '1')
@@ -63,6 +75,7 @@ export default function Files() {
     const qs = new URLSearchParams()
     if (q) qs.set('q', q)
     if (flag) qs.set('flag', flag)
+    if (reason) qs.set('reason', reason)
     if (status) qs.set('status', status)
     if (lang) qs.set('lang', lang)
     qs.set('page', String(page))
@@ -74,7 +87,7 @@ export default function Files() {
       .finally(() => setLoading(false))
   }
 
-  useEffect(load, [q, flag, status, lang, page])
+  useEffect(load, [q, flag, reason, status, lang, page])
 
   async function runSingle(id: number) {
     setBusyId(id)
@@ -139,6 +152,7 @@ export default function Files() {
       const qs = new URLSearchParams()
       if (q) qs.set('q', q)
       if (flag) qs.set('flag', flag)
+      if (reason) qs.set('reason', reason)
       if (status) qs.set('status', status)
       if (lang) qs.set('lang', lang)
       qs.set('page', '1')
@@ -229,6 +243,12 @@ export default function Files() {
           {/* every Whisper sample failed to score -- nothing verified, not a pass */}
           <option value="unknown">unknown</option>
           <option value="generated">generated</option>
+        </select>
+        <select value={reason} onChange={(e) => setParam('reason', e.target.value)}>
+          <option value="">All reasons</option>
+          {Object.entries(REASON_LABELS).map(([value, label]) => (
+            <option key={value} value={value}>{label}</option>
+          ))}
         </select>
         <select value={status} onChange={(e) => setParam('status', e.target.value)}>
           <option value="">All statuses</option>
