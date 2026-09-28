@@ -105,6 +105,15 @@ class DriftRampPipelineTests(unittest.TestCase):
         self.assertGreaterEqual(rec.get("frac_le_1_0s"), 0.90,
                                 f"still broken: rec={rec.get('frac_le_1_0s')}")
 
+    def test_drift_under_a_block_staircase_gets_one_rate(self):
+        """SH_S01E05 drift_rand5: alass' 5 blokke laeser flade, men det er en rampe."""
+        row, rec = _run("SH_S01E05", "drift_rand5", audio="off")
+        self.assertIn("rate stretch", row.get("sync_status") or "",
+                      f"no rate fix applied: {row.get('sync_status')}")
+        self.assertEqual(row.get("correctness_flag"), "ok", row.get("note"))
+        self.assertGreaterEqual(rec.get("frac_le_0_5s"), 0.95,
+                                f"still stepped: rec={rec.get('frac_le_0_5s')}")
+
     def test_step_file_still_keeps_blocks(self):
         """SH_S01E02 piecewise sampled: TRIN maa ikke ligne en rampe."""
         row, rec = _run("SH_S01E02", "piecewise")

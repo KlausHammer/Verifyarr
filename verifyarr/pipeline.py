@@ -1831,13 +1831,15 @@ def _rescaled(subs, ratio: float, offset: float):
 
 
 def _try_rate_from_baseline(conn: sqlite3.Connection, video_path: Path, subtitle_path: Path,
-                            cfg: Config, media_root: Path, baseline, current):
+                            cfg: Config, media_root: Path, baseline, current,
+                            over_blocks: bool = False):
     """Rate error fixed from the pre-sync file over the full transcript.
 
     alass answers a drift with one shift (or blocks) and leaves the ramp; the
     discrete path only knows 0.1%. Dense anchors on the untouched file read any
     rate and offset directly; a real conversion ratio is snapped to. Skipped when
-    the current file is already flat. The fix must come out flat itself.
+    the current file is already flat -- unless it is a block fit, whose steps read
+    flat while they only approximate the ramp. The fix must come out flat itself.
     Returns (fixed_subs, note_fragment, info) or None."""
     if not cfg.fps_check_enabled or cfg.dry_run or baseline is None:
         return None
@@ -1845,7 +1847,7 @@ def _try_rate_from_baseline(conn: sqlite3.Connection, video_path: Path, subtitle
     p = _dense_probe(pts)
     if not rate_gates_pass(p):
         return None
-    if current is not baseline and rate_is_flat(
+    if current is not baseline and not over_blocks and rate_is_flat(
             _dense_probe(_dense_pool(conn, video_path, current, cfg)), tight=True):
         return None
     ratio, offset, name = snap_rate(pts, p)
@@ -2313,7 +2315,8 @@ def correctness_and_finish(video_path: Path, subtitle_path: Path, lang: Optional
             def rate_fixes():
                 # Any rate from the original, then the discrete 0.1% path.
                 fix = _try_rate_from_baseline(conn, video_path, subtitle_path, cfg, media_root,
-                                              orig_subs or current_subs, current_subs)
+                                              orig_subs or current_subs, current_subs,
+                                              over_blocks=(row.get("sync_split_blocks") or 0) >= 2)
                 if fix is not None:
                     return fix
                 fps_ev = result
