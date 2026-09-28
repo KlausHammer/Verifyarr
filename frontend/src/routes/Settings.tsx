@@ -1,5 +1,5 @@
 import { createContext, useContext, useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react'
-import { useParams } from 'react-router-dom'
+import { Navigate, useNavigate, useParams } from 'react-router-dom'
 import { api, ApiError } from '../api/client'
 import type {
   AppLogLine,
@@ -19,19 +19,36 @@ import ConfirmDialog from '../components/ConfirmDialog'
 import FolderBrowser from '../components/FolderBrowser'
 import LanguageMultiSelect from '../components/LanguageMultiSelect'
 import CopyLogButton from '../components/CopyLogButton'
+import { SETTINGS_TABS } from '../components/Layout'
+import { useAuth } from '../hooks/useAuth'
 import { useAutoScrollLog } from '../hooks/useAutoScrollLog'
-import styles from './Settings.module.css'
+import { useToasts } from '../hooks/useToasts'
 
-function SaveBar({ busy, saved, error }: { busy: boolean; saved: boolean; error: string | null }) {
-  return (
-    <div className={styles.actions}>
-      <button type="submit" className="btn btn-primary" disabled={busy}>
-        {busy ? <span className="spinner" /> : 'Save'}
-      </button>
-      {saved && <span className={styles.savedMsg}>Saved.</span>}
-      {error && <span style={{ color: 'var(--red)', fontSize: 13 }}>{error}</span>}
-    </div>
-  )
+// The toolbar's Save/Discard buttons are driven by the ACTIVE tab through this: each tab
+// reports its dirty/error/saved state (primitives only, so the effect below can't loop)
+// and stashes its save/discard in a ref the toolbar calls.
+interface ToolState {
+  dirty: boolean
+  error: string | null
+  savedAt: number | null
+  hasAdvanced: boolean
+  saving: boolean
+}
+interface ToolActions {
+  save: () => void
+  discard: () => void
+}
+const ToolbarCtx = createContext<{ setTool: (t: ToolState) => void; actions: { current: ToolActions } } | null>(null)
+
+function useToolbarApi(dirty: boolean, error: string | null, savedAt: number | null, hasAdvanced: boolean, saving: boolean, save: () => void, discard: () => void) {
+  const ctx = useContext(ToolbarCtx)
+  if (!ctx) throw new Error('settings tab outside ToolbarCtx')
+  ctx.actions.current = { save, discard }
+  // Depend on setTool, not ctx: the provider's value object is new every render (loop).
+  const { setTool } = ctx
+  useEffect(() => {
+    setTool({ dirty, error, savedAt, hasAdvanced, saving })
+  }, [setTool, dirty, error, savedAt, hasAdvanced, saving])
 }
 
 function useGroup<T>(group: string) {
@@ -39,6 +56,7 @@ function useGroup<T>(group: string) {
   const [error, setError] = useState<string | null>(null)
 
   function load() {
+    setData(null)
     api
       .get<T>(`/settings/${group}`)
       .then(setData)
@@ -46,31 +64,7 @@ function useGroup<T>(group: string) {
   }
 
   useEffect(load, [group])
-  return { data, setData, error, setError }
-}
-
-function useSave(group: string) {
-  const [busy, setBusy] = useState(false)
-  const [saved, setSaved] = useState(false)
-  const [error, setError] = useState<string | null>(null)
-
-  async function save<T>(values: Record<string, unknown>, onSaved?: (r: T) => void) {
-    setBusy(true)
-    setSaved(false)
-    setError(null)
-    try {
-      const r = await api.put<T>(`/settings/${group}`, { values })
-      setSaved(true)
-      onSaved?.(r)
-      setTimeout(() => setSaved(false), 2500)
-    } catch (err) {
-      setError(err instanceof ApiError ? err.message : String(err))
-    } finally {
-      setBusy(false)
-    }
-  }
-
-  return { busy, saved, error, save }
+  return { data, setData, error, setError, reload: load }
 }
 
 // Backend still stores/accepts one url string (scheme optional, added server-side) — these just
@@ -100,13 +94,13 @@ function TimeOfDayField({ value, onChange }: { value: string; onChange: (v: stri
   const hour = HOURS.includes(hh) ? hh : '04'
   const minute = MINUTES.includes(mm) ? mm : '00'
   return (
-    <div className={styles.timeRow}>
+    <div style={{ display: 'flex', gap: 6, alignItems: 'center', maxWidth: 200 }}>
       <select value={hour} onChange={(e) => onChange(`${e.target.value}:${minute}`)}>
         {HOURS.map((h) => (
           <option key={h} value={h}>{h}</option>
         ))}
       </select>
-      <span className={styles.timeColon}>:</span>
+      <span style={{ color: 'var(--text-dim)' }}>:</span>
       <select value={minute} onChange={(e) => onChange(`${hour}:${e.target.value}`)}>
         {MINUTES.map((m) => (
           <option key={m} value={m}>{m}</option>
@@ -118,7 +112,7 @@ function TimeOfDayField({ value, onChange }: { value: string; onChange: (v: stri
 
 function HostPortFields({ host, port, onHost, onPort }: { host: string; port: string; onHost: (v: string) => void; onPort: (v: string) => void }) {
   return (
-    <div className={styles.row}>
+    <div style={{ display: 'grid', gridTemplateColumns: '1fr 140px', gap: 12 }}>
       <Field label="Host / IP">
         <input type="text" value={host} onChange={(e) => onHost(e.target.value)} placeholder="192.168.1.32" />
       </Field>
@@ -126,16 +120,6 @@ function HostPortFields({ host, port, onHost, onPort }: { host: string; port: st
         <input type="text" value={port} onChange={(e) => onPort(e.target.value)} placeholder="8989" />
       </Field>
     </div>
-  )
-}
-
-// Native `title` tooltips turned out not to show reliably for everyone, so this is a plain
-// CSS hover/focus bubble instead — always renders the same way regardless of browser.
-function Tip({ text }: { text: string }) {
-  return (
-    <span className={styles.tip} tabIndex={0}>
-      ?<span className={styles.tipBubble}>{text}</span>
-    </span>
   )
 }
 
@@ -157,35 +141,100 @@ function Advanced({ children }: { children: ReactNode }) {
   return useContext(ModeContext) === 'advanced' ? <>{children}</> : null
 }
 
-function ModeToggle({ mode, onChange }: { mode: SettingsMode; onChange: (m: SettingsMode) => void }) {
+function Field({ label, tip, advanced, children }: { label: string; tip?: string; advanced?: boolean; children: ReactNode }) {
+  const mode = useContext(ModeContext)
+  const [tipOpen, setTipOpen] = useState(false)
+  if (advanced && mode !== 'advanced') return null
   return (
-    <div className={styles.modeToggle} role="group" aria-label="Settings detail">
-      {(['simple', 'advanced'] as const).map((m) => (
-        <button
-          key={m}
-          type="button"
-          className={mode === m ? styles.modeActive : undefined}
-          aria-pressed={mode === m}
-          onClick={() => onChange(m)}
-        >
-          {m === 'simple' ? 'Simple' : 'Advanced'}
-        </button>
-      ))}
+    <div className="field" style={{ maxWidth: 540 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 7, marginBottom: 5 }}>
+        <span style={{ display: 'block', fontSize: 12.5, color: 'var(--text-dim)', fontWeight: 500 }}>{label}</span>
+        {tip && (
+          <button
+            type="button"
+            aria-label={`What is "${label}"?`}
+            aria-expanded={tipOpen}
+            title={tip}
+            onClick={() => setTipOpen((o) => !o)}
+            style={{ width: 18, height: 18, borderRadius: '50%', border: '1px solid var(--border)', background: 'var(--bg-hover)', color: 'var(--text-dim)', fontSize: 11, fontWeight: 700, padding: 0, lineHeight: 1, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', flex: 'none', cursor: 'pointer' }}
+          >
+            ?
+          </button>
+        )}
+        {advanced && (
+          <span style={{ fontSize: 11, color: 'var(--text-dim)', border: '1px solid var(--border)', borderRadius: 3, padding: '0 5px' }}>Advanced</span>
+        )}
+      </div>
+      {tip && tipOpen && <div className="field-hint" style={{ color: 'var(--text-dim)', margin: '0 0 7px' }}>{tip}</div>}
+      {children}
     </div>
   )
 }
 
-function Field({ label, tip, advanced, children }: { label: string; tip?: string; advanced?: boolean; children: ReactNode }) {
+function ToggleRow({ id, checked, onChange, label, tip, advanced, disabled }: { id: string; checked: boolean; onChange: (v: boolean) => void; label: string; tip?: string; advanced?: boolean; disabled?: boolean }) {
   const mode = useContext(ModeContext)
+  const [tipOpen, setTipOpen] = useState(false)
   if (advanced && mode !== 'advanced') return null
   return (
-    <div className="field">
-      <label>
-        {label}
-        {tip && <Tip text={tip} />}
-      </label>
-      {children}
+    <div className="field" style={{ maxWidth: 540 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
+        <label style={{ display: 'flex', gap: 8, alignItems: 'center', margin: 0, color: 'var(--text)', fontSize: 14, fontWeight: 400, cursor: disabled ? undefined : 'pointer' }}>
+          <input id={id} type="checkbox" checked={checked} disabled={disabled} onChange={(e) => onChange(e.target.checked)} style={{ width: 16, height: 16, accentColor: 'var(--accent)', margin: 0 }} />
+          {label}
+        </label>
+        {tip && (
+          <button
+            type="button"
+            aria-label={`What is "${label}"?`}
+            aria-expanded={tipOpen}
+            title={tip}
+            onClick={() => setTipOpen((o) => !o)}
+            style={{ width: 18, height: 18, borderRadius: '50%', border: '1px solid var(--border)', background: 'var(--bg-hover)', color: 'var(--text-dim)', fontSize: 11, fontWeight: 700, padding: 0, lineHeight: 1, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', flex: 'none', cursor: 'pointer' }}
+          >
+            ?
+          </button>
+        )}
+        {advanced && (
+          <span style={{ fontSize: 11, color: 'var(--text-dim)', border: '1px solid var(--border)', borderRadius: 3, padding: '0 5px' }}>Advanced</span>
+        )}
+      </div>
+      {tip && tipOpen && <div className="field-hint" style={{ color: 'var(--text-dim)', margin: '7px 0 0' }}>{tip}</div>}
     </div>
+  )
+}
+
+function ChoiceField<T extends string>({ label, tip, advanced, name, options, value, onPick }: {
+  label: string
+  tip?: string
+  advanced?: boolean
+  name: string
+  options: { value: T; title: string; desc: string }[]
+  value: T
+  onPick: (v: T) => void
+}) {
+  return (
+    <Field label={label} tip={tip} advanced={advanced}>
+      <div role="radiogroup" aria-label={label} style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+        {options.map((o) => {
+          const sel = value === o.value
+          return (
+            <label
+              key={o.value}
+              style={{
+                display: 'flex', gap: 9, alignItems: 'flex-start', padding: '8px 10px',
+                border: `1px solid ${sel ? 'var(--accent-dim)' : 'var(--border)'}`,
+                background: sel ? 'rgba(94,234,212,.06)' : 'transparent',
+                borderRadius: 'var(--radius)', cursor: 'pointer', margin: 0, color: 'var(--text)',
+                fontSize: 14, fontWeight: 400,
+              }}
+            >
+              <input type="radio" name={name} checked={sel} onChange={() => onPick(o.value)} style={{ marginTop: 3, accentColor: 'var(--accent)' }} />
+              <span><span style={{ fontWeight: 600 }}>{o.title}</span><span className="text-dim" style={{ fontSize: 13 }}> · {o.desc}</span></span>
+            </label>
+          )
+        })}
+      </div>
+    </Field>
   )
 }
 
@@ -197,6 +246,7 @@ interface PathHealth {
 function SingleFolderField({ label, tip, path, onChange }: { label: string; tip?: string; path: string; onChange: (path: string) => void }) {
   const [browsing, setBrowsing] = useState(false)
   const [health, setHealth] = useState<PathHealth | null>(null)
+  const [tipOpen, setTipOpen] = useState(false)
 
   useEffect(() => {
     if (!path) { setHealth(null); return }
@@ -207,11 +257,23 @@ function SingleFolderField({ label, tip, path, onChange }: { label: string; tip?
   }, [path])
 
   return (
-    <div className="field">
-      <label>
-        {label}
-        {tip && <Tip text={tip} />}
-      </label>
+    <div className="field" style={{ maxWidth: 540 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 7, marginBottom: 5 }}>
+        <span style={{ display: 'block', fontSize: 12.5, color: 'var(--text-dim)', fontWeight: 500 }}>{label}</span>
+        {tip && (
+          <button
+            type="button"
+            aria-label={`What is "${label}"?`}
+            aria-expanded={tipOpen}
+            title={tip}
+            onClick={() => setTipOpen((o) => !o)}
+            style={{ width: 18, height: 18, borderRadius: '50%', border: '1px solid var(--border)', background: 'var(--bg-hover)', color: 'var(--text-dim)', fontSize: 11, fontWeight: 700, padding: 0, lineHeight: 1, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', flex: 'none', cursor: 'pointer' }}
+          >
+            ?
+          </button>
+        )}
+      </div>
+      {tip && tipOpen && <div className="field-hint" style={{ color: 'var(--text-dim)', margin: '0 0 7px' }}>{tip}</div>}
       <div
         style={{
           display: 'flex', alignItems: 'center', gap: 8, background: 'var(--bg)',
@@ -241,11 +303,8 @@ function SingleFolderField({ label, tip, path, onChange }: { label: string; tip?
 }
 
 // One switch per check (Sync / Correctness / Line-order), one column per way a scan can start —
-// consolidates what used to be a checkbox in each of three different tabs (Sync, LLM settings,
-// and General) into a single place, since the "does this run, and when" question spans all three
-// features the same way. Renders inside AutomationTab's own single form/save button (below) —
-// spans three settings groups (general/sync/correctness) on top of that tab's own "automation"
-// group, so the hooks live here but there is deliberately only one save button for all four.
+// renders inside AutomationTab's own single save (below), spanning three settings groups
+// (general/sync/correctness) on top of that tab's own "automation" group.
 function useWhatRuns() {
   const general = useGroup<GeneralSettings>('general')
   const sync = useGroup<SyncSettings>('sync')
@@ -260,7 +319,7 @@ const AUTO_ACTION_TIP =
 
 function AutoActionSelect({ value, onChange }: { value: string; onChange: (v: string) => void }) {
   return (
-    <select value={value} onChange={(e) => onChange(e.target.value)}>
+    <select value={value} onChange={(e) => onChange(e.target.value)} aria-label="Action if SUSPECT">
       <option value="off">off</option>
       <option value="quarantine">quarantine</option>
       <option value="blacklist">blacklist</option>
@@ -270,8 +329,62 @@ function AutoActionSelect({ value, onChange }: { value: string; onChange: (v: st
 }
 
 function WhatRunsTable({ general, sync, correctness, generate }: ReturnType<typeof useWhatRuns>) {
+  const [tipOpen, setTipOpen] = useState<string | null>(null)
   if (!general.data || !sync.data || !correctness.data || !generate.data) return <span className="spinner" />
   const g = general.data, s = sync.data, c = correctness.data, gen = generate.data
+
+  const tipBtn = (key: string, label: string, text: string) => (
+    <button
+      type="button"
+      aria-label={`What is "${label}"?`}
+      aria-expanded={tipOpen === key}
+      title={text}
+      onClick={() => setTipOpen((o) => (o === key ? null : key))}
+      style={{ width: 18, height: 18, borderRadius: '50%', border: '1px solid var(--border)', background: 'var(--bg-hover)', color: 'var(--text-dim)', fontSize: 11, fontWeight: 700, padding: 0, lineHeight: 1, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', flex: 'none', cursor: 'pointer', marginLeft: 7 }}
+    >
+      ?
+    </button>
+  )
+
+  const rows = [
+    {
+      key: 'sync', name: 'Sync', tip: 'Fixes subtitle timing to match the audio.',
+      manual: s.enabled, setManual: (v: boolean) => sync.setData({ ...s, enabled: v }),
+      auto: g.auto_scan_sync_enabled, setAuto: (v: boolean) => general.setData({ ...g, auto_scan_sync_enabled: v }),
+      action: <span className="text-faint">—</span>,
+    },
+    {
+      key: 'correctness', name: 'Correctness check',
+      tip: 'Compares a bit of audio to the subtitle with Whisper, to catch a mismatched file. Needs an API key on the Speech recognition tab.',
+      manual: c.enabled, setManual: (v: boolean) => correctness.setData({ ...c, enabled: v }),
+      auto: g.auto_scan_correctness_enabled, setAuto: (v: boolean) => general.setData({ ...g, auto_scan_correctness_enabled: v }),
+      action: (
+        <span style={{ display: 'flex', gap: 7, alignItems: 'center' }}>
+          <AutoActionSelect value={c.auto_action} onChange={(v) => correctness.setData({ ...c, auto_action: v as CorrectnessSettings['auto_action'] })} />
+          {tipBtn('action', 'Action if SUSPECT', AUTO_ACTION_TIP)}
+        </span>
+      ),
+    },
+    {
+      key: 'lineorder', name: 'Line-order check',
+      tip: 'Catches two-line entries in the wrong order. Auto-fixes if the correctness check is on too; otherwise just flags likely cases.',
+      manual: s.line_order_enabled, setManual: (v: boolean) => sync.setData({ ...s, line_order_enabled: v }),
+      auto: g.auto_scan_line_order_enabled, setAuto: (v: boolean) => general.setData({ ...g, auto_scan_line_order_enabled: v }),
+      action: (
+        <span style={{ display: 'flex', gap: 7, alignItems: 'center' }}>
+          <span className="text-dim">fixed in place</span>
+          {tipBtn('fixed', 'fixed in place', 'A confirmed swap is just swapped back -- it is never a reason to throw the file away and fetch another release. A real content problem is caught by the correctness check instead, which has its own action.')}
+        </span>
+      ),
+    },
+    {
+      key: 'generate', name: 'Generate missing subtitles',
+      tip: 'Transcribes the whole file with Whisper and translates it if needed, for a video that has no subtitle at all. Configured on the Generate tab.',
+      manual: gen.enabled, setManual: (v: boolean) => generate.setData({ ...gen, enabled: v }),
+      auto: g.auto_scan_generate_enabled, setAuto: (v: boolean) => general.setData({ ...g, auto_scan_generate_enabled: v }),
+      action: <span className="text-faint">—</span>,
+    },
+  ]
 
   return (
     <>
@@ -281,115 +394,91 @@ function WhatRunsTable({ general, sync, correctness, generate }: ReturnType<type
         the scheduled sweep and the Bazarr poll — both scan on their own without you asking, so
         they use the same switch.
       </p>
-      <table className={styles.whatRunsTable}>
-        <thead>
-          <tr>
-            <th></th>
-            <th>Manual scan</th>
-            <th>Scheduled sweep / Bazarr poll</th>
-            <th>Action if SUSPECT</th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr>
-            <td>
-              Sync
-              <Tip text="Fixes subtitle timing to match the audio." />
-            </td>
-            <td>
-              <input type="checkbox" checked={s.enabled} onChange={(e) => sync.setData({ ...s, enabled: e.target.checked })} />
-            </td>
-            <td>
-              <input
-                type="checkbox"
-                checked={g.auto_scan_sync_enabled}
-                onChange={(e) => general.setData({ ...g, auto_scan_sync_enabled: e.target.checked })}
-              />
-            </td>
-            <td className="text-faint">—</td>
-          </tr>
-          <tr>
-            <td>
-              Correctness check
-              <Tip text="Compares a bit of audio to the subtitle with Whisper, to catch a mismatched file. Needs an API key on the LLM tab." />
-            </td>
-            <td>
-              <input type="checkbox" checked={c.enabled} onChange={(e) => correctness.setData({ ...c, enabled: e.target.checked })} />
-            </td>
-            <td>
-              <input
-                type="checkbox"
-                checked={g.auto_scan_correctness_enabled}
-                onChange={(e) => general.setData({ ...g, auto_scan_correctness_enabled: e.target.checked })}
-              />
-            </td>
-            <td className={styles.actionCell}>
-              <AutoActionSelect value={c.auto_action} onChange={(v) => correctness.setData({ ...c, auto_action: v as CorrectnessSettings['auto_action'] })} />
-              <Tip text={AUTO_ACTION_TIP} />
-            </td>
-          </tr>
-          <tr>
-            <td>
-              Line-order check
-              <Tip text="Catches two-line entries in the wrong order. Auto-fixes if the correctness check is on too; otherwise just flags likely cases." />
-            </td>
-            <td>
-              <input
-                type="checkbox"
-                checked={s.line_order_enabled}
-                onChange={(e) => sync.setData({ ...s, line_order_enabled: e.target.checked })}
-              />
-            </td>
-            <td>
-              <input
-                type="checkbox"
-                checked={g.auto_scan_line_order_enabled}
-                onChange={(e) => general.setData({ ...g, auto_scan_line_order_enabled: e.target.checked })}
-              />
-            </td>
-            <td className={styles.actionCell}>
-              <span className="text-dim">fixed in place</span>
-              <Tip text="A confirmed swap is just swapped back -- it is never a reason to throw the file away and fetch another release. A real content problem is caught by the correctness check instead, which has its own action." />
-            </td>
-          </tr>
-          <tr>
-            <td>
-              Generate missing subtitles
-              <Tip text="Transcribes the whole file with Whisper and translates it if needed, for a video that has no subtitle at all. Configured on the Generate tab." />
-            </td>
-            <td>
-              <input type="checkbox" checked={gen.enabled} onChange={(e) => generate.setData({ ...gen, enabled: e.target.checked })} />
-            </td>
-            <td>
-              <input
-                type="checkbox"
-                checked={g.auto_scan_generate_enabled}
-                onChange={(e) => general.setData({ ...g, auto_scan_generate_enabled: e.target.checked })}
-              />
-            </td>
-            <td className="text-faint">—</td>
-          </tr>
-        </tbody>
-      </table>
+      <div role="table" aria-label="What runs" style={{ marginBottom: 16 }}>
+        <div role="row" data-head style={{ display: 'grid', gridTemplateColumns: 'minmax(0,1.2fr) 110px 220px minmax(0,1.4fr)', gap: 12, padding: '7px 0', borderBottom: '1px solid var(--border)', fontSize: 12.5, color: 'var(--text-dim)', fontWeight: 600 }}>
+          <div role="columnheader"></div>
+          <div role="columnheader">Manual scan</div>
+          <div role="columnheader">Scheduled sweep / Bazarr poll</div>
+          <div role="columnheader">Action if SUSPECT</div>
+        </div>
+        {rows.map((r) => (
+          <div key={r.key} role="row" data-row style={{ display: 'grid', gridTemplateColumns: 'minmax(0,1.2fr) 110px 220px minmax(0,1.4fr)', gap: 12, alignItems: 'center', padding: '8px 0', borderBottom: '1px solid var(--border)', fontSize: 13 }}>
+            <div role="cell" data-cell="main" style={{ fontWeight: 500 }}>
+              {r.name}{tipBtn(r.key, r.name, r.tip)}
+              {tipOpen === r.key && <div className="field-hint" style={{ color: 'var(--text-dim)', marginTop: 4, fontWeight: 400 }}>{r.tip}</div>}
+              {r.key === 'correctness' && tipOpen === 'action' && <div className="field-hint" style={{ color: 'var(--text-dim)', marginTop: 4, fontWeight: 400 }}>{AUTO_ACTION_TIP}</div>}
+            </div>
+            <div role="cell" data-cell data-label="Manual scan">
+              <input type="checkbox" aria-label={`${r.name}, manual scan`} checked={r.manual} onChange={(e) => r.setManual(e.target.checked)} style={{ width: 16, height: 16, accentColor: 'var(--accent)', margin: 0 }} />
+            </div>
+            <div role="cell" data-cell data-label="Scheduled sweep / Bazarr poll">
+              <input type="checkbox" aria-label={`${r.name}, scheduled sweep and Bazarr poll`} checked={r.auto} onChange={(e) => r.setAuto(e.target.checked)} style={{ width: 16, height: 16, accentColor: 'var(--accent)', margin: 0 }} />
+            </div>
+            <div role="cell" data-cell data-label="Action if SUSPECT">{r.action}</div>
+          </div>
+        ))}
+      </div>
     </>
   )
 }
 
 function GeneralTab() {
-  const { data, setData, error: loadError } = useGroup<GeneralSettings>('general')
+  const { data, setData, error: loadError, reload } = useGroup<GeneralSettings>('general')
   const { data: bazarrData } = useGroup<BazarrSettings>('bazarr')
-  const { busy, saved, error, save } = useSave('general')
+  const [snapshot, setSnapshot] = useState<string | null>(null)
+  const [saving, setSaving] = useState(false)
+  const [savedAt, setSavedAt] = useState<number | null>(null)
+  const [error, setError] = useState<string | null>(null)
   const [detecting, setDetecting] = useState(false)
   const [detectProgress, setDetectProgress] = useState<{ done: number; total: number } | null>(null)
   const [detectResult, setDetectResult] = useState<string | null>(null)
   const [detectError, setDetectError] = useState<string | null>(null)
   const [stopping, setStopping] = useState(false)
   const [showBazarrWarning, setShowBazarrWarning] = useState(false)
+  const { toast } = useToasts()
+  const navigate = useNavigate()
+
+  const pick = (d: GeneralSettings) => ({
+    movies_folder: d.movies_folder,
+    series_folder: d.series_folder,
+    subtitle_langs: d.subtitle_langs,
+    backup_originals: d.backup_originals,
+  })
+
+  useEffect(() => {
+    if (data && snapshot === null) setSnapshot(JSON.stringify(pick(data)))
+  }, [data, snapshot])
+  const dirty = data !== null && snapshot !== null && JSON.stringify(pick(data)) !== snapshot
+
+  async function save() {
+    if (!data) return
+    setSaving(true)
+    setError(null)
+    try {
+      // Only this card's own fields — NOT auto_scan_* (Automation's "What runs" table owns
+      // those, via its own separate fetch/save of the same "general" group).
+      const r = await api.put<GeneralSettings>('/settings/general', { values: pick(data) })
+      setData(r)
+      setSnapshot(JSON.stringify(pick(r)))
+      setSavedAt(Date.now())
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : String(err))
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  function discard() {
+    setSnapshot(null)
+    setError(null)
+    reload()
+  }
+
+  useToolbarApi(dirty, error ?? loadError, savedAt, false, saving, save, discard)
 
   // Polls the actual server-side state rather than trusting only this component's own
   // `detecting` -- switching Settings tabs unmounts this component entirely, so on its own
-  // that state can't survive a tab switch and back while a rescan is still running. This
-  // poll (started fresh on every mount) picks the real state back up either way.
+  // that state can't survive a tab switch and back while a rescan is still running.
   useEffect(() => {
     let cancelled = false
     let timer: ReturnType<typeof setTimeout> | undefined
@@ -434,10 +523,6 @@ function GeneralTab() {
     // unmounted (tab switch) before this request resolved.
   }
 
-  // Without Bazarr configured, embedded-subtitle detection has no bulk source to read from
-  // (see bazarr_embedded_subtitle_langs) and falls all the way back to per-file ffprobe for
-  // everything -- fine for a small library, slow for a large one. Warn instead of silently
-  // running into that on a library the size of a real one.
   function handleDetectClick() {
     const bazarrConfigured = !!bazarrData?.url && !!bazarrData?.api_key.is_set
     if (bazarrConfigured) {
@@ -458,6 +543,8 @@ function GeneralTab() {
     }
   }
 
+  if (!data) return <span className="spinner" />
+
   return (
     <>
       {showBazarrWarning && (
@@ -472,292 +559,319 @@ function GeneralTab() {
           onCancel={() => setShowBazarrWarning(false)}
         />
       )}
-      {!data ? (
-        <span className="spinner" />
-      ) : (
-        <form
-          className={`card ${styles.formCard}`}
-          onSubmit={(e) => {
-            e.preventDefault()
-            // Only this card's own fields -- NOT auto_scan_* (Settings -> Automation's "What
-            // runs" table owns those, via its own separate fetch/save of the same "general"
-            // group; sending this form's possibly-stale copy of them here would silently undo a
-            // change just made there).
-            save({
-              movies_folder: data.movies_folder,
-              series_folder: data.series_folder,
-              subtitle_langs: data.subtitle_langs,
-              backup_originals: data.backup_originals,
-            })
+      <section className="card" aria-labelledby="sc-general0">
+        <h2 id="sc-general0" style={{ margin: '0 0 14px', fontSize: 15 }}>Media folders</h2>
+        <SingleFolderField
+          label="Movies folder"
+          tip="Pick the folder Docker has mounted for movies -- see the volumes in docker-compose.yml."
+          path={data.movies_folder}
+          onChange={(movies_folder) => setData({ ...data, movies_folder })}
+        />
+        <SingleFolderField
+          label="Series folder"
+          tip="Same, but for TV shows."
+          path={data.series_folder}
+          onChange={(series_folder) => setData({ ...data, series_folder })}
+        />
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 16 }}>
+          {detecting ? (
+            <button type="button" className="btn btn-sm" disabled={stopping} onClick={stopDetect}>
+              {stopping ? <span className="spinner" /> : 'Stop'}
+            </button>
+          ) : (
+            <button type="button" className="btn btn-sm" onClick={handleDetectClick} style={{ whiteSpace: 'nowrap', flex: 'none' }}>
+              Detect now
+            </button>
+          )}
+          {detectProgress && (
+            <span className="text-faint mono" style={{ fontSize: 12.5 }}>
+              {detectProgress.done} / {detectProgress.total}
+            </span>
+          )}
+          <span className="text-dim" style={{ fontSize: 12.5 }}>
+            {detectError ?? detectResult ?? 'Rechecks the folders above and refreshes Movies/Series/Files right away, instead of waiting for the next automatic check or a full sweep.'}
+          </span>
+        </div>
+      </section>
+
+      <section className="card" aria-labelledby="sc-general1">
+        <h2 id="sc-general1" style={{ margin: '0 0 14px', fontSize: 15 }}>Languages</h2>
+        <Field label="Subtitle languages" tip="Empty = all languages allowed.">
+          <LanguageMultiSelect codes={data.subtitle_langs} onChange={(subtitle_langs) => setData({ ...data, subtitle_langs })} />
+        </Field>
+      </section>
+
+      <section className="card" aria-labelledby="sc-general2">
+        <h2 id="sc-general2" style={{ margin: '0 0 14px', fontSize: 15 }}>Backups</h2>
+        <ToggleRow
+          id="backup_originals"
+          checked={data.backup_originals}
+          onChange={(backup_originals) => setData({ ...data, backup_originals })}
+          label="Back up subtitles before overwriting them"
+          tip="On by default. A copy is saved before any automatic edit overwrites a subtitle — the sync fix, a line-order swap, or a pre-blacklist removal. Worth keeping on: the line-order auto-fix runs at about 98% precision, so a small share of its swaps are wrong and this is the only way back. A failed backup never blocks the fix itself."
+        />
+      </section>
+
+      <section className="card" aria-labelledby="h-wz" style={{ display: 'flex', alignItems: 'center', gap: 14, flexWrap: 'wrap' }}>
+        <div style={{ flex: 1, minWidth: 220 }}>
+          <h2 id="h-wz" style={{ margin: '0 0 2px', fontSize: 15 }}>Setup wizard</h2>
+          <p className="text-dim" style={{ margin: 0, fontSize: 13 }}>Walk through folders, languages, Bazarr, speech recognition and schedule again.</p>
+        </div>
+        <button
+          className="btn"
+          onClick={() => {
+            if (dirty) {
+              toast('Save your changes first, or discard them — the wizard starts from what is saved.', { kind: 'warn' })
+              return
+            }
+            navigate('/wizard?from=settings')
           }}
         >
-          {loadError && <div className="error-banner">{loadError}</div>}
-          <SingleFolderField
-            label="Movies folder"
-            tip="Pick the folder Docker has mounted for movies -- see the volumes in docker-compose.yml."
-            path={data.movies_folder}
-            onChange={(movies_folder) => setData({ ...data, movies_folder })}
-          />
-          <SingleFolderField
-            label="Series folder"
-            tip="Same, but for TV shows."
-            path={data.series_folder}
-            onChange={(series_folder) => setData({ ...data, series_folder })}
-          />
-          <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 16 }}>
-            {detecting ? (
-              <button type="button" className="btn btn-sm" disabled={stopping} onClick={stopDetect}>
-                {stopping ? <span className="spinner" /> : 'Stop'}
-              </button>
-            ) : (
-              <button type="button" className="btn btn-sm" onClick={handleDetectClick}>
-                Detect now
-              </button>
-            )}
-            {detectProgress && (
-              <span className="text-faint mono" style={{ fontSize: 12.5 }}>
-                {detectProgress.done} / {detectProgress.total}
-              </span>
-            )}
-            <span className="text-dim" style={{ fontSize: 12.5 }}>
-              {detectError ?? detectResult ?? 'Rechecks the folders above and refreshes Movies/Series/Files right away, instead of waiting for the next automatic check or a full sweep.'}
-            </span>
-          </div>
-          <Field label="Subtitle languages" tip="Empty = all languages allowed.">
-            <LanguageMultiSelect codes={data.subtitle_langs} onChange={(subtitle_langs) => setData({ ...data, subtitle_langs })} />
-          </Field>
-          <div className={styles.checkRow}>
-            <input
-              id="backup_originals"
-              type="checkbox"
-              checked={data.backup_originals}
-              onChange={(e) => setData({ ...data, backup_originals: e.target.checked })}
-            />
-            <label htmlFor="backup_originals">
-              Back up subtitles before overwriting them
-              <Tip text="On by default. A copy is saved before any automatic edit overwrites a subtitle — the sync fix, a line-order swap, or a pre-blacklist removal. Worth keeping on: the line-order auto-fix runs at about 98% precision, so a small share of its swaps are wrong and this is the only way back. A failed backup never blocks the fix itself." />
-            </label>
-          </div>
-          <SaveBar busy={busy} saved={saved} error={error} />
-        </form>
-      )}
+          Run setup wizard
+        </button>
+      </section>
     </>
   )
 }
 
 function SyncTab() {
-  const { data, setData, error: loadError } = useGroup<SyncSettings>('sync')
-  const { busy, saved, error, save } = useSave('sync')
+  const { data, setData, error: loadError, reload } = useGroup<SyncSettings>('sync')
+  const [snapshot, setSnapshot] = useState<string | null>(null)
+  const [saving, setSaving] = useState(false)
+  const [savedAt, setSavedAt] = useState<number | null>(null)
+  const [error, setError] = useState<string | null>(null)
+
+  // Everything except the two Automation-owned master switches.
+  const pick = (d: SyncSettings) => {
+    const { enabled: _e, line_order_enabled: _l, ...rest } = d
+    return rest
+  }
+
+  useEffect(() => {
+    if (data && snapshot === null) setSnapshot(JSON.stringify(pick(data)))
+  }, [data, snapshot])
+  const dirty = data !== null && snapshot !== null && JSON.stringify(pick(data)) !== snapshot
+
+  async function save() {
+    if (!data) return
+    setSaving(true)
+    setError(null)
+    try {
+      // NOT "enabled"/"line_order_enabled" — those switches live on the Automation tab and are
+      // saved from its own copy of this group.
+      const r = await api.put<SyncSettings>('/settings/sync', { values: pick(data) })
+      setData(r)
+      setSnapshot(JSON.stringify(pick(r)))
+      setSavedAt(Date.now())
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : String(err))
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  function discard() {
+    setSnapshot(null)
+    setError(null)
+    reload()
+  }
+
+  useToolbarApi(dirty, error ?? loadError, savedAt, true, saving, save, discard)
+
   if (!data) return <span className="spinner" />
 
   return (
-    <form
-      className={`card ${styles.formCard}`}
-      onSubmit={(e) => {
-        e.preventDefault()
-        // Everything except enabled/line_order_enabled -- those two are owned by Settings ->
-        // Automation's "What runs" table (its own separate fetch/save of this same group);
-        // sending this form's possibly-stale copy of them would silently undo a change just
-        // made there.
-        const { enabled: _enabled, line_order_enabled: _lineOrderEnabled, ...rest } = data
-        save(rest as unknown as Record<string, unknown>)
-      }}
-    >
-      {loadError && <div className="error-banner">{loadError}</div>}
-      <Field
-        label="Whisper mode"
-        tip="Sampled: short clips spread over the file (fast, cheap); anything suspicious still gets the whole transcript. Full transcript: transcribes the whole episode/movie every time -- the most thorough, but far more Whisper work per file (local Whisper: time; cloud: API cost/quota)."
-      >
-        <select value={data.whisper_mode} onChange={(e) => setData({ ...data, whisper_mode: e.target.value as SyncSettings['whisper_mode'] })}>
-          <option value="sampled">Sampled clips</option>
-          <option value="full">Full episode/movie transcript</option>
-        </select>
-      </Field>
-      {data.whisper_mode === 'sampled' && (
-        <Field
-          label="Clips per 10 minutes"
-          tip="How many 30s audio clips to check per 10 minutes of video (at least 3), placed where there is dialogue. Long films get proportionally more. More clips notice more on their own but cost more Whisper time. 0 = a fixed 16 clips per file."
-        >
-          <input
-            type="number"
-            step="0.5"
-            min="0"
-            value={data.clips_per_10min}
-            onChange={(e) => setData({ ...data, clips_per_10min: Number(e.target.value) })}
-          />
-        </Field>
-      )}
-      <Field advanced label="Min. change (seconds)" tip="Corrections smaller than this are not written. 0.25s is below what a viewer notices.">
-        <input
-          type="number"
-          step="0.05"
-          value={data.min_change_seconds}
-          onChange={(e) => setData({ ...data, min_change_seconds: Number(e.target.value) })}
+    <>
+      <section className="card" aria-labelledby="sc-sync0">
+        <h2 id="sc-sync0" style={{ margin: '0 0 14px', fontSize: 15 }}>How hard to look</h2>
+        <ChoiceField
+          label="Whisper mode"
+          tip="Sampled: short clips spread over the file (fast, cheap); anything suspicious still gets the whole transcript. Full transcript: transcribes the whole episode/movie every time -- the most thorough, but far more Whisper work per file (local Whisper: time; cloud: API cost/quota)."
+          name="whisper_mode"
+          value={data.whisper_mode}
+          onPick={(whisper_mode) => setData({ ...data, whisper_mode })}
+          options={[
+            { value: 'sampled', title: 'Sampled clips', desc: 'short clips spread over the file' },
+            { value: 'full', title: 'Full episode/movie transcript', desc: 'the whole file, every time' },
+          ]}
         />
-      </Field>
-
-      <Advanced>
-        <h3 style={{ marginBottom: 4 }}>Framerate and drift</h3>
-        <div className={styles.checkRow}>
-          <input
-            id="fps_check_enabled"
-            type="checkbox"
-            checked={data.fps_check_enabled}
-            onChange={(e) => setData({ ...data, fps_check_enabled: e.target.checked })}
-          />
-          <label htmlFor="fps_check_enabled">
-            Fix framerate and speed errors
-            <Tip text="Finds subtitles made for another framerate or speed (24 vs 23.976, PAL 25) that slowly walk out of sync, and rescales them. Only rewrites once the whole transcript and the audio's own speech pattern agree." />
-          </label>
-        </div>
         {data.whisper_mode === 'sampled' && (
           <Field
-            label="Drift look-closer threshold (s)"
-            tip="If the clips drift apart by at least this much from the start to the end of the file, the whole file is transcribed to check for a framerate/speed error. It never fixes anything on its own. Lower catches smaller drift but transcribes more healthy files. Measured: real 0.1% drift 0.8-1.7s, healthy files up to 0.9s. 0 = off."
+            label="Clips per 10 minutes"
+            tip="How many 30s audio clips to check per 10 minutes of video (at least 3), placed where there is dialogue. Long films get proportionally more. More clips notice more on their own but cost more Whisper time. 0 = a fixed 16 clips per file."
           >
-            <input
-              type="number"
-              step="0.1"
-              min="0"
-              disabled={!data.fps_check_enabled}
-              value={data.clip_tilt_escalate_s}
-              onChange={(e) => setData({ ...data, clip_tilt_escalate_s: Number(e.target.value) })}
-            />
+            <input type="number" step={0.5} min={0} value={data.clips_per_10min} onChange={(e) => setData({ ...data, clips_per_10min: Number(e.target.value) })} style={{ maxWidth: 120 }} />
           </Field>
         )}
+        <Field advanced label="Min. change (seconds)" tip="Corrections smaller than this are not written. 0.25s is below what a viewer notices.">
+          <input type="number" step={0.05} value={data.min_change_seconds} onChange={(e) => setData({ ...data, min_change_seconds: Number(e.target.value) })} style={{ maxWidth: 120 }} />
+        </Field>
+      </section>
 
-        <h3 style={{ marginBottom: 4 }}>Blocks and offsets</h3>
-        {data.whisper_mode === 'sampled' && (
-          <div className={styles.checkRow}>
-            <input
+      <Advanced>
+        <section className="card" aria-labelledby="sc-sync1">
+          <h2 id="sc-sync1" style={{ margin: '0 0 14px', fontSize: 15 }}>Framerate and drift</h2>
+          <ToggleRow
+            id="fps_check_enabled"
+            checked={data.fps_check_enabled}
+            onChange={(fps_check_enabled) => setData({ ...data, fps_check_enabled })}
+            label="Fix framerate and speed errors"
+            tip="Finds subtitles made for another framerate or speed (24 vs 23.976, PAL 25) that slowly walk out of sync, and rescales them. Only rewrites once the whole transcript and the audio's own speech pattern agree."
+            advanced
+          />
+          {data.whisper_mode === 'sampled' && (
+            <Field
+              label="Drift look-closer threshold (s)"
+              tip="If the clips drift apart by at least this much from the start to the end of the file, the whole file is transcribed to check for a framerate/speed error. It never fixes anything on its own. Lower catches smaller drift but transcribes more healthy files. Measured: real 0.1% drift 0.8-1.7s, healthy files up to 0.9s. 0 = off."
+              advanced
+            >
+              <input type="number" step={0.1} min={0} disabled={!data.fps_check_enabled} value={data.clip_tilt_escalate_s} onChange={(e) => setData({ ...data, clip_tilt_escalate_s: Number(e.target.value) })} style={{ maxWidth: 120 }} />
+            </Field>
+          )}
+        </section>
+
+        <section className="card" aria-labelledby="sc-sync2">
+          <h2 id="sc-sync2" style={{ margin: '0 0 14px', fontSize: 15 }}>Blocks and offsets</h2>
+          {data.whisper_mode === 'sampled' && (
+            <ToggleRow
               id="escalate_sampled_to_full"
-              type="checkbox"
               checked={data.escalate_sampled_to_full}
-              onChange={(e) => setData({ ...data, escalate_sampled_to_full: e.target.checked })}
+              onChange={(escalate_sampled_to_full) => setData({ ...data, escalate_sampled_to_full })}
+              label="Transcribe the whole file when the clips see a problem"
+              tip="Clips that disagree, a possible block, noisy timing, many swapped lines or lines after the audio ends: the whole file is transcribed before deciding. Off saves Whisper time on those files, but blocks between clips go unnoticed and fewer can be repaired. The framerate check above has its own switch."
+              advanced
             />
-            <label htmlFor="escalate_sampled_to_full">
-              Transcribe the whole file when the clips see a problem
-              <Tip text="Clips that disagree, a possible block, noisy timing, many swapped lines or lines after the audio ends: the whole file is transcribed before deciding. Off saves Whisper time on those files, but blocks between clips go unnoticed and fewer can be repaired. The framerate check above has its own switch." />
-            </label>
-          </div>
-        )}
-        <div className={styles.checkRow}>
-          <input
+          )}
+          <ToggleRow
             id="anchor_check_enabled"
-            type="checkbox"
             checked={data.anchor_check_enabled}
-            onChange={(e) => setData({ ...data, anchor_check_enabled: e.target.checked })}
+            onChange={(anchor_check_enabled) => setData({ ...data, anchor_check_enabled })}
+            label="Whisper anchor check"
+            tip="Flags a file when Whisper-verified lines show a timing mismatch of more than ~2.5s, even though the text matches overall. Only works for subtitles in the spoken language."
+            advanced
           />
-          <label htmlFor="anchor_check_enabled">
-            Whisper anchor check
-            <Tip text="Flags a file when Whisper-verified lines show a timing mismatch of more than ~2.5s, even though the text matches overall. Only works for subtitles in the spoken language." />
-          </label>
-        </div>
-        <div className={styles.checkRow}>
-          <input
+          <ToggleRow
             id="anchor_resync_enabled"
-            type="checkbox"
             checked={data.anchor_resync_enabled}
+            onChange={(anchor_resync_enabled) => setData({ ...data, anchor_resync_enabled })}
+            label="Re-sync from the anchors instead of only flagging"
+            tip="When the anchors show a file is mis-timed, they also measured by how much -- so the file is corrected, stretch by stretch, instead of just reported. The result is re-measured against the audio before anything is written. Needs the anchor check above."
+            advanced
             disabled={!data.anchor_check_enabled}
-            onChange={(e) => setData({ ...data, anchor_resync_enabled: e.target.checked })}
           />
-          <label htmlFor="anchor_resync_enabled">
-            Re-sync from the anchors instead of only flagging
-            <Tip text="When the anchors show a file is mis-timed, they also measured by how much -- so the file is corrected, stretch by stretch, instead of just reported. The result is re-measured against the audio before anything is written. Needs the anchor check above." />
-          </label>
-        </div>
-
+        </section>
       </Advanced>
-      <SaveBar busy={busy} saved={saved} error={error} />
-    </form>
+    </>
   )
 }
 
 function CorrectnessTab() {
-  const { data, setData, error: loadError } = useGroup<CorrectnessSettings>('correctness')
-  const { busy, saved, error, save } = useSave('correctness')
+  const { data, setData, error: loadError, reload } = useGroup<CorrectnessSettings>('correctness')
   const [newGroqKey, setNewGroqKey] = useState('')
   const [newOpenRouterKey, setNewOpenRouterKey] = useState('')
-  if (!data) return <span className="spinner" />
+  const [snapshot, setSnapshot] = useState<string | null>(null)
+  const [saving, setSaving] = useState(false)
+  const [savedAt, setSavedAt] = useState<number | null>(null)
+  const [error, setError] = useState<string | null>(null)
 
-  function onSubmit(e: FormEvent) {
-    e.preventDefault()
-    if (!data) return
-    // enabled/auto_action are excluded -- owned by Settings -> Automation's "What runs" table
-    // (its own separate fetch/save of this same group); sending this form's possibly-stale copy
-    // would silently undo a change just made there.
-    const { groq_api_key: _omit1, openrouter_api_key: _omit2, enabled: _omit3, auto_action: _omit4, ...rest } = data
-    const values: Record<string, unknown> = { ...rest }
-    if (newGroqKey) values.groq_api_key = newGroqKey
-    if (newOpenRouterKey) values.openrouter_api_key = newOpenRouterKey
-    save(values)
+  const pick = (d: CorrectnessSettings, gk: string, ok: string) => {
+    const { groq_api_key: _g, openrouter_api_key: _o, enabled: _e, auto_action: _a, ...rest } = d
+    return { ...rest, newGroqKey: gk, newOpenRouterKey: ok }
   }
 
+  useEffect(() => {
+    if (data && snapshot === null) setSnapshot(JSON.stringify(pick(data, '', '')))
+  }, [data, snapshot])
+  const dirty = data !== null && snapshot !== null && JSON.stringify(pick(data, newGroqKey, newOpenRouterKey)) !== snapshot
+
+  async function save() {
+    if (!data) return
+    setSaving(true)
+    setError(null)
+    try {
+      const values: Record<string, unknown> = pick(data, '', '')
+      delete (values as Record<string, unknown>).newGroqKey
+      delete (values as Record<string, unknown>).newOpenRouterKey
+      // Secrets go over the wire only when the user typed a new one — otherwise the server's
+      // stored key must survive untouched. Never render the stored secret back into the input.
+      if (newGroqKey) values.groq_api_key = newGroqKey
+      if (newOpenRouterKey) values.openrouter_api_key = newOpenRouterKey
+      // NOT "enabled"/"auto_action" — Automation's "What runs" table owns those, from its own
+      // copy of this group.
+      const r = await api.put<CorrectnessSettings>('/settings/correctness', { values })
+      setData(r)
+      setNewGroqKey('')
+      setNewOpenRouterKey('')
+      setSnapshot(JSON.stringify(pick(r, '', '')))
+      setSavedAt(Date.now())
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : String(err))
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  function discard() {
+    setNewGroqKey('')
+    setNewOpenRouterKey('')
+    setSnapshot(null)
+    setError(null)
+    reload()
+  }
+
+  useToolbarApi(dirty, error ?? loadError, savedAt, true, saving, save, discard)
+
+  if (!data) return <span className="spinner" />
   const isOpenRouter = data.stt_provider === 'openrouter'
 
   return (
-    <form className={`card ${styles.formCard}`} onSubmit={onSubmit}>
-      {loadError && <div className="error-banner">{loadError}</div>}
-      <p className="text-dim" style={{ fontSize: 12.5, maxWidth: 480, marginTop: 0, marginBottom: 14 }}>
-        Turned on/off from Settings → Automation → What runs — the fields below configure the
-        provider it uses once it's on.
-      </p>
-      <Field label="Provider" tip="Used for translation always, and for transcription unless local Whisper (below) is turned on.">
-        <select value={data.stt_provider} onChange={(e) => setData({ ...data, stt_provider: e.target.value as CorrectnessSettings['stt_provider'] })}>
-          <option value="groq">Groq</option>
-          <option value="openrouter">OpenRouter</option>
-        </select>
-      </Field>
-
-      <Field
-        label="Use local Whisper for transcription"
-        tip="Runs the per-clip Whisper calls on this box's own CPU/GPU via whisper.cpp instead of the cloud provider above — no API key or network needed for them. Translation still uses the provider above regardless of this."
-      >
-        <label style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          <input
-            type="checkbox"
-            checked={data.use_local_whisper}
-            onChange={(e) => setData({ ...data, use_local_whisper: e.target.checked })}
-          />
-          <span className="text-dim" style={{ fontSize: 12.5 }}>
-            {data.use_local_whisper ? 'On' : 'Off'}
-          </span>
-        </label>
-      </Field>
-
-      {data.use_local_whisper && (
-        <>
-          <Field advanced label="Model file path" tip="A ggml model file. Every threshold is measured on tiny.en (the default) -- other models transcribe differently and are not calibrated.">
-            <input
-              type="text"
-              value={data.local_whisper_model}
-              onChange={(e) => setData({ ...data, local_whisper_model: e.target.value })}
-            />
-          </Field>
-          <div className={styles.row}>
-            <Field advanced label="Use GPU" tip="Off forces CPU-only (-ng) even if the binary was built with Vulkan/GPU support.">
-              <label style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                <input
-                  type="checkbox"
-                  checked={data.local_whisper_use_gpu}
-                  onChange={(e) => setData({ ...data, local_whisper_use_gpu: e.target.checked })}
-                />
-              </label>
+    <>
+      <section className="card" aria-labelledby="sc-corr0">
+        <h2 id="sc-corr0" style={{ margin: '0 0 4px', fontSize: 15 }}>Provider</h2>
+        <p className="text-dim" style={{ fontSize: 12.5, maxWidth: 560, margin: '0 0 14px', lineHeight: 1.5 }}>
+          Turned on/off from Settings → Automation → What runs — the fields below configure the
+          provider it uses once it&apos;s on.
+        </p>
+        <ChoiceField
+          label="Provider"
+          tip="Used for translation always, and for transcription unless local Whisper (below) is turned on."
+          name="stt_provider"
+          value={data.stt_provider}
+          onPick={(stt_provider) => setData({ ...data, stt_provider })}
+          options={[
+            { value: 'groq', title: 'Groq', desc: 'fast Whisper API' },
+            { value: 'openrouter', title: 'OpenRouter', desc: 'Whisper via OpenRouter' },
+          ]}
+        />
+        <ToggleRow
+          id="use_local_whisper"
+          checked={data.use_local_whisper}
+          onChange={(use_local_whisper) => setData({ ...data, use_local_whisper })}
+          label="Use local Whisper for transcription"
+          tip="Runs the per-clip Whisper calls on this box's own CPU/GPU via whisper.cpp instead of the cloud provider above — no API key or network needed for them. Translation still uses the provider above regardless of this."
+        />
+        {data.use_local_whisper && (
+          <>
+            <Field advanced label="Model file path" tip="A ggml model file. Every threshold is measured on tiny.en (the default) -- other models transcribe differently and are not calibrated.">
+              <input type="text" value={data.local_whisper_model} onChange={(e) => setData({ ...data, local_whisper_model: e.target.value })} />
             </Field>
-            <Field advanced label="CPU threads">
-              <input
-                type="number"
-                min={1}
-                value={data.local_whisper_threads}
-                onChange={(e) => setData({ ...data, local_whisper_threads: Number(e.target.value) })}
-              />
-            </Field>
-          </div>
-        </>
-      )}
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, maxWidth: 540 }}>
+              <Field advanced label="Use GPU" tip="Off forces CPU-only (-ng) even if the binary was built with Vulkan/GPU support.">
+                <label style={{ display: 'flex', alignItems: 'center', gap: 8, margin: 0 }}>
+                  <input type="checkbox" checked={data.local_whisper_use_gpu} onChange={(e) => setData({ ...data, local_whisper_use_gpu: e.target.checked })} style={{ width: 16, height: 16, accentColor: 'var(--accent)' }} />
+                </label>
+              </Field>
+              <Field advanced label="CPU threads">
+                <input type="number" min={1} value={data.local_whisper_threads} onChange={(e) => setData({ ...data, local_whisper_threads: Number(e.target.value) })} />
+              </Field>
+            </div>
+          </>
+        )}
+      </section>
 
       {!isOpenRouter && (
-        <>
+        <section className="card" aria-labelledby="sc-corr1">
+          <h2 id="sc-corr1" style={{ margin: '0 0 14px', fontSize: 15 }}>Groq</h2>
           <Field
             label="Groq API key"
             tip={data.groq_api_key.is_set ? 'A key is already saved — type here only to replace it.' : 'Not set yet.'}
@@ -770,7 +884,7 @@ function CorrectnessTab() {
               onChange={(e) => setNewGroqKey(e.target.value)}
             />
           </Field>
-          <div className={styles.row}>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
             {!data.use_local_whisper && (
               <Field advanced label="Whisper model">
                 <input type="text" value={data.groq_model} onChange={(e) => setData({ ...data, groq_model: e.target.value })} />
@@ -780,11 +894,12 @@ function CorrectnessTab() {
               <input type="text" value={data.groq_llm_model} onChange={(e) => setData({ ...data, groq_llm_model: e.target.value })} />
             </Field>
           </div>
-        </>
+        </section>
       )}
 
       {isOpenRouter && (
-        <>
+        <section className="card" aria-labelledby="sc-corr1">
+          <h2 id="sc-corr1" style={{ margin: '0 0 14px', fontSize: 15 }}>OpenRouter</h2>
           <Field
             label="OpenRouter API key"
             tip={data.openrouter_api_key.is_set ? 'A key is already saved — type here only to replace it.' : 'Not set yet.'}
@@ -797,334 +912,286 @@ function CorrectnessTab() {
               onChange={(e) => setNewOpenRouterKey(e.target.value)}
             />
           </Field>
-          <div className={styles.row}>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
             {!data.use_local_whisper && (
               <Field advanced label="Whisper model">
-                <input
-                  type="text"
-                  value={data.openrouter_stt_model}
-                  onChange={(e) => setData({ ...data, openrouter_stt_model: e.target.value })}
-                />
+                <input type="text" value={data.openrouter_stt_model} onChange={(e) => setData({ ...data, openrouter_stt_model: e.target.value })} />
               </Field>
             )}
             <Field advanced label="Translation model (LLM)">
-              <input
-                type="text"
-                value={data.openrouter_llm_model}
-                onChange={(e) => setData({ ...data, openrouter_llm_model: e.target.value })}
-              />
+              <input type="text" value={data.openrouter_llm_model} onChange={(e) => setData({ ...data, openrouter_llm_model: e.target.value })} />
             </Field>
           </div>
-        </>
+        </section>
       )}
 
-      <Field advanced label="Required audio language" tip="Files whose audio track is another language are skipped. Timing anchors need the subtitle in the spoken language. Empty = run regardless.">
-        <input
-          type="text"
-          value={data.require_audio_lang}
-          onChange={(e) => setData({ ...data, require_audio_lang: e.target.value })}
-        />
-      </Field>
-      <SaveBar busy={busy} saved={saved} error={error} />
-    </form>
+      <section className="card" aria-labelledby="sc-corr2">
+        <h2 id="sc-corr2" style={{ margin: '0 0 14px', fontSize: 15 }}>Checking</h2>
+        <Field advanced label="Required audio language" tip="Files whose audio track is another language are skipped. Timing anchors need the subtitle in the spoken language. Empty = run regardless.">
+          <input type="text" value={data.require_audio_lang} onChange={(e) => setData({ ...data, require_audio_lang: e.target.value })} />
+        </Field>
+      </section>
+    </>
   )
 }
 
 function GenerateTab() {
-  const { data, setData, error: loadError } = useGroup<GenerateSettings>('generate')
-  const { busy, saved, error, save } = useSave('generate')
-  const [newGroqKey, setNewGroqKey] = useState('')
-  const [newOpenRouterKey, setNewOpenRouterKey] = useState('')
-  const [newCloudflareToken, setNewCloudflareToken] = useState('')
-  const [newGeminiKey, setNewGeminiKey] = useState('')
-  if (!data) return <span className="spinner" />
+  const { data, setData, error: loadError, reload } = useGroup<GenerateSettings>('generate')
+  const [newKeys, setNewKeys] = useState({ groq: '', openrouter: '', cloudflare: '', gemini: '' })
+  const [snapshot, setSnapshot] = useState<string | null>(null)
+  const [saving, setSaving] = useState(false)
+  const [savedAt, setSavedAt] = useState<number | null>(null)
+  const [error, setError] = useState<string | null>(null)
 
-  function onSubmit(e: FormEvent) {
-    e.preventDefault()
-    if (!data) return
-    // enabled is excluded -- owned by Settings -> Automation's "What runs" table (its own
-    // separate fetch/save of this same group); sending this form's possibly-stale copy would
-    // silently undo a change just made there.
-    const { groq_api_key: _o1, openrouter_api_key: _o2, cloudflare_api_token: _o3,
-      gemini_api_key: _o4, enabled: _o5, ...rest } = data
-    const values: Record<string, unknown> = { ...rest }
-    if (newGroqKey) values.groq_api_key = newGroqKey
-    if (newOpenRouterKey) values.openrouter_api_key = newOpenRouterKey
-    if (newCloudflareToken) values.cloudflare_api_token = newCloudflareToken
-    if (newGeminiKey) values.gemini_api_key = newGeminiKey
-    save(values)
+  const pick = (d: GenerateSettings, nk: typeof newKeys) => {
+    const { groq_api_key: _g, openrouter_api_key: _o, cloudflare_api_token: _c, gemini_api_key: _m, enabled: _e, ...rest } = d
+    return { ...rest, newKeys: nk }
   }
 
+  useEffect(() => {
+    if (data && snapshot === null) setSnapshot(JSON.stringify(pick(data, { groq: '', openrouter: '', cloudflare: '', gemini: '' })))
+  }, [data, snapshot])
+  const dirty = data !== null && snapshot !== null && JSON.stringify(pick(data, newKeys)) !== snapshot
+
+  async function save() {
+    if (!data) return
+    setSaving(true)
+    setError(null)
+    try {
+      // NOT "enabled" (Automation owns that switch), and secrets only when re-typed.
+      const { newKeys: _n, ...values } = pick(data, { groq: '', openrouter: '', cloudflare: '', gemini: '' }) as Record<string, unknown>
+      if (newKeys.groq) values.groq_api_key = newKeys.groq
+      if (newKeys.openrouter) values.openrouter_api_key = newKeys.openrouter
+      if (newKeys.cloudflare) values.cloudflare_api_token = newKeys.cloudflare
+      if (newKeys.gemini) values.gemini_api_key = newKeys.gemini
+      const r = await api.put<GenerateSettings>('/settings/generate', { values })
+      setData(r)
+      setNewKeys({ groq: '', openrouter: '', cloudflare: '', gemini: '' })
+      setSnapshot(JSON.stringify(pick(r, { groq: '', openrouter: '', cloudflare: '', gemini: '' })))
+      setSavedAt(Date.now())
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : String(err))
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  function discard() {
+    setNewKeys({ groq: '', openrouter: '', cloudflare: '', gemini: '' })
+    setSnapshot(null)
+    setError(null)
+    reload()
+  }
+
+  useToolbarApi(dirty, error ?? loadError, savedAt, true, saving, save, discard)
+
+  if (!data) return <span className="spinner" />
+
+  const apiKeyField = (which: keyof typeof newKeys, label: string, isSet: boolean, placeholder: string) => (
+    <Field label={label} tip={isSet ? 'A key is already saved — type here only to replace it.' : 'Not set yet.'}>
+      <input
+        type="text"
+        autoComplete="off"
+        placeholder={isSet ? '••••••••••••••••  (saved — leave blank to keep)' : placeholder}
+        value={newKeys[which]}
+        onChange={(e) => setNewKeys({ ...newKeys, [which]: e.target.value })}
+      />
+    </Field>
+  )
+
   return (
-    <form className={`card ${styles.formCard}`} onSubmit={onSubmit}>
-      {loadError && <div className="error-banner">{loadError}</div>}
-      <p className="text-dim" style={{ fontSize: 12.5, maxWidth: 560, marginTop: 0, marginBottom: 14 }}>
-        Generates a subtitle from scratch (via Whisper) for a video that has no subtitle at all,
-        then translates it into any other wanted language with an LLM. Turned on/off from
-        Settings → Automation → What runs — the fields below configure the providers it uses once
-        it's on. Uses its own API keys, separate from the LLM settings tab, so this heavier
-        full-length transcription never competes with the cheap correctness check's own quota.
-      </p>
-
-      <h3 style={{ marginBottom: 4 }}>Speech-to-text</h3>
-      <Field label="Provider">
-        <select
+    <>
+      <section className="card" aria-labelledby="sc-gen0">
+        <h2 id="sc-gen0" style={{ margin: '0 0 4px', fontSize: 15 }}>Speech-to-text</h2>
+        <p className="text-dim" style={{ fontSize: 12.5, maxWidth: 560, margin: '0 0 14px', lineHeight: 1.5 }}>
+          Generates a subtitle from scratch (via Whisper) for a video that has no subtitle at all,
+          then translates it into any other wanted language with an LLM. Turned on/off from
+          Settings → Automation → What runs — the fields below configure the providers it uses once
+          it&apos;s on. Uses its own API keys, separate from the Speech recognition tab, so this heavier
+          full-length transcription never competes with the cheap correctness check&apos;s own quota.
+        </p>
+        <ChoiceField
+          label="Provider"
+          name="gen-stt"
           value={data.stt_provider}
-          onChange={(e) => setData({ ...data, stt_provider: e.target.value as GenerateSettings['stt_provider'] })}
-        >
-          <option value="groq">Groq</option>
-          <option value="openrouter">OpenRouter</option>
-          <option value="cloudflare">Cloudflare Workers AI</option>
-        </select>
-      </Field>
-
-      {data.stt_provider === 'groq' && (
-        <>
-          <Field
-            label="Groq API key"
-            tip={data.groq_api_key.is_set ? 'A key is already saved — type here only to replace it.' : 'Not set yet.'}
-          >
-            <input
-              type="text"
-              autoComplete="off"
-              placeholder={data.groq_api_key.is_set ? '••••••••••••••••  (saved — leave blank to keep)' : 'gsk_…'}
-              value={newGroqKey}
-              onChange={(e) => setNewGroqKey(e.target.value)}
-            />
-          </Field>
-          <div className={styles.row}>
+          onPick={(stt_provider) => setData({ ...data, stt_provider })}
+          options={[
+            { value: 'groq', title: 'Groq', desc: 'fast Whisper API' },
+            { value: 'openrouter', title: 'OpenRouter', desc: 'Whisper via OpenRouter' },
+            { value: 'cloudflare', title: 'Cloudflare Workers AI', desc: 'very low cost' },
+          ]}
+        />
+        {data.stt_provider === 'groq' && (
+          <>
+            {apiKeyField('groq', 'Groq API key', data.groq_api_key.is_set, 'gsk_…')}
             <Field advanced label="Whisper model">
               <input type="text" value={data.groq_stt_model} onChange={(e) => setData({ ...data, groq_stt_model: e.target.value })} />
             </Field>
-          </div>
-        </>
-      )}
-
-      {data.stt_provider === 'openrouter' && (
-        <>
-          <Field
-            label="OpenRouter API key"
-            tip={data.openrouter_api_key.is_set ? 'A key is already saved — type here only to replace it.' : 'Not set yet.'}
-          >
-            <input
-              type="text"
-              autoComplete="off"
-              placeholder={data.openrouter_api_key.is_set ? '••••••••••••••••  (saved — leave blank to keep)' : 'sk-or-…'}
-              value={newOpenRouterKey}
-              onChange={(e) => setNewOpenRouterKey(e.target.value)}
-            />
-          </Field>
-          <div className={styles.row}>
+          </>
+        )}
+        {data.stt_provider === 'openrouter' && (
+          <>
+            {apiKeyField('openrouter', 'OpenRouter API key', data.openrouter_api_key.is_set, 'sk-or-…')}
             <Field advanced label="Whisper model">
+              <input type="text" value={data.openrouter_stt_model} onChange={(e) => setData({ ...data, openrouter_stt_model: e.target.value })} />
+            </Field>
+          </>
+        )}
+        {data.stt_provider === 'cloudflare' && (
+          <>
+            <p className="text-dim" style={{ fontSize: 12.5, maxWidth: 560, marginTop: 0 }}>
+              Cloudflare doesn&apos;t publish a per-request audio size/duration limit for this model —
+              start with a short chunk length and only raise it after confirming longer chunks
+              actually succeed against your own account.
+            </p>
+            <Field label="Account ID">
+              <input type="text" value={data.cloudflare_account_id} onChange={(e) => setData({ ...data, cloudflare_account_id: e.target.value })} />
+            </Field>
+            <Field
+              label="API token"
+              tip={data.cloudflare_api_token.is_set ? 'A token is already saved — type here only to replace it.' : 'Not set yet.'}
+            >
               <input
                 type="text"
-                value={data.openrouter_stt_model}
-                onChange={(e) => setData({ ...data, openrouter_stt_model: e.target.value })}
+                autoComplete="off"
+                placeholder={data.cloudflare_api_token.is_set ? '••••••••••••••••  (saved — leave blank to keep)' : 'Workers AI API token'}
+                value={newKeys.cloudflare}
+                onChange={(e) => setNewKeys({ ...newKeys, cloudflare: e.target.value })}
               />
             </Field>
-          </div>
-        </>
-      )}
-
-      {data.stt_provider === 'cloudflare' && (
-        <>
-          <p className="text-dim" style={{ fontSize: 12.5, maxWidth: 560, marginTop: 0 }}>
-            Cloudflare doesn't publish a per-request audio size/duration limit for this model —
-            start with a short chunk length and only raise it after confirming longer chunks
-            actually succeed against your own account.
-          </p>
-          <Field label="Account ID">
-            <input
-              type="text"
-              value={data.cloudflare_account_id}
-              onChange={(e) => setData({ ...data, cloudflare_account_id: e.target.value })}
-            />
-          </Field>
-          <Field
-            label="API token"
-            tip={data.cloudflare_api_token.is_set ? 'A token is already saved — type here only to replace it.' : 'Not set yet.'}
-          >
-            <input
-              type="text"
-              autoComplete="off"
-              placeholder={data.cloudflare_api_token.is_set ? '••••••••••••••••  (saved — leave blank to keep)' : 'Workers AI API token'}
-              value={newCloudflareToken}
-              onChange={(e) => setNewCloudflareToken(e.target.value)}
-            />
-          </Field>
-          <div className={styles.row}>
             <Field advanced label="Whisper model">
-              <input
-                type="text"
-                value={data.cloudflare_stt_model}
-                onChange={(e) => setData({ ...data, cloudflare_stt_model: e.target.value })}
-              />
+              <input type="text" value={data.cloudflare_stt_model} onChange={(e) => setData({ ...data, cloudflare_stt_model: e.target.value })} />
             </Field>
             <Field advanced label="Chunk length (seconds)" tip="Undocumented limit — tune against your own account (see note above).">
-              <input
-                type="number" step="10" min="10"
-                value={data.chunk_seconds_cloudflare}
-                onChange={(e) => setData({ ...data, chunk_seconds_cloudflare: Number(e.target.value) })}
-              />
+              <input type="number" step={10} min={10} value={data.chunk_seconds_cloudflare} onChange={(e) => setData({ ...data, chunk_seconds_cloudflare: Number(e.target.value) })} style={{ maxWidth: 120 }} />
             </Field>
-          </div>
-        </>
-      )}
-
-      <div className={styles.row}>
+          </>
+        )}
         <Field advanced
           label="Assume spoken language"
           tip="Fallback when neither the provider nor the file's own audio-language tag can tell us what's spoken. Leave empty to skip a video rather than guess."
         >
+          <input type="text" placeholder="e.g. en" value={data.assume_spoken_lang} onChange={(e) => setData({ ...data, assume_spoken_lang: e.target.value })} />
+        </Field>
+        <Field advanced
+          label="Vocabulary hint (Groq/OpenRouter only)"
+          tip="A short, plain comma-separated list of names Whisper is likely to mishear (e.g. show/character names) -- helps with proper nouns. Keep it a plain list, not a labeled sentence ('Characters: ...') -- that shape was observed to make Whisper hallucinate extra dialogue near the end of a chunk. Saved as a single line, capped at 200 characters."
+        >
           <input
             type="text"
-            placeholder="e.g. en"
-            value={data.assume_spoken_lang}
-            onChange={(e) => setData({ ...data, assume_spoken_lang: e.target.value })}
+            placeholder="e.g. Jeff, Britta, Abed, Troy, Annie, Shirley, Pierce, Chang"
+            maxLength={200}
+            value={data.vocabulary_hint}
+            onChange={(e) => setData({ ...data, vocabulary_hint: e.target.value })}
           />
         </Field>
-      </div>
-      <Field advanced
-        label="Vocabulary hint (Groq/OpenRouter only)"
-        tip="A short, plain comma-separated list of names Whisper is likely to mishear (e.g. show/character names) -- helps with proper nouns. Keep it a plain list, not a labeled sentence ('Characters: ...') -- that shape was observed to make Whisper hallucinate extra dialogue near the end of a chunk. Saved as a single line, capped at 200 characters."
-      >
-        <input
-          type="text"
-          placeholder="e.g. Jeff, Britta, Abed, Troy, Annie, Shirley, Pierce, Chang"
-          maxLength={200}
-          value={data.vocabulary_hint}
-          onChange={(e) => setData({ ...data, vocabulary_hint: e.target.value })}
-        />
-      </Field>
+      </section>
 
-      <h3 style={{ marginBottom: 4 }}>Translation</h3>
-      <p className="text-dim" style={{ fontSize: 12.5, maxWidth: 560, marginTop: 0, marginBottom: 14 }}>
-        Whisper can only translate speech straight to English — any OTHER wanted language goes
-        through this LLM step instead, translating the already-timed lines without touching their
-        timestamps.
-      </p>
-      <Field label="Provider">
-        <select
+      <section className="card" aria-labelledby="sc-gen1">
+        <h2 id="sc-gen1" style={{ margin: '0 0 4px', fontSize: 15 }}>Translation</h2>
+        <p className="text-dim" style={{ fontSize: 12.5, maxWidth: 560, margin: '0 0 14px', lineHeight: 1.5 }}>
+          Whisper can only translate speech straight to English — any OTHER wanted language goes
+          through this LLM step instead, translating the already-timed lines without touching their
+          timestamps.
+        </p>
+        <ChoiceField
+          label="Provider"
+          name="gen-llm"
           value={data.llm_provider}
-          onChange={(e) => setData({ ...data, llm_provider: e.target.value as GenerateSettings['llm_provider'] })}
-        >
-          <option value="groq">Groq</option>
-          <option value="openrouter">OpenRouter</option>
-          <option value="gemini">Google Gemini</option>
-        </select>
-      </Field>
-
-      {data.llm_provider === 'groq' && (
-        <>
-          {data.stt_provider !== 'groq' && (
-            <Field
-              label="Groq API key"
-              tip={data.groq_api_key.is_set ? 'A key is already saved — type here only to replace it.' : 'Not set yet.'}
-            >
-              <input
-                type="text"
-                autoComplete="off"
-                placeholder={data.groq_api_key.is_set ? '••••••••••••••••  (saved — leave blank to keep)' : 'gsk_…'}
-                value={newGroqKey}
-                onChange={(e) => setNewGroqKey(e.target.value)}
-              />
-            </Field>
-          )}
-          <div className={styles.row}>
+          onPick={(llm_provider) => setData({ ...data, llm_provider })}
+          options={[
+            { value: 'groq', title: 'Groq', desc: 'Llama chat models' },
+            { value: 'openrouter', title: 'OpenRouter', desc: 'model of your choice' },
+            { value: 'gemini', title: 'Google Gemini', desc: "Google's models" },
+          ]}
+        />
+        {data.llm_provider === 'groq' && (
+          <>
+            {data.stt_provider !== 'groq' && apiKeyField('groq', 'Groq API key', data.groq_api_key.is_set, 'gsk_…')}
             <Field advanced label="Translation model">
               <input type="text" value={data.groq_llm_model} onChange={(e) => setData({ ...data, groq_llm_model: e.target.value })} />
             </Field>
-          </div>
-        </>
-      )}
-
-      {data.llm_provider === 'openrouter' && (
-        <>
-          {data.stt_provider !== 'openrouter' && (
-            <Field
-              label="OpenRouter API key"
-              tip={data.openrouter_api_key.is_set ? 'A key is already saved — type here only to replace it.' : 'Not set yet.'}
-            >
-              <input
-                type="text"
-                autoComplete="off"
-                placeholder={data.openrouter_api_key.is_set ? '••••••••••••••••  (saved — leave blank to keep)' : 'sk-or-…'}
-                value={newOpenRouterKey}
-                onChange={(e) => setNewOpenRouterKey(e.target.value)}
-              />
-            </Field>
-          )}
-          <div className={styles.row}>
+          </>
+        )}
+        {data.llm_provider === 'openrouter' && (
+          <>
+            {data.stt_provider !== 'openrouter' && apiKeyField('openrouter', 'OpenRouter API key', data.openrouter_api_key.is_set, 'sk-or-…')}
             <Field advanced label="Translation model">
-              <input
-                type="text"
-                value={data.openrouter_llm_model}
-                onChange={(e) => setData({ ...data, openrouter_llm_model: e.target.value })}
-              />
+              <input type="text" value={data.openrouter_llm_model} onChange={(e) => setData({ ...data, openrouter_llm_model: e.target.value })} />
             </Field>
-          </div>
-        </>
-      )}
-
-      {data.llm_provider === 'gemini' && (
-        <>
-          <Field
-            label="Gemini API key"
-            tip={data.gemini_api_key.is_set ? 'A key is already saved — type here only to replace it.' : 'Not set yet.'}
-          >
-            <input
-              type="text"
-              autoComplete="off"
-              placeholder={data.gemini_api_key.is_set ? '••••••••••••••••  (saved — leave blank to keep)' : 'AIza…'}
-              value={newGeminiKey}
-              onChange={(e) => setNewGeminiKey(e.target.value)}
-            />
-          </Field>
-          <div className={styles.row}>
+          </>
+        )}
+        {data.llm_provider === 'gemini' && (
+          <>
+            {apiKeyField('gemini', 'Gemini API key', data.gemini_api_key.is_set, 'AIza…')}
             <Field advanced label="Translation model">
               <input type="text" value={data.gemini_llm_model} onChange={(e) => setData({ ...data, gemini_llm_model: e.target.value })} />
             </Field>
-          </div>
-        </>
-      )}
+          </>
+        )}
+      </section>
 
-      <div className={styles.row}>
+      <section className="card" aria-labelledby="sc-gen2">
+        <h2 id="sc-gen2" style={{ margin: '0 0 14px', fontSize: 15 }}>Limits</h2>
         <Field
           label="Max. videos per day"
           tip="Caps how many DISTINCT videos get a subtitle generated in any 24 hours -- counted across every sweep, poll and scheduled run together, so a busy day can't quietly multiply it. Translating an already-transcribed video into extra languages doesn't count again. A manual Generate click ignores this."
         >
-          <input
-            type="number" step="1" min="0"
-            value={data.max_videos_per_day}
-            onChange={(e) => setData({ ...data, max_videos_per_day: Number(e.target.value) })}
-          />
+          <input type="number" step={1} min={0} value={data.max_videos_per_day} onChange={(e) => setData({ ...data, max_videos_per_day: Number(e.target.value) })} style={{ maxWidth: 120 }} />
         </Field>
-      </div>
-
-      <SaveBar busy={busy} saved={saved} error={error} />
-    </form>
+      </section>
+    </>
   )
 }
 
 function AutomationTab() {
-  const whatRuns = useWhatRuns()
-  const { data, setData, error: automationLoadError } = useGroup<AutomationSettings>('automation')
-  const [busy, setBusy] = useState(false)
-  const [saved, setSaved] = useState(false)
+  const [automation, setAutomation] = useState<AutomationSettings | null>(null)
+  const [loadError, setLoadError] = useState<string | null>(null)
+  const [snapshot, setSnapshot] = useState<string | null>(null)
+  const [saving, setSaving] = useState(false)
+  const [savedAt, setSavedAt] = useState<number | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const wr = useWhatRuns()
 
-  const { general, sync, correctness, generate } = whatRuns
-  if (!general.data || !sync.data || !correctness.data || !generate.data || !data) return <span className="spinner" />
-  const g = general.data, s = sync.data, c = correctness.data, gen = generate.data
+  useEffect(() => {
+    api
+      .get<AutomationSettings>('/settings/automation')
+      .then(setAutomation)
+      .catch((err) => setLoadError(err instanceof ApiError ? err.message : String(err)))
+  }, [])
 
-  async function onSubmit(e: FormEvent) {
-    e.preventDefault()
-    setBusy(true)
-    setSaved(false)
+  const ready = !!(automation && wr.general.data && wr.sync.data && wr.correctness.data && wr.generate.data)
+  const pickNow = () => JSON.stringify({
+    a: automation,
+    g: wr.general.data ? {
+      auto_scan_sync_enabled: wr.general.data.auto_scan_sync_enabled,
+      auto_scan_correctness_enabled: wr.general.data.auto_scan_correctness_enabled,
+      auto_scan_line_order_enabled: wr.general.data.auto_scan_line_order_enabled,
+      auto_scan_generate_enabled: wr.general.data.auto_scan_generate_enabled,
+    } : null,
+    s: wr.sync.data ? { enabled: wr.sync.data.enabled, line_order_enabled: wr.sync.data.line_order_enabled } : null,
+    c: wr.correctness.data ? { enabled: wr.correctness.data.enabled, auto_action: wr.correctness.data.auto_action } : null,
+    gen: wr.generate.data ? { enabled: wr.generate.data.enabled } : null,
+  })
+
+  // Guarded: only snapshots once per load, so the missing dep array can't loop.
+  useEffect(() => {
+    if (ready && snapshot === null) setSnapshot(pickNow())
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  })
+  const dirty = ready && snapshot !== null && pickNow() !== snapshot
+
+  async function save() {
+    const g = wr.general.data, s = wr.sync.data, c = wr.correctness.data, gen = wr.generate.data
+    if (!automation || !g || !s || !c || !gen) return
+    setSaving(true)
     setError(null)
     try {
-      await Promise.all([
-        api.put('/settings/general', {
+      // Each switch is a key in its owning group; AutomationTab is the only writer of these
+      // particular keys, so no tab can overwrite another's change here.
+      const [ra, rg, rs, rc, rgen] = await Promise.all([
+        api.put<AutomationSettings>('/settings/automation', { values: { ...automation } }),
+        api.put<GeneralSettings>('/settings/general', {
           values: {
             auto_scan_sync_enabled: g.auto_scan_sync_enabled,
             auto_scan_correctness_enabled: g.auto_scan_correctness_enabled,
@@ -1132,85 +1199,110 @@ function AutomationTab() {
             auto_scan_generate_enabled: g.auto_scan_generate_enabled,
           },
         }),
-        api.put('/settings/sync', {
-          values: { enabled: s.enabled, line_order_enabled: s.line_order_enabled },
-        }),
-        api.put('/settings/correctness', { values: { enabled: c.enabled, auto_action: c.auto_action } }),
-        api.put('/settings/generate', { values: { enabled: gen.enabled } }),
-        api.put('/settings/automation', { values: data }),
+        api.put<SyncSettings>('/settings/sync', { values: { enabled: s.enabled, line_order_enabled: s.line_order_enabled } }),
+        api.put<CorrectnessSettings>('/settings/correctness', { values: { enabled: c.enabled, auto_action: c.auto_action } }),
+        api.put<GenerateSettings>('/settings/generate', { values: { enabled: gen.enabled } }),
       ])
-      setSaved(true)
-      setTimeout(() => setSaved(false), 2500)
+      setAutomation(ra)
+      wr.general.setData(rg)
+      wr.sync.setData(rs)
+      wr.correctness.setData(rc)
+      wr.generate.setData(rgen)
+      setSnapshot(JSON.stringify({
+        a: ra,
+        g: {
+          auto_scan_sync_enabled: rg.auto_scan_sync_enabled,
+          auto_scan_correctness_enabled: rg.auto_scan_correctness_enabled,
+          auto_scan_line_order_enabled: rg.auto_scan_line_order_enabled,
+          auto_scan_generate_enabled: rg.auto_scan_generate_enabled,
+        },
+        s: { enabled: rs.enabled, line_order_enabled: rs.line_order_enabled },
+        c: { enabled: rc.enabled, auto_action: rc.auto_action },
+        gen: { enabled: rgen.enabled },
+      }))
+      setSavedAt(Date.now())
     } catch (err) {
       setError(err instanceof ApiError ? err.message : String(err))
     } finally {
-      setBusy(false)
+      setSaving(false)
     }
   }
 
+  function discard() {
+    setSnapshot(null)
+    setError(null)
+    setAutomation(null)
+    wr.general.reload()
+    wr.sync.reload()
+    wr.correctness.reload()
+    wr.generate.reload()
+    api
+      .get<AutomationSettings>('/settings/automation')
+      .then(setAutomation)
+      .catch((err) => setLoadError(err instanceof ApiError ? err.message : String(err)))
+  }
+
+  useToolbarApi(dirty, error ?? loadError ?? wr.loadError, savedAt, true, saving, save, discard)
+
+  if (!automation) return <span className="spinner" />
+
   return (
-    <form className={`card ${styles.formCard}`} onSubmit={onSubmit}>
-      {(whatRuns.loadError || automationLoadError) && (
-        <div className="error-banner">{whatRuns.loadError || automationLoadError}</div>
-      )}
-      <WhatRunsTable {...whatRuns} />
-      <Field
-        label="Max. remediation attempts"
-        tip="How many replacement subtitles to try from Bazarr's providers. If none of them passes the check, the original is put back and stays flagged."
-      >
-        <input
-          type="number"
-          value={data.remediate_max_attempts}
-          onChange={(e) => setData({ ...data, remediate_max_attempts: Number(e.target.value) })}
-        />
-      </Field>
-      <Field advanced
-        label="Minimum Bazarr score to try (remediation, %)"
-        tip="Bazarr's own match score for a candidate -- one below this is skipped during remediation. 0 = try everything."
-      >
-        <input
-          type="number"
-          step="1"
-          min="0"
-          max="100"
-          value={data.remediate_min_score}
-          onChange={(e) => setData({ ...data, remediate_min_score: Number(e.target.value) })}
-        />
-      </Field>
-      <div className={styles.checkRow}>
-        <input
+    <>
+      <section className="card" aria-label="Automation">
+        <WhatRunsTable {...wr} />
+        <Field
+          label="Max. remediation attempts"
+          tip="How many replacement subtitles to try from Bazarr's providers. If none of them passes the check, the original is put back and stays flagged."
+        >
+          <input type="number" value={automation.remediate_max_attempts} onChange={(e) => setAutomation({ ...automation, remediate_max_attempts: Number(e.target.value) })} style={{ maxWidth: 120 }} />
+        </Field>
+        <Field advanced
+          label="Minimum Bazarr score to try (remediation, %)"
+          tip="Bazarr's own match score for a candidate -- one below this is skipped during remediation. 0 = try everything."
+        >
+          <input type="number" step={1} min={0} max={100} value={automation.remediate_min_score} onChange={(e) => setAutomation({ ...automation, remediate_min_score: Number(e.target.value) })} style={{ maxWidth: 120 }} />
+        </Field>
+        <ToggleRow
           id="dry_run"
-          type="checkbox"
-          checked={data.dry_run}
-          onChange={(e) => setData({ ...data, dry_run: e.target.checked })}
+          checked={automation.dry_run}
+          onChange={(dry_run) => setAutomation({ ...automation, dry_run })}
+          label="Dry run — show what would happen, don't change anything"
         />
-        <label htmlFor="dry_run">Dry run — show what would happen, don't change anything</label>
-      </div>
-      <SaveBar busy={busy} saved={saved} error={error} />
-    </form>
+      </section>
+    </>
   )
 }
 
 function BazarrTab() {
-  const { data, setData, error: loadError } = useGroup<BazarrSettings>('bazarr')
-  const { busy, saved, error, save } = useSave('bazarr')
-  const [newApiKey, setNewApiKey] = useState('')
-  const [testResult, setTestResult] = useState<string | null>(null)
-  const [testing, setTesting] = useState(false)
+  const { data, setData, error: loadError, reload } = useGroup<BazarrSettings>('bazarr')
   const [host, setHost] = useState('')
   const [port, setPort] = useState('')
-  const initialized = useRef(false)
+  const [newApiKey, setNewApiKey] = useState('')
+  const [initialized, setInitialized] = useState(false)
+  const [snapshot, setSnapshot] = useState<string | null>(null)
+  const [saving, setSaving] = useState(false)
+  const [savedAt, setSavedAt] = useState<number | null>(null)
+  const [error, setError] = useState<string | null>(null)
+  const [testing, setTesting] = useState(false)
+  const [testResult, setTestResult] = useState<string | null>(null)
+  const [testError, setTestError] = useState<string | null>(null)
 
   useEffect(() => {
-    if (data && !initialized.current) {
-      const hp = urlToHostPort(data.url)
-      setHost(hp.host)
-      setPort(hp.port)
-      initialized.current = true
+    if (data && !initialized) {
+      const { host: h, port: p } = urlToHostPort(data.url)
+      setHost(h)
+      setPort(p)
+      setInitialized(true)
     }
-  }, [data])
+  }, [data, initialized])
 
-  if (!data) return <span className="spinner" />
+  const pickNow = () => data ? JSON.stringify({ host, port, path_map: data.path_map, newApiKey }) : ''
+  // Guarded: only snapshots once per load, so the missing dep array can't loop.
+  useEffect(() => {
+    if (data && initialized && snapshot === null) setSnapshot(pickNow())
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  })
+  const dirty = data !== null && initialized && snapshot !== null && pickNow() !== snapshot
 
   function pathMapToText(pairs: [string, string][]) {
     return pairs.map(([a, b]) => `${a}=${b}`).join('\n')
@@ -1227,18 +1319,45 @@ function BazarrTab() {
       })
   }
 
-  function onSubmit(e: FormEvent) {
-    e.preventDefault()
+  async function save() {
     if (!data) return
-    const { api_key: _omit, ...rest } = data
-    const values: Record<string, unknown> = { ...rest, url: hostPortToUrl(host, port) }
-    if (newApiKey) values.api_key = newApiKey
-    save(values)
+    setSaving(true)
+    setError(null)
+    try {
+      const values: Record<string, unknown> = { url: hostPortToUrl(host, port), path_map: data.path_map }
+      // Only when the user typed a new one — otherwise the server's stored key survives.
+      if (newApiKey) values.api_key = newApiKey
+      const r = await api.put<BazarrSettings>('/settings/bazarr', { values })
+      setData(r)
+      setNewApiKey('')
+      const { host: h, port: p } = urlToHostPort(r.url)
+      setHost(h)
+      setPort(p)
+      setSnapshot(JSON.stringify({ host: h, port: p, path_map: r.path_map, newApiKey: '' }))
+      setTestResult(null)
+      setTestError(null)
+      setSavedAt(Date.now())
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : String(err))
+    } finally {
+      setSaving(false)
+    }
   }
 
-  async function testConnection() {
+  function discard() {
+    setNewApiKey('')
+    setInitialized(false)
+    setSnapshot(null)
+    setError(null)
+    reload()
+  }
+
+  useToolbarApi(dirty, error ?? loadError, savedAt, false, saving, save, discard)
+
+  async function test() {
     setTesting(true)
     setTestResult(null)
+    setTestError(null)
     try {
       // Tests what's in the form RIGHT NOW, without requiring Save first — url is always
       // sent (so a field change is tested immediately); api_key only if the user typed a
@@ -1247,61 +1366,71 @@ function BazarrTab() {
         url: hostPortToUrl(host, port),
         api_key: newApiKey || undefined,
       })
-      setTestResult(`Connected — Bazarr version ${r.bazarr_version ?? 'unknown'}`)
+      setTestResult(r.ok ? `Connected — Bazarr version ${r.bazarr_version ?? 'unknown'}` : 'Failed')
     } catch (err) {
-      setTestResult(err instanceof ApiError ? err.message : String(err))
+      setTestError(err instanceof ApiError ? err.message : String(err))
     } finally {
       setTesting(false)
     }
   }
 
+  if (!data) return <span className="spinner" />
+
   return (
-    <form className={`card ${styles.formCard}`} onSubmit={onSubmit}>
-      {loadError && <div className="error-banner">{loadError}</div>}
-      <p className="text-dim" style={{ fontSize: 12.5, maxWidth: 480, marginTop: 0, marginBottom: 16 }}>
-        Bazarr is where subtitles actually get downloaded from. Connecting it lets verifyarr look
-        up where a subtitle came from (needed to blacklist a bad one) and ask Bazarr for a
-        replacement during remediation. Optional — sync and correctness checking both work fine
-        without it.
-      </p>
-      <HostPortFields host={host} port={port} onHost={setHost} onPort={setPort} />
-      <Field
-        label="Bazarr API key"
-        tip={data.api_key.is_set ? "A key is already saved. It's left blank here on purpose -- type only if you want to replace it." : 'Not set yet.'}
-      >
-        <input
-          type="text"
-          autoComplete="off"
-          placeholder={data.api_key.is_set ? '••••••••••••••••  (saved — leave blank to keep)' : 'Not set'}
-          value={newApiKey}
-          onChange={(e) => setNewApiKey(e.target.value)}
-        />
-      </Field>
-      <Field
-        label="Path mapping (PATH_MAP)"
-        tip="Only needed if Bazarr and verifyarr see the media folders under different paths. Format: local-path=bazarr-path, one per line."
-      >
-        <textarea
-          rows={3}
-          value={pathMapToText(data.path_map)}
-          onChange={(e) => setData({ ...data, path_map: textToPathMap(e.target.value) })}
-        />
-      </Field>
-      <div className={styles.actions} style={{ marginTop: 0, marginBottom: 14 }}>
-        <button type="button" className="btn" disabled={testing} onClick={testConnection}>
-          {testing ? <span className="spinner" /> : 'Test connection'}
-        </button>
-        {testResult && <span style={{ fontSize: 13 }}>{testResult}</span>}
-      </div>
-      <SaveBar busy={busy} saved={saved} error={error} />
-    </form>
+    <>
+      <section className="card" aria-labelledby="sc-bz0">
+        <h2 id="sc-bz0" style={{ margin: '0 0 4px', fontSize: 15 }}>Connection</h2>
+        <p className="text-dim" style={{ fontSize: 12.5, maxWidth: 560, margin: '0 0 14px', lineHeight: 1.5 }}>
+          Bazarr is where subtitles actually get downloaded from. Connecting it lets verifyarr look
+          up where a subtitle came from (needed to blacklist a bad one) and ask Bazarr for a
+          replacement during remediation. Optional — sync and correctness checking both work fine
+          without it.
+        </p>
+        <HostPortFields host={host} port={port} onHost={setHost} onPort={setPort} />
+        <Field
+          label="Bazarr API key"
+          tip={data.api_key.is_set ? "A key is already saved. It's left blank here on purpose -- type only if you want to replace it." : 'Not set yet.'}
+        >
+          <input
+            type="text"
+            autoComplete="off"
+            placeholder={data.api_key.is_set ? '••••••••••••••••  (saved — leave blank to keep)' : 'Not set'}
+            value={newApiKey}
+            onChange={(e) => setNewApiKey(e.target.value)}
+          />
+        </Field>
+        <Field
+          label="Path mapping (PATH_MAP)"
+          tip="Only needed if Bazarr and verifyarr see the media folders under different paths. Format: local-path=bazarr-path, one per line."
+        >
+          <textarea
+            rows={3}
+            value={pathMapToText(data.path_map)}
+            onChange={(e) => setData({ ...data, path_map: textToPathMap(e.target.value) })}
+            style={{ fontFamily: 'var(--mono)', fontSize: 12.5 }}
+          />
+        </Field>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 4 }}>
+          <button type="button" className="btn btn-sm" disabled={testing} onClick={test}>
+            {testing ? <span className="spinner" /> : 'Test connection'}
+          </button>
+          <span role="status" style={{ fontSize: 13 }}>
+            {testResult && <span style={{ color: 'var(--green)' }}>✓ {testResult}</span>}
+            {testError && <span style={{ color: 'var(--red)' }}>{testError}</span>}
+          </span>
+        </div>
+      </section>
+    </>
   )
 }
 
 function SchedulingTab() {
-  const { data, setData, error: loadError } = useGroup<SchedulingSettings>('scheduling')
-  const { busy, saved, error, save } = useSave('scheduling')
+  const { data, setData, error: loadError, reload } = useGroup<SchedulingSettings>('scheduling')
   const [schedule, setSchedule] = useState<FriendlySchedule | null>(null)
+  const [snapshot, setSnapshot] = useState<string | null>(null)
+  const [saving, setSaving] = useState(false)
+  const [savedAt, setSavedAt] = useState<number | null>(null)
+  const [error, setError] = useState<string | null>(null)
   const initialized = useRef(false)
 
   useEffect(() => {
@@ -1311,8 +1440,6 @@ function SchedulingTab() {
     }
   }, [data])
 
-  if (!data || !schedule) return <span className="spinner" />
-
   function updateSchedule(patch: Partial<FriendlySchedule>) {
     const next = { ...schedule!, ...patch }
     setSchedule(next)
@@ -1321,109 +1448,114 @@ function SchedulingTab() {
     }
   }
 
-  function onSubmit(e: FormEvent) {
-    e.preventDefault()
-    save(data as unknown as Record<string, unknown>)
+  useEffect(() => {
+    if (data && snapshot === null) setSnapshot(JSON.stringify(data))
+  }, [data, snapshot])
+  const dirty = data !== null && snapshot !== null && JSON.stringify(data) !== snapshot
+
+  async function save() {
+    if (!data) return
+    setSaving(true)
+    setError(null)
+    try {
+      const r = await api.put<SchedulingSettings>('/settings/scheduling', { values: { ...data } })
+      setData(r)
+      setSnapshot(JSON.stringify(r))
+      setSavedAt(Date.now())
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : String(err))
+    } finally {
+      setSaving(false)
+    }
   }
 
+  function discard() {
+    initialized.current = false
+    setSchedule(null)
+    setSnapshot(null)
+    setError(null)
+    reload()
+  }
+
+  useToolbarApi(dirty, error ?? loadError, savedAt, false, saving, save, discard)
+
+  if (!data || !schedule) return <span className="spinner" />
+
   return (
-    <form className={`card ${styles.formCard}`} onSubmit={onSubmit}>
-      {loadError && <div className="error-banner">{loadError}</div>}
-      <Field label="Run a sweep">
-        <select
-          value={schedule.mode}
-          onChange={(e) => updateSchedule({ mode: e.target.value as ScheduleMode })}
-        >
-          <option value="daily">Every day</option>
-          <option value="weekly">Every week</option>
-          <option value="advanced">Advanced (raw cron)</option>
-        </select>
-      </Field>
-
-      {schedule.mode !== 'advanced' && (
-        <div className={styles.row}>
-          {schedule.mode === 'weekly' && (
-            <Field label="On">
-              <select
-                value={schedule.dayOfWeek}
-                onChange={(e) => updateSchedule({ dayOfWeek: Number(e.target.value) })}
-              >
-                {DAY_NAMES.map((name, i) => (
-                  <option key={name} value={i}>
-                    {name}
-                  </option>
-                ))}
-              </select>
+    <>
+      <section className="card" aria-labelledby="sc-sch0">
+        <h2 id="sc-sch0" style={{ margin: '0 0 14px', fontSize: 15 }}>Scheduled sweep</h2>
+        <Field label="Run a sweep">
+          <select value={schedule.mode} onChange={(e) => updateSchedule({ mode: e.target.value as ScheduleMode })}>
+            <option value="daily">Every day</option>
+            <option value="weekly">Every week</option>
+            <option value="advanced">Advanced (raw cron)</option>
+          </select>
+        </Field>
+        {schedule.mode !== 'advanced' && (
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, maxWidth: 540 }}>
+            {schedule.mode === 'weekly' && (
+              <Field label="On">
+                <select value={schedule.dayOfWeek} onChange={(e) => updateSchedule({ dayOfWeek: Number(e.target.value) })}>
+                  {DAY_NAMES.map((name, i) => (
+                    <option key={name} value={i}>{name}</option>
+                  ))}
+                </select>
+              </Field>
+            )}
+            <Field label="At" tip="Local time on the server (the container's TZ setting).">
+              <TimeOfDayField value={schedule.time} onChange={(time) => updateSchedule({ time })} />
             </Field>
-          )}
-          <Field label="At (UTC)" tip="The container's own clock/timezone doesn't matter here — this always runs in UTC.">
-            <TimeOfDayField value={schedule.time} onChange={(time) => updateSchedule({ time })} />
+          </div>
+        )}
+        {schedule.mode === 'advanced' && (
+          <Field label="Cron expression" tip="Standard 5-field cron in the server's local time, e.g. '0 4 * * 0' = Sunday at 04:00.">
+            <input type="text" value={data.cron} onChange={(e) => setData({ ...data, cron: e.target.value })} style={{ fontFamily: 'var(--mono)' }} />
           </Field>
-        </div>
-      )}
-
-      {schedule.mode === 'advanced' && (
-        <Field label="Cron expression (UTC)" tip="Standard 5-field cron, e.g. '0 4 * * 0' = Sunday at 04:00 UTC.">
-          <input type="text" value={data.cron} onChange={(e) => setData({ ...data, cron: e.target.value })} />
-        </Field>
-      )}
-
-      <div className={styles.checkRow}>
-        <input
+        )}
+        <ToggleRow
           id="run_on_start"
-          type="checkbox"
           checked={data.run_on_start}
-          onChange={(e) => setData({ ...data, run_on_start: e.target.checked })}
+          onChange={(run_on_start) => setData({ ...data, run_on_start })}
+          label="Also run a sweep immediately when the container starts"
         />
-        <label htmlFor="run_on_start">Also run a sweep immediately when the container starts</label>
-      </div>
-      <div className={styles.checkRow}>
-        <input
+      </section>
+
+      <section className="card" aria-labelledby="sc-sch1">
+        <h2 id="sc-sch1" style={{ margin: '0 0 14px', fontSize: 15 }}>Background checks</h2>
+        <ToggleRow
           id="poll_new_media_enabled"
-          type="checkbox"
           checked={data.poll_new_media_enabled}
-          onChange={(e) => setData({ ...data, poll_new_media_enabled: e.target.checked })}
+          onChange={(poll_new_media_enabled) => setData({ ...data, poll_new_media_enabled })}
+          label="Scan when Bazarr has a subtitle ready"
+          tip="Scans an item as soon as Bazarr's satisfied it (needs a URL + API key on Settings → Bazarr). What the scan does is set under Automation → What runs."
         />
-        <label htmlFor="poll_new_media_enabled">
-          Scan when Bazarr has a subtitle ready
-          <Tip text="Scans an item as soon as Bazarr's satisfied it (needs a URL + API key on Settings → Bazarr). What the scan does is set under Automation → What runs." />
-        </label>
-      </div>
-      {data.poll_new_media_enabled && (
-        <Field label="Check every (minutes)" tip="How often to poll Bazarr's wanted-subtitles lists.">
-          <input
-            type="number"
-            min="1"
-            value={data.poll_new_media_interval_minutes}
-            onChange={(e) => setData({ ...data, poll_new_media_interval_minutes: Number(e.target.value) })}
-          />
-        </Field>
-      )}
-      <div className={styles.checkRow}>
-        <input
+        {data.poll_new_media_enabled && (
+          <Field label="Check every (minutes)" tip="How often to poll Bazarr's wanted-subtitles lists.">
+            <input type="number" min={1} value={data.poll_new_media_interval_minutes} onChange={(e) => setData({ ...data, poll_new_media_interval_minutes: Number(e.target.value) })} style={{ maxWidth: 120 }} />
+          </Field>
+        )}
+        <ToggleRow
           id="poll_library_enabled"
-          type="checkbox"
           checked={data.poll_library_enabled}
-          onChange={(e) => setData({ ...data, poll_library_enabled: e.target.checked })}
+          onChange={(poll_library_enabled) => setData({ ...data, poll_library_enabled })}
+          label="Watch media folders for new files"
+          tip="Rechecks the folders for new files and refreshes the Library page. Discovery only -- no sync, no correctness check."
         />
-        <label htmlFor="poll_library_enabled">
-          Watch media folders for new files
-          <Tip text="Rechecks the folders for new files and refreshes the Library page. Discovery only -- no sync, no correctness check." />
-        </label>
-      </div>
-      {data.poll_library_enabled && (
-        <Field label="Check every (hours)" tip="How often to re-walk the media folders for new/removed files. Stored as minutes under the hood -- fractional hours (e.g. 0.5) are fine.">
-          <input
-            type="number"
-            min="0.1"
-            step="0.5"
-            value={data.poll_library_interval_minutes / 60}
-            onChange={(e) => setData({ ...data, poll_library_interval_minutes: Math.round(Number(e.target.value) * 60) })}
-          />
-        </Field>
-      )}
-      <SaveBar busy={busy} saved={saved} error={error} />
-    </form>
+        {data.poll_library_enabled && (
+          <Field label="Check every (hours)" tip="How often to re-walk the media folders for new/removed files. Stored as minutes under the hood -- fractional hours (e.g. 0.5) are fine.">
+            <input
+              type="number"
+              min={0.1}
+              step={0.5}
+              value={data.poll_library_interval_minutes / 60}
+              onChange={(e) => setData({ ...data, poll_library_interval_minutes: Math.round(Number(e.target.value) * 60) })}
+              style={{ maxWidth: 120 }}
+            />
+          </Field>
+        )}
+      </section>
+    </>
   )
 }
 
@@ -1431,12 +1563,44 @@ const LOG_POLL_MS = 3000
 const LOG_MAX_LINES = 2000
 
 function LogTab() {
-  const { data, setData, error: loadError } = useGroup<LogSettings>('log')
-  const { busy, saved, error, save } = useSave('log')
+  const { data, setData, error: loadError, reload } = useGroup<LogSettings>('log')
+  const [snapshot, setSnapshot] = useState<string | null>(null)
+  const [saving, setSaving] = useState(false)
+  const [savedAt, setSavedAt] = useState<number | null>(null)
+  const [error, setError] = useState<string | null>(null)
   const [lines, setLines] = useState<AppLogLine[]>([])
   const [viewerError, setViewerError] = useState<string | null>(null)
   const { ref: logBoxRef, onScroll: onLogScroll } = useAutoScrollLog(lines)
   const lastIdRef = useRef(0)
+
+  useEffect(() => {
+    if (data && snapshot === null) setSnapshot(JSON.stringify(data))
+  }, [data, snapshot])
+  const dirty = data !== null && snapshot !== null && JSON.stringify(data) !== snapshot
+
+  async function save() {
+    if (!data) return
+    setSaving(true)
+    setError(null)
+    try {
+      const r = await api.put<LogSettings>('/settings/log', { values: { ...data } })
+      setData(r)
+      setSnapshot(JSON.stringify(r))
+      setSavedAt(Date.now())
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : String(err))
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  function discard() {
+    setSnapshot(null)
+    setError(null)
+    reload()
+  }
+
+  useToolbarApi(dirty, error ?? loadError, savedAt, false, saving, save, discard)
 
   useEffect(() => {
     let cancelled = false
@@ -1459,87 +1623,91 @@ function LogTab() {
     }
   }, [])
 
+  if (!data) return <span className="spinner" />
+
   return (
     <>
-      {!data ? (
-        <span className="spinner" />
-      ) : (
-        <form
-          className={`card ${styles.formCard}`}
-          onSubmit={(e) => {
-            e.preventDefault()
-            save(data as unknown as Record<string, unknown>)
-          }}
+      <section className="card" aria-labelledby="sc-log0">
+        <h2 id="sc-log0" style={{ margin: '0 0 14px', fontSize: 15 }}>Detail</h2>
+        <Field
+          label="Log level"
+          tip="How much detail gets logged. DEBUG is noisy -- only useful when chasing a specific problem."
         >
-          {loadError && <div className="error-banner">{loadError}</div>}
-          <Field
-            label="Log level"
-            tip="How much detail gets logged. DEBUG is noisy -- only useful when chasing a specific problem."
-          >
-            <select value={data.level} onChange={(e) => setData({ ...data, level: e.target.value })}>
-              <option value="DEBUG">DEBUG</option>
-              <option value="INFO">INFO</option>
-              <option value="WARNING">WARNING</option>
-              <option value="ERROR">ERROR</option>
-            </select>
-          </Field>
-          <SaveBar busy={busy} saved={saved} error={error} />
-        </form>
-      )}
+          <select value={data.level} onChange={(e) => setData({ ...data, level: e.target.value })}>
+            <option value="DEBUG">DEBUG</option>
+            <option value="INFO">INFO</option>
+            <option value="WARNING">WARNING</option>
+            <option value="ERROR">ERROR</option>
+          </select>
+        </Field>
+      </section>
 
-      <div className={`card ${styles.formCard}`}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-          <div>
-            <h3 style={{ marginTop: 0, marginBottom: 4 }}>Recent log</h3>
-            <p className="text-dim" style={{ fontSize: 12.5, marginTop: 0, marginBottom: 12 }}>
-              Updates on its own every few seconds. This is the whole app's log, not just one run —
-              check here if something looks off and Activity doesn't explain why.
-            </p>
+      <section className="card" aria-labelledby="sc-log1" style={{ padding: 0, overflow: 'hidden' }}>
+        <div style={{ padding: '12px 16px 10px', borderBottom: '1px solid var(--border)' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 10 }}>
+            <h2 id="sc-log1" style={{ margin: 0, fontSize: 15 }}>Recent log</h2>
+            <CopyLogButton lines={lines} />
           </div>
-          <CopyLogButton lines={lines} />
+          <p className="text-dim" style={{ fontSize: 12.5, margin: '4px 0 0', lineHeight: 1.5 }}>
+            Updates on its own every few seconds. This is the whole app&apos;s log, not just one run —
+            check here if something looks off and Activity doesn&apos;t explain why.
+          </p>
         </div>
-        {viewerError && <div className="error-banner">{viewerError}</div>}
-        <div className={styles.logBox} ref={logBoxRef} onScroll={onLogScroll}>
-          {lines.length === 0 && <div className="text-faint">No log lines yet.</div>}
+        {viewerError && <div className="error-banner" style={{ margin: '12px 16px 0' }}>{viewerError}</div>}
+        <div ref={logBoxRef} onScroll={onLogScroll} tabIndex={0} aria-label="Application log" role="log" style={{ height: 420, overflow: 'auto', background: 'var(--bg)', padding: '8px 0', fontFamily: 'var(--mono)', fontSize: 12.5, lineHeight: 1.6 }}>
+          {lines.length === 0 && <div className="text-faint" style={{ padding: '0 14px' }}>No log lines yet.</div>}
           {lines.map((l) => (
-            <div key={l.id} className={`${styles.logLine} ${styles[`level${l.level}`] ?? ''}`}>
-              <span className={styles.ts}>{new Date(l.ts).toLocaleTimeString('en-US')}</span>
-              {l.message}
+            <div key={l.id} style={{ display: 'grid', gridTemplateColumns: '70px 52px minmax(0,1fr)', gap: 10, padding: '0 14px' }}>
+              <span className="text-dim">{new Date(l.ts).toLocaleTimeString('en-US')}</span>
+              {l.level === 'WARN' ? (
+                <span style={{ color: 'var(--yellow)', fontWeight: 600 }}>{l.level}</span>
+              ) : l.level === 'ERROR' ? (
+                <span style={{ color: 'var(--red)', fontWeight: 600 }}>{l.level}</span>
+              ) : (
+                <span className="text-dim" style={{ fontWeight: 600 }}>{l.level}</span>
+              )}
+              <span className={l.level === 'DEBUG' ? 'text-dim' : ''} style={{ wordBreak: 'break-word' }}>{l.message}</span>
             </div>
           ))}
         </div>
-      </div>
+      </section>
     </>
   )
 }
 
+// Must match verifyarr.auth.MIN_PASSWORD_LENGTH (the server enforces it too).
+const MIN_PASSWORD_LENGTH = 5
+
 function AccountTab() {
+  const { status } = useAuth()
   const [current, setCurrent] = useState('')
   const [next, setNext] = useState('')
-  const [confirm, setConfirm] = useState('')
+  const [repeat, setRepeat] = useState('')
   const [busy, setBusy] = useState(false)
   const [saved, setSaved] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
+  useToolbarApi(false, null, null, false, false, () => {}, () => {})
+
   async function onSubmit(e: FormEvent) {
     e.preventDefault()
     setError(null)
-    if (next.length < 5) {
-      setError('New password must be at least 5 characters')
+    setSaved(false)
+    if (next.length < MIN_PASSWORD_LENGTH) {
+      setError(`New password must be at least ${MIN_PASSWORD_LENGTH} characters`)
       return
     }
-    if (next !== confirm) {
+    if (next !== repeat) {
       setError('Passwords do not match')
       return
     }
     setBusy(true)
     try {
       await api.post('/auth/change-password', { current_password: current, new_password: next })
-      setSaved(true)
       setCurrent('')
       setNext('')
-      setConfirm('')
-      setTimeout(() => setSaved(false), 2500)
+      setRepeat('')
+      setSaved(true)
     } catch (err) {
       setError(err instanceof ApiError ? err.message : String(err))
     } finally {
@@ -1548,52 +1716,109 @@ function AccountTab() {
   }
 
   return (
-    <form className={`card ${styles.formCard}`} onSubmit={onSubmit}>
+    <form className="card" onSubmit={onSubmit} aria-labelledby="sc-acc0">
+      <h2 id="sc-acc0" style={{ margin: '0 0 14px', fontSize: 15 }}>Account</h2>
+      <div className="field" style={{ maxWidth: 540 }}>
+        <span style={{ display: 'block', fontSize: 12.5, color: 'var(--text-dim)', fontWeight: 500, marginBottom: 5 }}>Username</span>
+        <div style={{ color: 'var(--text-dim)' }}>{status?.username ?? '—'}</div>
+      </div>
       <Field label="Current password">
-        <input type="password" value={current} onChange={(e) => setCurrent(e.target.value)} />
+        <input type="password" autoComplete="current-password" value={current} onChange={(e) => setCurrent(e.target.value)} />
       </Field>
       <Field label="New password">
-        <input type="password" value={next} onChange={(e) => setNext(e.target.value)} />
+        <input type="password" autoComplete="new-password" value={next} onChange={(e) => setNext(e.target.value)} />
+        <div className="field-hint" style={{ color: 'var(--text-dim)' }}>At least {MIN_PASSWORD_LENGTH} characters.</div>
       </Field>
       <Field label="Repeat new password">
-        <input type="password" value={confirm} onChange={(e) => setConfirm(e.target.value)} />
+        <input type="password" autoComplete="new-password" value={repeat} onChange={(e) => setRepeat(e.target.value)} />
       </Field>
-      <SaveBar busy={busy} saved={saved} error={error} />
+      {error && <div className="error-banner" role="alert" style={{ maxWidth: 540 }}>{error}</div>}
+      {saved && <div style={{ fontSize: 13, color: 'var(--green)', marginBottom: 14 }}>✓ Password changed.</div>}
+      <button className="btn btn-primary" type="submit" disabled={busy} style={{ marginTop: 4 }}>
+        {busy ? <span className="spinner" /> : 'Change password'}
+      </button>
     </form>
   )
 }
+
+const TAB_KEYS = SETTINGS_TABS.map((t) => t.key)
 
 export default function Settings() {
   const { tab } = useParams()
   const active = tab ?? 'general'
   const [mode, setMode] = useState<SettingsMode>(readMode)
+  const [tool, setTool] = useState<ToolState>({ dirty: false, error: null, savedAt: null, hasAdvanced: false, saving: false })
+  const actions = useRef<ToolActions>({ save: () => {}, discard: () => {} })
 
-  function changeMode(m: SettingsMode) {
-    setMode(m)
+  useEffect(() => {
     try {
-      localStorage.setItem(MODE_KEY, m)
+      localStorage.setItem(MODE_KEY, mode)
     } catch {
-      // private window etc.: the choice just isn't remembered
+      // private mode etc. -- the toggle still works for this session
     }
-  }
+  }, [mode])
+
+  // A tab switch must not inherit the previous tab's dirty/saved state.
+  useEffect(() => {
+    setTool({ dirty: false, error: null, savedAt: null, hasAdvanced: false, saving: false })
+  }, [active])
+
+  if (!TAB_KEYS.includes(active)) return <Navigate to="/settings/general" replace />
+  const label = SETTINGS_TABS.find((t) => t.key === active)?.label ?? 'General'
 
   return (
-    <ModeContext.Provider value={mode}>
-    <div>
-      <div className={styles.header}>
-        <h1>Settings</h1>
-        <ModeToggle mode={mode} onChange={changeMode} />
-      </div>
-      {active === 'general' && <GeneralTab />}
-      {active === 'sync' && <SyncTab />}
-      {active === 'correctness' && <CorrectnessTab />}
-      {active === 'generate' && <GenerateTab />}
-      {active === 'automation' && <AutomationTab />}
-      {active === 'bazarr' && <BazarrTab />}
-      {active === 'scheduling' && <SchedulingTab />}
-      {active === 'log' && <LogTab />}
-      {active === 'account' && <AccountTab />}
-    </div>
-    </ModeContext.Provider>
+    <ToolbarCtx.Provider value={{ setTool, actions }}>
+      <ModeContext.Provider value={mode}>
+        <div data-toolbar style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '10px 20px', minHeight: 53, boxSizing: 'border-box', borderBottom: '1px solid var(--border)', background: 'var(--bg-elevated)' }}>
+          <h1 style={{ margin: 0, fontSize: 17, flex: 1 }}>Settings · {label}</h1>
+          <div role="group" aria-label="Simple or advanced settings" style={{ display: 'flex', border: '1px solid var(--border)', borderRadius: 6, overflow: 'hidden' }}>
+            {(['simple', 'advanced'] as const).map((m) => (
+              <button
+                key={m}
+                onClick={() => setMode(m)}
+                aria-pressed={mode === m}
+                style={{
+                  border: 0, padding: '5px 12px', fontSize: 12.5, fontWeight: 600, cursor: 'pointer',
+                  background: mode === m ? 'var(--accent)' : 'transparent',
+                  color: mode === m ? '#082e28' : 'var(--text-dim)',
+                  textTransform: 'capitalize',
+                }}
+              >
+                {m}
+              </button>
+            ))}
+          </div>
+          <span role="status" style={{ fontSize: 13, minWidth: 130, textAlign: 'right' }}>
+            {tool.dirty
+              ? <span style={{ color: 'var(--yellow)' }}><span aria-hidden="true">! </span>Unsaved changes</span>
+              : tool.savedAt !== null
+                ? <span style={{ color: 'var(--green)' }}><span aria-hidden="true">✓ </span>Saved {formatRelative(new Date(tool.savedAt).toISOString())}</span>
+                : null}
+          </span>
+          {tool.dirty && (
+            <button className="btn" onClick={() => actions.current.discard()}>Discard</button>
+          )}
+          <button className="btn btn-primary" onClick={() => actions.current.save()} disabled={!tool.dirty || tool.saving}>
+            {tool.saving ? <span className="spinner" /> : 'Save changes'}
+          </button>
+        </div>
+
+        <div data-content style={{ padding: 20, maxWidth: 900, display: 'flex', flexDirection: 'column', gap: 16 }}>
+          {tool.error && <div className="error-banner" role="alert">{tool.error}</div>}
+          {active === 'general' && <GeneralTab />}
+          {active === 'sync' && <SyncTab />}
+          {active === 'correctness' && <CorrectnessTab />}
+          {active === 'generate' && <GenerateTab />}
+          {active === 'automation' && <AutomationTab />}
+          {active === 'bazarr' && <BazarrTab />}
+          {active === 'scheduling' && <SchedulingTab />}
+          {active === 'log' && <LogTab />}
+          {active === 'account' && <AccountTab />}
+          {mode === 'advanced' && !tool.hasAdvanced && (
+            <div className="text-dim" style={{ fontSize: 13 }}>This tab has no advanced settings.</div>
+          )}
+        </div>
+      </ModeContext.Provider>
+    </ToolbarCtx.Provider>
   )
 }

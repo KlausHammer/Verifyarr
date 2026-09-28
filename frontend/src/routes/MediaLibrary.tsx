@@ -1,10 +1,13 @@
 import { useEffect, useState } from 'react'
-import { Link, useNavigate } from 'react-router-dom'
+import { useNavigate } from 'react-router-dom'
 import { api, ApiError } from '../api/client'
-import type { LibraryEntry, LibraryResponse, SeasonEntry } from '../api/types'
-import { formatRelative } from '../lib/format'
-import { useRunningJob } from '../hooks/useRunningJob'
+import type { GeneralSettings, LibraryEntry, LibraryResponse } from '../api/types'
 import ConfirmDialog from '../components/ConfirmDialog'
+import { ErrorState, LoadingState } from '../components/PageState'
+import { useRunningJob } from '../hooks/useRunningJob'
+import { useToasts } from '../hooks/useToasts'
+import { formatExact, formatRelative } from '../lib/format'
+import { runTypeLabel } from '../lib/runLabels'
 
 interface PendingConfirm {
   title: string
@@ -14,153 +17,115 @@ interface PendingConfirm {
   onConfirm: () => void
 }
 
-const CELL = { padding: '9px 12px' }
+const HEADS = [
+  { key: 'title', label: 'Title', align: 'left' },
+  { key: 'video_count', label: 'Videos', align: 'right' },
+  { key: 'subtitle_detected_count', label: 'Subtitles', align: 'right' },
+  { key: 'ok_count', label: 'Ok', align: 'right' },
+  { key: 'suspect_count', label: 'Suspect', align: 'right' },
+  { key: 'missing_count', label: 'Missing', align: 'right' },
+  { key: 'last_processed', label: 'Last processed', align: 'left' },
+] as const
+
+type SortKey = (typeof HEADS)[number]['key']
 
 export default function MediaLibrary({ kind, title, folderHint }: { kind: 'movie' | 'series'; title: string; folderHint: string }) {
   const [items, setItems] = useState<LibraryEntry[] | null>(null)
-  const [lastScannedAt, setLastScannedAt] = useState<string | null>(null)
-  const [error, setError] = useState<string | null>(null)
+  const [failed, setFailed] = useState(false)
+  const [folder, setFolder] = useState('')
   const [q, setQ] = useState('')
-  // 'library' = the whole-page Scan/Rescan button, a title for a per-show Scan, or
-  // "<title>::<season>" for a per-season Scan.
+  const [sort, setSort] = useState<SortKey>('title')
+  const [dir, setDir] = useState<1 | -1>(1)
   const [busyKey, setBusyKey] = useState<string | null>(null)
   const [confirm, setConfirm] = useState<PendingConfirm | null>(null)
-  const [expanded, setExpanded] = useState<Set<string>>(new Set())
-  const { isRunning, refresh: refreshRunning } = useRunningJob()
+  const { run: runningRun, isRunning, refresh: refreshRunning } = useRunningJob()
+  const { toast } = useToasts()
   const navigate = useNavigate()
+  const noun = kind === 'movie' ? 'movies' : 'series'
 
   function load() {
-    setItems(null)
+    setFailed(false)
     api
       .get<LibraryResponse>(`/library?kind=${kind}`)
-      .then((r) => {
-        setItems(r.items)
-        setLastScannedAt(r.last_scanned_at)
+      .then((r) => setItems(r.items))
+      .catch(() => {
+        setItems(null)
+        setFailed(true)
       })
-      .catch((err) => setError(err instanceof ApiError ? err.message : String(err)))
   }
 
   useEffect(load, [kind])
+  useEffect(() => {
+    setQ('')
+    setSort('title')
+    setDir(1)
+  }, [kind])
 
-  function toggleExpanded(t: string) {
-    setExpanded((prev) => {
-      const next = new Set(prev)
-      if (next.has(t)) next.delete(t)
-      else next.add(t)
-      return next
-    })
-  }
+  useEffect(() => {
+    api.get<GeneralSettings>('/settings/general').then(
+      (g) => setFolder(kind === 'movie' ? g.movies_folder : g.series_folder),
+      () => setFolder(''),
+    )
+  }, [kind])
 
-  async function startSweep(force: boolean, itemTitle: string | undefined, season: string | undefined, busyKeyValue: string) {
+  async function startSweep(force: boolean, itemTitle: string | undefined, busyKeyValue: string) {
     setBusyKey(busyKeyValue)
-    setError(null)
     try {
-      const r = await api.post<{ run_id: number }>('/runs', {
-        mode: 'sweep',
-        force,
-        kind,
-        title: itemTitle,
-        season,
-      })
+      const r = await api.post<{ run_id: number }>('/runs', { mode: 'sweep', force, kind, title: itemTitle })
       refreshRunning()
-      navigate(`/activity/${r.run_id}`)
-    } catch (err) {
-      setError(err instanceof ApiError ? err.message : String(err))
       setBusyKey(null)
-    }
-  }
-
-  function scanLibrary() {
-    const alreadyScanned = items?.some((it) => it.processed_count > 0) ?? false
-    if (alreadyScanned) {
-      setConfirm({
-        title: 'Already scanned',
-        message: `${title} has already been scanned before. Scanning again will only process files that are new or have changed since — already-processed files are left alone unless something about them changed.`,
-        confirmLabel: 'Scan again',
-        onConfirm: () => {
-          setConfirm(null)
-          startSweep(false, undefined, undefined, 'library')
-        },
+      load()
+      toast(itemTitle ? `Scan started for ${itemTitle}.` : force ? 'Rescan started.' : `Scan started for all ${noun}. Only new and changed files are checked.`, {
+        kind: 'info',
+        action: () => navigate(`/activity/${r.run_id}`),
+        actionLabel: 'View job',
       })
-      return
+    } catch (err) {
+      setBusyKey(null)
+      toast(err instanceof ApiError ? err.message : String(err), { kind: 'bad' })
     }
-    startSweep(false, undefined, undefined, 'library')
   }
 
   function rescanLibrary() {
     setConfirm({
-      title: 'Rescan everything?',
-      message: `This forces every ${kind} file through again, including ones already scanned — not just new or changed ones — using whatever's turned on under Settings → Automation → What runs. Can take a while depending on how much you have, and (if correctness or line-order checking is on) use an API call per file.`,
-      confirmLabel: 'Rescan all',
-      danger: true,
-      onConfirm: () => {
-        setConfirm(null)
-        startSweep(true, undefined, undefined, 'library')
-      },
+      title: `Rescan all ${noun}?`,
+      message: `This listens to every ${kind === 'movie' ? 'movie' : 'episode'} again and re-checks every subtitle, including those already in sync. On a small server it can take several hours. Verifyarr stays usable while it runs, and you can cancel it.`,
+      confirmLabel: 'Rescan everything',
+      onConfirm: () => startSweep(true, undefined, 'library'),
     })
   }
 
-  function scanOne(it: LibraryEntry) {
-    if (it.processed_count > 0) {
-      setConfirm({
-        title: 'Already scanned',
-        message: `"${it.title}" has already been scanned before. Scanning again will only process files that are new or have changed since.`,
-        confirmLabel: 'Scan again',
-        onConfirm: () => {
-          setConfirm(null)
-          startSweep(false, it.title, undefined, it.title)
-        },
-      })
-      return
-    }
-    startSweep(false, it.title, undefined, it.title)
-  }
+  if (failed) return <ErrorState title={title} noun={noun} onRetry={load} />
+  if (!items) return <LoadingState title={title} noun={noun} />
 
-  function scanSeason(it: LibraryEntry, s: SeasonEntry) {
-    const key = `${it.title}::${s.season}`
-    if (s.processed_count > 0) {
-      setConfirm({
-        title: 'Already scanned',
-        message: `"${it.title}" ${s.season} has already been scanned before. Scanning again will only process files that are new or have changed since.`,
-        confirmLabel: 'Scan again',
-        onConfirm: () => {
-          setConfirm(null)
-          startSweep(false, it.title, s.season, key)
-        },
-      })
-      return
-    }
-    startSweep(false, it.title, s.season, key)
-  }
-
-  function rescanOne(it: LibraryEntry) {
-    setConfirm({
-      title: 'Rescan this show?',
-      message: `This forces every file in "${it.title}" through again, including ones already scanned — not just new or changed ones — using whatever's turned on under Settings → Automation → What runs.`,
-      confirmLabel: 'Rescan show',
-      danger: true,
-      onConfirm: () => {
-        setConfirm(null)
-        startSweep(true, it.title, undefined, `${it.title}::rescan`)
-      },
+  const query = q.trim().toLowerCase()
+  const list = items
+    .filter((t) => !query || t.title.toLowerCase().includes(query))
+    .sort((a, b) => {
+      const av = a[sort] ?? ''
+      const bv = b[sort] ?? ''
+      const cmp = typeof av === 'string' ? av.localeCompare(bv as string) : (av as number) - (bv as number)
+      return cmp * dir
     })
-  }
+  const videos = items.reduce((s, t) => s + t.video_count, 0)
 
-  function rescanSeason(it: LibraryEntry, s: SeasonEntry) {
-    setConfirm({
-      title: 'Rescan this season?',
-      message: `This forces every file in "${it.title}" ${s.season} through again, including ones already scanned — not just new or changed ones — using whatever's turned on under Settings → Automation → What runs.`,
-      confirmLabel: 'Rescan season',
-      danger: true,
-      onConfirm: () => {
-        setConfirm(null)
-        startSweep(true, it.title, s.season, `${it.title}::${s.season}::rescan`)
-      },
-    })
-  }
-
-  const filtered = items?.filter((it) => it.title.toLowerCase().includes(q.toLowerCase()))
+  // A sweep with no per-title target touches this whole page; a per-title sweep shows on its row.
+  const runAll = isRunning && runningRun?.mode === 'sweep' && !runningRun.target_title
+    && (!runningRun.target_kind || runningRun.target_kind === kind)
+    ? runningRun : null
+  const rowBusy = (t: LibraryEntry) =>
+    isRunning && runningRun?.mode === 'sweep'
+    && (!runningRun.target_title || runningRun.target_title === t.title || runningRun.target_title.startsWith(`${t.title} `))
+    && (!runningRun.target_kind || runningRun.target_kind === kind)
   const busy = busyKey !== null || isRunning
+
+  function toggleSort(key: SortKey) {
+    if (sort === key) setDir((d) => (d === 1 ? -1 : 1))
+    else {
+      setSort(key)
+      setDir(key === 'title' ? 1 : -1)
+    }
+  }
 
   return (
     <div>
@@ -170,217 +135,113 @@ export default function MediaLibrary({ kind, title, folderHint }: { kind: 'movie
           message={confirm.message}
           confirmLabel={confirm.confirmLabel}
           danger={confirm.danger}
-          onConfirm={confirm.onConfirm}
+          onConfirm={() => { setConfirm(null); confirm.onConfirm() }}
           onCancel={() => setConfirm(null)}
         />
       )}
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-        <div>
-          <h1 style={{ marginBottom: 4 }}>{title}</h1>
-          <p className="text-dim" style={{ maxWidth: 640, marginBottom: 16 }}>
-            Everything found under your {folderHint} folder, processed or not. Scan checks files
-            that are new or changed, using whatever's turned on under Settings → Automation →
-            What runs. Rescan forces every file through again, even ones already done.
-            {kind === 'series' && ' Expand a show to scan a single season.'}
-          </p>
-        </div>
-        <div style={{ display: 'flex', gap: 8 }}>
-          <button className="btn" disabled={busy} onClick={scanLibrary}>
-            {busyKey === 'library' ? <span className="spinner" /> : '▶ Scan'}
-          </button>
-          <button className="btn" disabled={busy} onClick={rescanLibrary}>
-            ⟳ Rescan
-          </button>
-        </div>
-      </div>
-      {error && <div className="error-banner">{error}</div>}
-      {isRunning && busyKey === null && (
-        <div className="card" style={{ marginBottom: 14, fontSize: 13, padding: '10px 14px' }}>
-          A job is already running — wait for it to finish before starting a scan.
-        </div>
-      )}
-
-      <div style={{ marginBottom: 16, display: 'flex', gap: 16, alignItems: 'center' }}>
-        <input
-          type="text"
-          placeholder="Search title…"
-          value={q}
-          onChange={(e) => setQ(e.target.value)}
-          style={{ maxWidth: 280 }}
-        />
-        <span className="text-faint" style={{ fontSize: 12 }}>
-          {lastScannedAt ? `Last scanned ${formatRelative(lastScannedAt)}` : 'Never scanned yet'}
+      <div data-toolbar style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '10px 20px', minHeight: 53, boxSizing: 'border-box', borderBottom: '1px solid var(--border)', background: 'var(--bg-elevated)' }}>
+        <h1 style={{ margin: 0, fontSize: 17 }}>{title}</h1>
+        <span className="text-dim" style={{ fontSize: 13, flex: 1 }}>
+          {items.length} {kind === 'movie' ? 'movies' : 'series'} · {videos} videos
         </span>
+        <input type="text" aria-label={`Search ${noun}`} placeholder="Search" value={q} onChange={(e) => setQ(e.target.value)} style={{ width: 200 }} />
+        <button className="btn" onClick={() => startSweep(false, undefined, 'library')} disabled={busy}>
+          {busyKey === 'library' ? <span className="spinner" /> : 'Scan all'}
+        </button>
+        <button className="btn" onClick={() => rescanLibrary()} disabled={busy}>Rescan everything</button>
       </div>
 
-      <div className="card" style={{ padding: 0, overflowX: 'auto' }}>
-        <table>
-          <thead>
-            <tr>
-              <th style={{ textAlign: 'left', ...CELL }}>Title</th>
-              <th style={{ textAlign: 'left', ...CELL }}>Videos</th>
-              <th style={{ textAlign: 'left', ...CELL }}>Subtitles detected</th>
-              <th style={{ textAlign: 'left', ...CELL }}>Processed</th>
-              <th style={{ textAlign: 'left', ...CELL }}>Ok / Suspect / Missing</th>
-              <th style={{ textAlign: 'left', ...CELL }}>Last processed</th>
-              <th style={{ textAlign: 'left', ...CELL }}></th>
-            </tr>
-          </thead>
-          <tbody>
-            {!items && (
-              <tr>
-                <td colSpan={7} style={CELL} className="text-dim">
-                  <span className="spinner" /> Loading…
-                </td>
-              </tr>
-            )}
-            {items && items.length === 0 && (
-              <tr>
-                <td colSpan={7} style={CELL} className="text-dim">
-                  Nothing found yet — check the {folderHint} folder under Settings → General, then
-                  click Scan.
-                </td>
-              </tr>
-            )}
-            {items && items.length > 0 && filtered?.length === 0 && (
-              <tr>
-                <td colSpan={7} style={CELL} className="text-dim">
-                  No titles match "{q}".
-                </td>
-              </tr>
-            )}
-            {filtered?.map((it) => {
-              const hasSeasons = kind === 'series' && !!it.seasons && it.seasons.length > 0
-              const isOpen = expanded.has(it.title)
+      <div data-content style={{ padding: 20 }}>
+        {runAll && (
+          <div role="status" style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 12px', border: '1px solid #2f4a70', background: 'rgba(110,168,254,.08)', borderRadius: 'var(--radius)', marginBottom: 12, fontSize: 13 }}>
+            <span className="spinner" style={{ width: 12, height: 12 }} />
+            <span style={{ flex: 1 }}>
+              {runTypeLabel(runAll)} is running
+              {runAll.files_total ? ` (${Math.round((runAll.files_processed / runAll.files_total) * 100)}%)` : ''}.
+              Counts update when files finish.
+            </span>
+            <button className="btn btn-sm" onClick={() => navigate(`/activity/${runAll.id}`)}>View job</button>
+          </div>
+        )}
+
+        {list.length === 0 && (
+          <div className="card" style={{ maxWidth: 620 }}>
+            <h2 style={{ fontSize: 16, margin: '0 0 6px' }}>
+              {query ? `No ${noun} match “${q}”` : `No ${noun} checked yet`}
+            </h2>
+            <p className="text-dim" style={{ margin: '0 0 14px', lineHeight: 1.5 }}>
+              {query
+                ? 'Check the spelling, or clear the search to see everything.'
+                : folder
+                  ? `Verifyarr finds your ${noun} in ${folder}. They appear here once the first scan has checked them.`
+                  : `Set the ${folderHint} folder in Settings, then scan. They appear here once the first scan has checked them.`}
+            </p>
+            {query
+              ? <button className="btn" onClick={() => setQ('')}>Clear search</button>
+              : <button className="btn btn-primary" onClick={() => startSweep(false, undefined, 'library')} disabled={busy}>Scan library</button>}
+          </div>
+        )}
+
+        {list.length > 0 && (
+          <div role="table" aria-label={title} className="card" style={{ padding: 0, overflowX: 'auto' }}>
+            <div role="row" data-head style={{ display: 'grid', gridTemplateColumns: 'minmax(0,2.6fr) 70px 86px 70px 80px 80px 130px 96px', minWidth: 780, gap: 12, padding: '8px 14px', borderBottom: '1px solid var(--border)', fontSize: 12.5, color: 'var(--text-dim)', fontWeight: 600 }}>
+              {HEADS.map((hd) => (
+                <div key={hd.key} role="columnheader" aria-sort={sort === hd.key ? (dir > 0 ? 'ascending' : 'descending') : 'none'} style={hd.align === 'right' ? { textAlign: 'right' } : undefined}>
+                  <button onClick={() => toggleSort(hd.key)} data-hover style={{ background: 'none', border: 0, padding: 0, fontWeight: 600, fontSize: 12.5, color: sort === hd.key ? 'var(--text)' : 'inherit', cursor: 'pointer' }}>
+                    {hd.label}<span aria-hidden="true">{sort === hd.key ? (dir > 0 ? ' ▲' : ' ▼') : ''}</span>
+                  </button>
+                </div>
+              ))}
+              <div role="columnheader"><span style={{ position: 'absolute', left: -9999 }}>Actions</span></div>
+            </div>
+            {list.map((t) => {
+              const busyRow = rowBusy(t)
               return (
-                <>
-                  <tr key={it.title} style={{ borderTop: '1px solid var(--border)' }}>
-                    <td style={CELL}>
-                      {hasSeasons && (
-                        <button
-                          onClick={() => toggleExpanded(it.title)}
-                          aria-label={isOpen ? 'Collapse' : 'Expand'}
-                          style={{
-                            background: 'none', border: 'none', color: 'var(--text-dim)', cursor: 'pointer',
-                            marginRight: 6, padding: 0, fontSize: 11, width: 14, display: 'inline-block',
-                          }}
-                        >
-                          {isOpen ? '▾' : '▸'}
-                        </button>
-                      )}
-                      <Link to={`/files?q=${encodeURIComponent(it.title)}`}>{it.title}</Link>
-                      {!it.bazarr_matched && (
-                        <span
-                          className="pill pill-muted"
-                          style={{ marginLeft: 6 }}
-                          title="Bazarr doesn't have a match for this title -- the name shown is a best-effort guess from the folder/file name, not confirmed by Bazarr."
-                        >
-                          not in Bazarr
-                        </span>
-                      )}
-                    </td>
-                    <td style={CELL}>{it.video_count}</td>
-                    <td style={CELL}>
-                      {it.subtitle_detected_count} / {it.video_count}
-                      {it.subtitle_detected_count < it.video_count && (
-                        <span className="pill pill-warn" style={{ marginLeft: 6 }}>
-                          missing
-                        </span>
-                      )}
-                    </td>
-                    <td style={CELL}>
-                      {it.processed_count} / {it.video_count}
-                      {it.processed_count === 0 && (
-                        <span className="pill pill-muted" style={{ marginLeft: 6 }}>
-                          never run
-                        </span>
-                      )}
-                    </td>
-                    <td style={CELL}>
-                      <span style={{ color: 'var(--green)' }}>{it.ok_count}</span>
-                      {' / '}
-                      <span style={{ color: 'var(--red)' }}>{it.suspect_count}</span>
-                      {' / '}
-                      <span style={{ color: 'var(--yellow)' }}>{it.missing_count}</span>
-                    </td>
-                    <td style={CELL} className="text-dim">
-                      {formatRelative(it.last_processed)}
-                    </td>
-                    <td style={CELL}>
-                      <div style={{ display: 'flex', gap: 6 }}>
-                        <button className="btn btn-sm" disabled={busy} onClick={() => scanOne(it)}>
-                          {busyKey === it.title ? <span className="spinner" /> : 'Scan'}
-                        </button>
-                        <button
-                          className="btn btn-sm"
-                          disabled={busy}
-                          title="Rescan — reprocess every file in this show, not just new/changed ones"
-                          onClick={() => rescanOne(it)}
-                        >
-                          {busyKey === `${it.title}::rescan` ? <span className="spinner" /> : '⟳'}
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
-                  {hasSeasons &&
-                    isOpen &&
-                    it.seasons!.map((s) => {
-                      const key = `${it.title}::${s.season}`
-                      return (
-                        <tr key={key} style={{ borderTop: '1px solid var(--border)', background: 'var(--bg)' }}>
-                          <td style={{ ...CELL, paddingLeft: 34 }} className="text-dim">
-                            {s.season}
-                          </td>
-                          <td style={CELL}>{s.video_count}</td>
-                          <td style={CELL}>
-                            {s.subtitle_detected_count} / {s.video_count}
-                            {s.subtitle_detected_count < s.video_count && (
-                              <span className="pill pill-warn" style={{ marginLeft: 6 }}>
-                                missing
-                              </span>
-                            )}
-                          </td>
-                          <td style={CELL}>
-                            {s.processed_count} / {s.video_count}
-                            {s.processed_count === 0 && (
-                              <span className="pill pill-muted" style={{ marginLeft: 6 }}>
-                                never run
-                              </span>
-                            )}
-                          </td>
-                          <td style={CELL}>
-                            <span style={{ color: 'var(--green)' }}>{s.ok_count}</span>
-                            {' / '}
-                            <span style={{ color: 'var(--red)' }}>{s.suspect_count}</span>
-                            {' / '}
-                            <span style={{ color: 'var(--yellow)' }}>{s.missing_count}</span>
-                          </td>
-                          <td style={CELL} className="text-dim">
-                            {formatRelative(s.last_processed)}
-                          </td>
-                          <td style={CELL}>
-                            <div style={{ display: 'flex', gap: 6 }}>
-                              <button className="btn btn-sm" disabled={busy} onClick={() => scanSeason(it, s)}>
-                                {busyKey === key ? <span className="spinner" /> : 'Scan'}
-                              </button>
-                              <button
-                                className="btn btn-sm"
-                                disabled={busy}
-                                title="Rescan — reprocess every file in this season, not just new/changed ones"
-                                onClick={() => rescanSeason(it, s)}
-                              >
-                                {busyKey === `${key}::rescan` ? <span className="spinner" /> : '⟳'}
-                              </button>
-                            </div>
-                          </td>
-                        </tr>
-                      )
-                    })}
-                </>
+                <div key={t.title} role="row" data-row data-hover style={{ display: 'grid', gridTemplateColumns: 'minmax(0,2.6fr) 70px 86px 70px 80px 80px 130px 96px', minWidth: 780, gap: 12, alignItems: 'center', padding: '7px 14px', borderBottom: '1px solid var(--border)' }}>
+                  <div role="cell" data-cell="main" style={{ minWidth: 0 }}>
+                    <button
+                      onClick={() => navigate(`/files?title=${encodeURIComponent(t.title)}`)}
+                      style={{ background: 'none', border: 0, padding: 0, color: 'var(--text)', fontWeight: 500, fontSize: 14, textAlign: 'left', maxWidth: '100%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', cursor: 'pointer' }}
+                    >
+                      {t.title}
+                    </button>
+                  </div>
+                  <div role="cell" data-cell data-label="Videos" style={{ textAlign: 'right' }}>{t.video_count}</div>
+                  <div role="cell" data-cell data-label="Subtitles" style={{ textAlign: 'right' }}>{t.subtitle_detected_count}</div>
+                  <div role="cell" data-cell data-label="Ok" className={t.ok_count ? '' : 'text-dim'} style={{ textAlign: 'right' }}>{t.ok_count}</div>
+                  <div role="cell" data-cell data-label="Suspect" style={{ textAlign: 'right' }}>
+                    {t.suspect_count > 0 ? (
+                      <button
+                        onClick={() => navigate(`/files?title=${encodeURIComponent(t.title)}&flag=attention`)}
+                        title="Show suspect files"
+                        style={{ background: 'none', border: 0, padding: 0, color: 'var(--red)', fontWeight: 600, fontSize: 14, cursor: 'pointer' }}
+                      >
+                        {t.suspect_count}
+                      </button>
+                    ) : (
+                      <span className="text-dim">0</span>
+                    )}
+                  </div>
+                  <div role="cell" data-cell data-label="Missing" className={t.missing_count ? '' : 'text-dim'} style={{ textAlign: 'right' }}>{t.missing_count}</div>
+                  <div role="cell" data-cell data-label="Last processed" style={{ fontSize: 13, color: 'var(--text-dim)' }} title={formatExact(t.last_processed)}>
+                    {formatRelative(t.last_processed)}
+                  </div>
+                  <div role="cell" data-cell style={{ textAlign: 'right' }}>
+                    {busyRow ? (
+                      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 12.5, color: 'var(--blue)' }}>
+                        <span className="spinner" style={{ width: 11, height: 11 }} />Scanning
+                      </span>
+                    ) : (
+                      <button className="btn btn-sm" disabled={busy} onClick={() => startSweep(false, t.title, t.title)} aria-label={`Scan ${t.title}`}>
+                        {busyKey === t.title ? <span className="spinner" /> : 'Scan'}
+                      </button>
+                    )}
+                  </div>
+                </div>
               )
             })}
-          </tbody>
-        </table>
+          </div>
+        )}
       </div>
     </div>
   )

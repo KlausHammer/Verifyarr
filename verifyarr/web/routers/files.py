@@ -21,12 +21,18 @@ router = APIRouter(prefix="/api/files", tags=["files"])
 def list_files(q: Optional[str] = None, flag: Optional[str] = None, status: Optional[str] = None,
                lang: Optional[str] = None, sort: str = "-last_processed",
                page: int = Query(1, ge=1), page_size: int = Query(50, ge=1, le=5000),
-               reason: Optional[str] = None,
+               reason: Optional[str] = None, run_id: Optional[int] = None,
+               sync_kind: Optional[str] = None, title: Optional[str] = None,
                user=Depends(require_auth), conn=Depends(get_conn)):
     if reason and reason != "other" and reason not in REASONS:
         raise HTTPException(status_code=422, detail=f"unknown reason: {reason}")
+    if sync_kind and sync_kind not in db.SYNC_KINDS:
+        raise HTTPException(status_code=422, detail=f"unknown sync_kind: {sync_kind}")
+    if run_id is not None and run_id < 1:
+        raise HTTPException(status_code=422, detail=f"invalid run_id: {run_id}")
     rows, total = db.list_files(conn, q=q, flag=flag, status=status, lang=lang, sort=sort,
-                                 page=page, page_size=page_size, reason=reason)
+                                 page=page, page_size=page_size, reason=reason,
+                                 run_id=run_id, sync_kind=sync_kind, title=title)
     return {"items": [serialize_row(r) for r in rows], "total": total, "page": page, "page_size": page_size}
 
 

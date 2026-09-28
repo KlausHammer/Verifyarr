@@ -1,8 +1,11 @@
 import { Navigate, Route, Routes } from 'react-router-dom'
 import Layout from './components/Layout'
 import { useAuth } from './hooks/useAuth'
+import { ToastProvider } from './hooks/useToasts'
+import Dashboard from './routes/Dashboard'
 import Login from './routes/Login'
 import Setup from './routes/Setup'
+import Wizard from './routes/Wizard'
 import MediaLibrary from './routes/MediaLibrary'
 import Files from './routes/Files'
 import FileDetail from './routes/FileDetail'
@@ -41,21 +44,24 @@ export default function App() {
   }
 
   return (
-    <Routes>
-      <Route element={<Layout />}>
-        <Route index element={<Navigate to="/stats" replace />} />
-        <Route path="movies" element={<MediaLibrary kind="movie" title="Movies" folderHint="Movies" />} />
-        <Route path="series" element={<MediaLibrary kind="series" title="Series" folderHint="Series" />} />
-        <Route path="files" element={<Files />} />
-        <Route path="files/:id" element={<FileDetail />} />
-        <Route path="activity" element={<Activity />} />
-        <Route path="activity/:runId" element={<ActivityDetail />} />
-        <Route path="stats" element={<Stats />} />
-        <Route path="quarantine" element={<Quarantine />} />
-        <Route path="bazarr-blacklist" element={<BazarrBlacklist />} />
-        <Route path="settings/:tab" element={<Settings />} />
-        <Route path="*" element={<Navigate to="/" replace />} />
-      </Route>
-    </Routes>
+    <ToastProvider>
+      <Routes>
+        <Route path="wizard" element={<Wizard />} />
+        <Route element={<Layout />}>
+          <Route index element={<Dashboard />} />
+          <Route path="movies" element={<MediaLibrary kind="movie" title="Movies" folderHint="Movies" />} />
+          <Route path="series" element={<MediaLibrary kind="series" title="Series" folderHint="Series" />} />
+          <Route path="files" element={<Files />} />
+          <Route path="files/:id" element={<FileDetail />} />
+          <Route path="activity" element={<Activity />} />
+          <Route path="activity/:runId" element={<ActivityDetail />} />
+          <Route path="stats" element={<Stats />} />
+          <Route path="quarantine" element={<Quarantine />} />
+          <Route path="bazarr-blacklist" element={<BazarrBlacklist />} />
+          <Route path="settings/:tab" element={<Settings />} />
+          <Route path="*" element={<Navigate to="/" replace />} />
+        </Route>
+      </Routes>
+    </ToastProvider>
   )
 }

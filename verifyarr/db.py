@@ -619,15 +619,52 @@ def get_line_order_cache(conn: sqlite3.Connection, subtitle_path: Path) -> Optio
     return {"key": row["line_order_cache_key"], "json": row["line_order_cache_json"]}
 
 
+# Marker appended to files.auto_action when a remediation found no passing replacement
+# and the original was put back, still flagged (see pipeline._keep_original_unless_remediated
+# — the string lives there; this is only the filter's copy of it).
+REMEDIATION_FAILED_MARKER = "original kept, marked wrong"
+
+# sync_status/auto_action shapes behind each ?sync_kind= value (see files.router — the same
+# shapes the frontend's verdict.ts parses per row, so the two can never disagree about what
+# "moved" means). Kept as SQL fragments, not Python row tests, so the filter runs in the DB.
+SYNC_KINDS = {
+    # A plain timing move ("fixed (Δ…)", incl. multi-block/presync variants and dry-run's
+    # "would fix (Δ…)", which concluded the same fix without writing it).
+    "moved": ("(sync_status LIKE 'fixed (Δ%' OR sync_status LIKE 'would fix (Δ%'"
+              " OR sync_status = 'fixed')"),
+    # A framerate/speed rescale ("fixed (framerate …)" / "fixed (rate …)").
+    "rescaled": "(sync_status LIKE 'fixed (framerate%' OR sync_status LIKE 'fixed (rate%')",
+    # Either of the above — the dashboard's "Recently fixed" and "All fixed".
+    "fixed": "(sync_status LIKE 'fixed%' OR sync_status LIKE 'would fix%')",
+    # Replaced with a Bazarr candidate that passed (see bazarr.REMEDIATED_PREFIX).
+    "replaced": "(auto_action LIKE 'remediated: %' OR auto_action LIKE '%; remediated: %')",
+    "nochange": "(sync_status = 'already in sync')",
+    "unchanged": "(sync_status LIKE 'left unchanged%')",
+}
+
+
 def list_files(conn: sqlite3.Connection, q: Optional[str] = None, flag: Optional[str] = None,
                status: Optional[str] = None, lang: Optional[str] = None,
                sort: str = "-last_processed", page: int = 1, page_size: int = 50,
-               reason: Optional[str] = None):
+               reason: Optional[str] = None, run_id: Optional[int] = None,
+               sync_kind: Optional[str] = None, title: Optional[str] = None):
     where, params = [], []
     if q:
         where.append("(video_path LIKE ? OR subtitle_path LIKE ? OR series_or_movie_title LIKE ?)")
         params += [f"%{q}%", f"%{q}%", f"%{q}%"]
-    if flag:
+    if title:
+        # Exact title (the Library page's per-title link) — unlike ?q=, "It" doesn't match all.
+        where.append("series_or_movie_title = ?")
+        params.append(title)
+    if flag == "attention":
+        # Everything needing attention: flagged files (same population as attention_counts,
+        # old rows included) plus videos with no subtitle at all.
+        where.append(f"(correctness_flag IN {_ATTENTION_SQL} OR sync_status = 'missing')")
+    elif flag == "replacement_failed":
+        # A replacement was tried and none passed, so the original was kept, still flagged.
+        where.append("correctness_flag = 'SUSPECT' AND auto_action LIKE '%' || ? || '%'")
+        params.append(REMEDIATION_FAILED_MARKER)
+    elif flag:
         where.append("correctness_flag = ?")
         params.append(flag)
     if status:
@@ -643,11 +680,18 @@ def list_files(conn: sqlite3.Connection, q: Optional[str] = None, flag: Optional
         # Same population as attention_counts (and ix_files_flag narrows the scan).
         where.append(f"correctness_flag IN {_ATTENTION_SQL} AND reason = ?")
         params.append(reason)
+    if run_id is not None:
+        # Files a job touched last (see update_state's last_run_id) — a job page's
+        # "Files it changed/flagged" links combine this with ?sync_kind=fixed / ?flag=attention.
+        where.append("last_run_id = ?")
+        params.append(run_id)
+    if sync_kind:
+        where.append(SYNC_KINDS[sync_kind])
     where_sql = f"WHERE {' AND '.join(where)}" if where else ""
 
     sort_col = sort.lstrip("-")
     allowed_sort = {"last_processed", "video_path", "correctness_avg_score", "sync_status",
-                     "correctness_flag", "season_episode"}
+                     "correctness_flag", "season_episode", "lang"}
     if sort_col not in allowed_sort:
         sort_col = "last_processed"
     direction = "DESC" if sort.startswith("-") else "ASC"
@@ -752,11 +796,18 @@ def reconcile_orphaned_run(conn: sqlite3.Connection) -> Optional[int]:
     return row["id"]
 
 
-def list_runs(conn: sqlite3.Connection, page: int = 1, page_size: int = 30):
-    total = conn.execute("SELECT COUNT(*) FROM runs").fetchone()[0]
+RUN_STATUSES = ("running", "completed", "cancelled", "failed")
+
+
+def list_runs(conn: sqlite3.Connection, page: int = 1, page_size: int = 30,
+              status: Optional[str] = None):
+    where, params = "", []
+    if status:
+        where, params = "WHERE status = ?", [status]
+    total = conn.execute(f"SELECT COUNT(*) FROM runs {where}", params).fetchone()[0]
     offset = max(0, (page - 1) * page_size)
     rows = conn.execute(
-        "SELECT * FROM runs ORDER BY id DESC LIMIT ? OFFSET ?", (page_size, offset)
+        f"SELECT * FROM runs {where} ORDER BY id DESC LIMIT ? OFFSET ?", params + [page_size, offset]
     ).fetchall()
     return rows, total
 
@@ -847,7 +898,12 @@ def summary_stats(conn: sqlite3.Connection):
     kind_rows = conn.execute("""
         SELECT COALESCE(lv.kind, 'unknown') AS kind, COUNT(*) AS n,
                SUM(CASE WHEN f.correctness_flag = 'SUSPECT' THEN 1 ELSE 0 END) AS suspect,
-               SUM(CASE WHEN f.sync_status = 'missing' THEN 1 ELSE 0 END) AS missing
+               SUM(CASE WHEN f.sync_status = 'missing' THEN 1 ELSE 0 END) AS missing,
+               SUM(CASE WHEN f.correctness_flag = 'ok'
+                        AND f.sync_status = 'already in sync' THEN 1 ELSE 0 END) AS ok,
+               SUM(CASE WHEN f.correctness_flag = 'ok'
+                        AND (f.sync_status LIKE 'fixed%' OR f.sync_status LIKE 'would fix%')
+                        THEN 1 ELSE 0 END) AS fixed
         FROM files f LEFT JOIN library_videos lv ON lv.video_path = f.video_path
         GROUP BY kind ORDER BY kind
     """).fetchall()
@@ -864,8 +920,37 @@ def summary_stats(conn: sqlite3.Connection):
         GROUP BY bucket
     """).fetchall()
     last_run = conn.execute("SELECT * FROM runs ORDER BY id DESC LIMIT 1").fetchone()
+    # Dashboard's library-health bar — one bucket per row, in the same precedence the
+    # frontend's verdict.ts classifies single rows (missing first, then flag, then sync
+    # shape), so the counts always agree with the pills. "other" is whatever is left
+    # (sync errors, correctness disabled, no API key, never checked).
+    health_row = conn.execute("""
+        SELECT COUNT(DISTINCT video_path) AS videos,
+               SUM(CASE WHEN sync_status = 'missing' THEN 1 ELSE 0 END) AS missing,
+               SUM(CASE WHEN sync_status IS NOT 'missing' AND correctness_flag = 'generated'
+                        THEN 1 ELSE 0 END) AS generated,
+               SUM(CASE WHEN sync_status IS NOT 'missing' AND correctness_flag = 'skipped'
+                        THEN 1 ELSE 0 END) AS skipped,
+               SUM(CASE WHEN sync_status IS NOT 'missing' AND correctness_flag = 'unknown'
+                        THEN 1 ELSE 0 END) AS unknown,
+               SUM(CASE WHEN sync_status IS NOT 'missing' AND correctness_flag = 'SUSPECT'
+                        THEN 1 ELSE 0 END) AS suspect,
+               SUM(CASE WHEN sync_status IS NOT 'missing' AND correctness_flag = 'ok'
+                        AND (sync_status LIKE 'fixed%' OR sync_status LIKE 'would fix%')
+                        THEN 1 ELSE 0 END) AS fixed,
+               SUM(CASE WHEN sync_status IS NOT 'missing' AND correctness_flag = 'ok'
+                        AND sync_status = 'already in sync' THEN 1 ELSE 0 END) AS insync,
+               SUM(CASE WHEN sync_status = 'missing'
+                        OR correctness_flag IN ('generated', 'skipped', 'unknown', 'SUSPECT')
+                        OR (correctness_flag = 'ok'
+                            AND (sync_status = 'already in sync' OR sync_status LIKE 'fixed%'
+                                 OR sync_status LIKE 'would fix%'))
+                        THEN 0 ELSE 1 END) AS other
+        FROM files
+    """).fetchone()
     return {"files": dict(files_row), "by_lang": [dict(r) for r in lang_rows],
             "by_kind": [dict(r) for r in kind_rows], "score_distribution": [dict(r) for r in score_dist_rows],
+            "health": dict(health_row),
             "last_run": dict(last_run) if last_run else None}
 
 

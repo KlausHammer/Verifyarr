@@ -88,6 +88,18 @@ export interface AppLogLine {
   message: string
 }
 
+export interface HealthCounts {
+  videos: number
+  missing: number | null
+  generated: number | null
+  skipped: number | null
+  unknown: number | null
+  suspect: number | null
+  fixed: number | null
+  insync: number | null
+  other: number | null
+}
+
 export interface StatsSummary {
   files: {
     total: number
@@ -100,9 +112,14 @@ export interface StatsSummary {
     line_order_flagged_total: number
   }
   by_lang: { lang: string; avg_score: number | null; n: number }[]
-  by_kind: { kind: string; n: number; suspect: number; missing: number }[]
+  by_kind: { kind: string; n: number; suspect: number; missing: number; ok: number; fixed: number }[]
   score_distribution: { bucket: string; n: number }[]
+  health: HealthCounts
   last_run: RunRow | null
+}
+
+export interface NextRunResponse {
+  next_run_at: string | null
 }
 
 export interface MatchRatePoint {

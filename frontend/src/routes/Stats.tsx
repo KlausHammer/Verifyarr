@@ -1,289 +1,297 @@
-import { useEffect, useState } from 'react'
-import { Link, useNavigate } from 'react-router-dom'
+import { useCallback, useEffect, useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { api, ApiError } from '../api/client'
 import type { MatchRatePoint, Paginated, RunRow, StatsSummary } from '../api/types'
-import { languageName } from '../lib/languages'
-import { formatRelative } from '../lib/format'
-import { useRunningJob } from '../hooks/useRunningJob'
+import { ErrorState, LoadingState } from '../components/PageState'
 import StatusPill from '../components/StatusPill'
+import { useRunningJob } from '../hooks/useRunningJob'
+import { useToasts } from '../hooks/useToasts'
+import { languageName } from '../lib/languages'
+import { formatExact, formatRelative } from '../lib/format'
+import { runTargetLabel, runTypeLabel } from '../lib/runLabels'
+
+const SCORE_BUCKETS = [
+  { bucket: '0-20%', color: 'var(--red)' },
+  { bucket: '20-40%', color: 'var(--red)' },
+  { bucket: '40-60%', color: 'var(--yellow)' },
+  { bucket: '60-80%', color: 'var(--yellow)' },
+  { bucket: '80-100%', color: 'var(--green)' },
+]
 
 function MatchRateChart({ points }: { points: MatchRatePoint[] }) {
-  if (points.length === 0) return <div className="text-dim">No correctness checks yet.</div>
+  if (points.length === 0) return <div className="text-dim">No checks in the last 30 days.</div>
 
-  const width = Math.max(600, points.length * 34)
-  const height = 220
-  const padBottom = 30
-  const chartH = height - padBottom
+  const rated = points.map((p) => ({ ...p, rate: p.total > 0 ? (p.ok_count / p.total) * 100 : 0 }))
+  const first = new Date(`${rated[0].period}T00:00:00`).getTime()
+  const span = Math.max(1, new Date(`${rated[rated.length - 1].period}T00:00:00`).getTime() - first)
+  const x = (period: string) => 44 + ((new Date(`${period}T00:00:00`).getTime() - first) / span) * 366
+  // Axis floor follows the data: a fixed 75% floor drew a 30% library at 75%.
+  const lo = Math.min(75, Math.floor(Math.min(...rated.map((p) => p.rate)) / 5) * 5)
+  const y = (r: number) => 10 + ((100 - Math.max(lo, Math.min(100, r))) / (100 - lo)) * 170
+  const pts = rated.map((p) => `${x(p.period).toFixed(1)},${y(p.rate).toFixed(1)}`).join(' ')
+  const fmt = (period: string) => new Date(`${period}T00:00:00`).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+  const last = rated[rated.length - 1]
+  const lastIsToday = new Date().toISOString().slice(0, 10) === last.period
+  const mid = rated[Math.floor(rated.length / 2)]
 
   return (
-    <div style={{ overflowX: 'auto' }}>
-      <svg width={width} height={height}>
-        {[0, 0.25, 0.5, 0.75, 1].map((frac) => (
-          <line
-            key={frac}
-            x1={0}
-            x2={width}
-            y1={chartH - frac * chartH}
-            y2={chartH - frac * chartH}
-            stroke="var(--border)"
-            strokeWidth={1}
-          />
+    <svg viewBox="0 0 420 214" role="img" aria-label={`Match rate ${rated.length > 1 ? `went from ${rated[0].rate.toFixed(1)}% to ${last.rate.toFixed(1)}%` : `is ${last.rate.toFixed(1)}%`} over the last 30 days`} style={{ width: '100%', height: 'auto', display: 'block', fontFamily: 'var(--font)' }}>
+      <g stroke="#2a2f3d" strokeWidth="1">
+        {[10, 44, 78, 112, 146, 180].map((yy) => (
+          <line key={yy} x1="44" y1={yy} x2="410" y2={yy} />
         ))}
-        {points.map((p, i) => {
-          const rate = p.total > 0 ? p.ok_count / p.total : 0
-          const barW = 20
-          const x = i * (width / points.length) + (width / points.length - barW) / 2
-          const barH = rate * chartH
-          const color = rate >= 0.8 ? 'var(--green)' : rate >= 0.5 ? 'var(--yellow)' : 'var(--red)'
-          return (
-            <g key={p.period}>
-              <rect x={x} y={chartH - barH} width={barW} height={barH} fill={color} rx={2}>
-                <title>
-                  {p.period}: {p.ok_count}/{p.total} ok ({Math.round(rate * 100)}%)
-                </title>
-              </rect>
-              <text
-                x={x + barW / 2}
-                y={height - 10}
-                textAnchor="middle"
-                fontSize={10}
-                fill="var(--text-faint)"
-              >
-                {p.period.slice(5)}
-              </text>
-            </g>
-          )
-        })}
-      </svg>
-    </div>
+      </g>
+      <g fill="#8b90a3" fontSize="12" textAnchor="end">
+        {[0, 1, 2, 3, 4, 5].map((i) => (
+          <text key={i} x="32" y={14 + i * 34}>{Math.round(100 - (i * (100 - lo)) / 5)}%</text>
+        ))}
+      </g>
+      {rated.length > 1 && <path d={`M44,180 L${pts.split(' ').join(' L')} L410,180 Z`} fill="rgba(94,234,212,.10)" />}
+      {rated.length > 1 && <polyline points={pts} fill="none" stroke="#5eead4" strokeWidth="2" strokeLinejoin="round" />}
+      <circle cx={x(last.period)} cy={y(last.rate)} r="4" fill="#5eead4" />
+      <g fill="#8b90a3" fontSize="12">
+        <text x="44" y="204">{fmt(rated[0].period)}</text>
+        {rated.length > 2 && <text x="227" y="204" textAnchor="middle">{fmt(mid.period)}</text>}
+        <text x="410" y="204" textAnchor="end">{lastIsToday ? 'Today' : fmt(last.period)} · {last.rate.toFixed(1)}%</text>
+      </g>
+    </svg>
   )
 }
-
-// Reusable horizontal-bar row, used for both score distribution and by-language breakdowns.
-function BarRow({ label, value, max, display, color }: { label: string; value: number; max: number; display: string; color?: string }) {
-  const pct = max > 0 ? Math.max(2, (value / max) * 100) : 0
-  return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8 }}>
-      <div style={{ width: 90, fontSize: 12.5 }} className="text-dim">
-        {label}
-      </div>
-      <div style={{ flex: 1, background: 'var(--bg)', borderRadius: 4, height: 16, overflow: 'hidden' }}>
-        <div style={{ width: `${pct}%`, height: '100%', background: color ?? 'var(--accent)', borderRadius: 4 }} />
-      </div>
-      <div style={{ width: 70, fontSize: 12.5, textAlign: 'right' }} className="mono">
-        {display}
-      </div>
-    </div>
-  )
-}
-
-function StatCard({ value, label, color }: { value: string | number; label: string; color?: string }) {
-  return (
-    <div className="card">
-      <div style={{ fontSize: 24, fontWeight: 700, color: color ?? 'var(--text)' }}>{value}</div>
-      <div className="text-dim" style={{ fontSize: 12.5 }}>
-        {label}
-      </div>
-    </div>
-  )
-}
-
-const SCORE_BUCKET_ORDER = ['0-20%', '20-40%', '40-60%', '60-80%', '80-100%']
 
 export default function Stats() {
   const [summary, setSummary] = useState<StatsSummary | null>(null)
   const [points, setPoints] = useState<MatchRatePoint[]>([])
-  const [groupBy, setGroupBy] = useState<'day' | 'week'>('day')
   const [runs, setRuns] = useState<RunRow[]>([])
-  const [error, setError] = useState<string | null>(null)
+  const [failed, setFailed] = useState(false)
   const [starting, setStarting] = useState(false)
   const { isRunning, refresh: refreshRunning } = useRunningJob()
+  const { toast } = useToasts()
   const navigate = useNavigate()
 
-  function loadSummary() {
-    api
-      .get<StatsSummary>('/stats/summary')
-      .then(setSummary)
-      .catch((err) => setError(err instanceof ApiError ? err.message : String(err)))
-  }
-
-  function loadRuns() {
-    api
-      .get<Paginated<RunRow>>('/runs?page_size=6')
-      .then((r) => setRuns(r.items))
-      .catch(() => {})
-  }
-
-  useEffect(() => {
-    loadSummary()
-    loadRuns()
+  const load = useCallback(async () => {
+    setFailed(false)
+    try {
+      const [s, mr, r] = await Promise.all([
+        api.get<StatsSummary>('/stats/summary'),
+        api.get<{ items: MatchRatePoint[] }>('/stats/match-rate?group_by=day&days=30'),
+        api.get<Paginated<RunRow>>('/runs?page_size=5'),
+      ])
+      setSummary(s)
+      setPoints(mr.items)
+      setRuns(r.items)
+    } catch {
+      setSummary(null)
+      setFailed(true)
+    }
   }, [])
 
   useEffect(() => {
-    api
-      .get<{ items: MatchRatePoint[] }>(`/stats/match-rate?group_by=${groupBy}&days=90`)
-      .then((r) => setPoints(r.items))
-      .catch((err) => setError(err instanceof ApiError ? err.message : String(err)))
-  }, [groupBy])
+    load()
+  }, [load])
 
-  async function runSweepNow() {
+  async function scan() {
     setStarting(true)
-    setError(null)
     try {
       const r = await api.post<{ run_id: number }>('/runs', { mode: 'sweep' })
       refreshRunning()
       navigate(`/activity/${r.run_id}`)
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : String(err))
+      toast(err instanceof ApiError ? err.message : String(err), { kind: 'bad' })
     } finally {
       setStarting(false)
     }
   }
 
-  const f = summary?.files
-  const movieRow = summary?.by_kind.find((k) => k.kind === 'movie')
-  const seriesRow = summary?.by_kind.find((k) => k.kind === 'series')
-  const scoreDist = summary?.score_distribution ?? []
-  const scoreMax = Math.max(1, ...scoreDist.map((b) => b.n))
-  const langMax = Math.max(1, ...(summary?.by_lang.map((l) => l.n) ?? []))
-  const lineOrderChecked = (f?.line_order_fixed_total ?? 0) + (f?.line_order_flagged_total ?? 0) > 0
+  if (failed) return <ErrorState title="Stats" noun="stats" onRetry={load} />
+  if (!summary) return <LoadingState title="Stats" noun="stats" />
+
+  const h = summary.health
+  const n = (v: number | null) => v ?? 0
+  const checked = summary.files.total - n(h.missing) - n(h.skipped)
+  const good = n(h.insync) + n(h.fixed) + n(h.generated)
+  const pct = checked ? Math.round((good / checked) * 1000) / 10 : 0
+
+  const distMax = Math.max(1, ...SCORE_BUCKETS.map((b) => summary.score_distribution.find((d) => d.bucket === b.bucket)?.n ?? 0))
+  const byKind = (kind: string) => summary.by_kind.find((k) => k.kind === kind)
+  const kindCard = (kind: string, label: string) => {
+    const row = byKind(kind)
+    if (!row) return null
+    const t = row.ok + row.fixed + row.suspect || 1
+    return {
+      label,
+      pct: row.n ? Math.round(((row.ok + row.fixed) / row.n) * 1000) / 10 : 0,
+      a: row.ok, b: row.fixed, c: row.suspect, missing: row.missing,
+      w1: (row.ok / t) * 100, w2: (row.fixed / t) * 100, w3: (row.suspect / t) * 100,
+    }
+  }
+  const mvs = [kindCard('movie', 'Movies'), kindCard('series', 'Series')].filter((m) => m !== null)
 
   return (
     <div>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
-        <h1 style={{ marginBottom: 0 }}>Stats</h1>
-        <button className="btn btn-primary" onClick={runSweepNow} disabled={starting || isRunning}>
-          {isRunning ? 'Job running…' : starting ? <span className="spinner" /> : 'Run sweep now'}
-        </button>
+      <div data-toolbar style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '10px 20px', minHeight: 53, boxSizing: 'border-box', borderBottom: '1px solid var(--border)', background: 'var(--bg-elevated)' }}>
+        <h1 style={{ margin: 0, fontSize: 17, flex: 1 }}>Stats</h1>
+        <span className="text-dim" style={{ fontSize: 13 }}>Last 30 days</span>
       </div>
-      {error && <div className="error-banner">{error}</div>}
 
-      {summary && (
-        <div
-          style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 14, margin: '18px 0 24px' }}
-        >
-          <StatCard value={f!.total} label="Total files" />
-          <StatCard
-            value={f!.total > 0 ? `${Math.round((f!.ok / f!.total) * 100)}%` : '0%'}
-            label="Match rate (all files)"
-            color="var(--green)"
-          />
-          <StatCard value={f!.out_of_sync} label="Out of sync (fixed)" color="var(--yellow)" />
-          <StatCard value={f!.suspect} label="Wrong subtitle detected" color="var(--red)" />
-          <StatCard value={f!.missing} label="Missing subtitle" color="var(--yellow)" />
-          <StatCard value={f!.errors} label="Errors" color="var(--red)" />
-        </div>
-      )}
-
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: 16, marginBottom: 24 }}>
-        {summary && (movieRow || seriesRow) && (
-          <div className="card">
-            <h3 style={{ marginTop: 0 }}>Movies vs. Series</h3>
-            {[
-              { label: 'Movies', row: movieRow },
-              { label: 'Series', row: seriesRow },
-            ].map(({ label, row }) => (
-              <div key={label} style={{ display: 'flex', justifyContent: 'space-between', padding: '8px 0', borderTop: '1px solid var(--border)' }}>
-                <span>{label}</span>
-                <span className="text-dim">
-                  {row?.n ?? 0} files
-                  {row && row.suspect > 0 && <span style={{ color: 'var(--red)' }}> · {row.suspect} suspect</span>}
-                  {row && row.missing > 0 && <span style={{ color: 'var(--yellow)' }}> · {row.missing} missing</span>}
-                </span>
-              </div>
-            ))}
+      <div data-content style={{ padding: 20, display: 'flex', flexDirection: 'column', gap: 16 }}>
+        {summary.files.total === 0 && (
+          <div className="card" style={{ maxWidth: 600 }}>
+            <h2 style={{ fontSize: 16, margin: '0 0 6px' }}>No stats yet</h2>
+            <p className="text-dim" style={{ margin: '0 0 14px', lineHeight: 1.5 }}>Stats appear after the first scan has checked your library.</p>
+            <button className="btn btn-primary" onClick={scan} disabled={isRunning || starting}>
+              {isRunning ? 'Scan running…' : starting ? <span className="spinner" /> : 'Scan library'}
+            </button>
           </div>
         )}
 
-        {summary && scoreDist.length > 0 && (
-          <div className="card">
-            <h3 style={{ marginTop: 0 }}>Correctness score distribution</h3>
-            {SCORE_BUCKET_ORDER.map((bucket) => {
-              const n = scoreDist.find((b) => b.bucket === bucket)?.n ?? 0
-              const color = bucket === '80-100%' ? 'var(--green)' : bucket === '60-80%' ? 'var(--yellow)' : 'var(--red)'
-              return <BarRow key={bucket} label={bucket} value={n} max={scoreMax} display={`${n} file${n === 1 ? '' : 's'}`} color={color} />
-            })}
-          </div>
-        )}
-
-        {summary && summary.by_lang.length > 0 && (
-          <div className="card">
-            <h3 style={{ marginTop: 0 }}>Average score by language</h3>
-            {summary.by_lang.map((l) => (
-              <BarRow
-                key={l.lang}
-                label={languageName(l.lang)}
-                value={l.n}
-                max={langMax}
-                display={l.avg_score !== null ? l.avg_score.toFixed(2) : '—'}
-              />
-            ))}
-          </div>
-        )}
-
-        {summary && (
-          <div className="card">
-            <h3 style={{ marginTop: 0 }}>Line-order check</h3>
-            {lineOrderChecked ? (
-              <div style={{ display: 'flex', gap: 24 }}>
-                <div>
-                  <div style={{ fontSize: 22, fontWeight: 700, color: 'var(--green)' }}>{f!.line_order_fixed_total}</div>
-                  <div className="text-dim" style={{ fontSize: 12.5 }}>
-                    Auto-fixed
-                  </div>
+        {summary.files.total > 0 && (
+          <>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(min(100%,200px),1fr))', gap: 16 }}>
+              {[
+                { label: 'Subtitles checked', value: String(checked), sub: `${n(h.videos)} videos` },
+                { label: 'In sync now', value: `${pct}%`, sub: `${good} subtitles` },
+                { label: 'Fixed by Verifyarr', value: String(n(h.fixed)), sub: 'moved or rescaled' },
+                { label: 'Flagged', value: String(n(h.suspect)), sub: 'could not be fixed safely' },
+              ].map((t) => (
+                <div key={t.label} className="card">
+                  <div className="text-dim" style={{ fontSize: 12.5 }}>{t.label}</div>
+                  <div style={{ fontSize: 26, fontWeight: 700, marginTop: 4, fontVariantNumeric: 'tabular-nums' }}>{t.value}</div>
+                  <div className="text-dim" style={{ fontSize: 12, marginTop: 2 }}>{t.sub}</div>
                 </div>
-                <div>
-                  <div style={{ fontSize: 22, fontWeight: 700, color: 'var(--yellow)' }}>{f!.line_order_flagged_total}</div>
-                  <div className="text-dim" style={{ fontSize: 12.5 }}>
-                    Flagged for review
-                  </div>
+              ))}
+            </div>
+
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(min(100%,340px),1fr))', gap: 16 }}>
+              <section className="card" aria-labelledby="h-mr">
+                <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, marginBottom: 8 }}>
+                  <h2 id="h-mr" style={{ margin: 0, fontSize: 15, flex: 1 }}>Match rate over time</h2>
+                  <span className="text-dim" style={{ fontSize: 12.5 }}>share of checked subtitles in sync</span>
                 </div>
-              </div>
-            ) : (
-              <div className="text-dim" style={{ fontSize: 13 }}>
-                Off, or no files checked yet — see Settings → Automation → What runs.
-              </div>
-            )}
-          </div>
-        )}
-      </div>
+                <MatchRateChart points={points} />
+              </section>
 
-      <div className="card" style={{ marginBottom: 24 }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
-          <h3 style={{ margin: 0 }}>Match rate over time</h3>
-          <select value={groupBy} onChange={(e) => setGroupBy(e.target.value as 'day' | 'week')} style={{ width: 140 }}>
-            <option value="day">Per day</option>
-            <option value="week">Per week</option>
-          </select>
-        </div>
-        <MatchRateChart points={points} />
-      </div>
+              <section className="card" aria-labelledby="h-sd">
+                <h2 id="h-sd" style={{ margin: '0 0 4px', fontSize: 15 }}>Score distribution</h2>
+                <p className="text-dim" style={{ margin: '0 0 12px', fontSize: 12.5 }}>How closely each subtitle&apos;s text matches the speech (0 = nothing, 1 = everything).</p>
+                <div role="list" style={{ display: 'flex', alignItems: 'flex-end', gap: 4, height: 150, borderBottom: '1px solid var(--border)' }}>
+                  {SCORE_BUCKETS.map((b) => {
+                    const c = summary.score_distribution.find((d) => d.bucket === b.bucket)?.n ?? 0
+                    const frac = c / distMax
+                    return (
+                      <div key={b.bucket} role="listitem" aria-label={`Score ${b.bucket.replace('-', ' to ')}%: ${c} subtitles`} style={{ flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'flex-end', alignItems: 'center', height: '100%', gap: 3 }}>
+                        <span style={{ fontSize: 11, color: 'var(--text-dim)' }}>{c}</span>
+                        <svg aria-hidden="true" viewBox="0 0 10 100" preserveAspectRatio="none" width="100%" style={{ flex: 1, display: 'block' }}>
+                          <rect x="0" y={100 - frac * 88} width="10" height={frac * 88} style={{ fill: b.color }} />
+                        </svg>
+                      </div>
+                    )
+                  })}
+                </div>
+                <div aria-hidden="true" style={{ display: 'flex', gap: 4, marginTop: 4 }}>
+                  {SCORE_BUCKETS.map((b) => (
+                    <span key={b.bucket} style={{ flex: 1, textAlign: 'center', fontSize: 10.5, color: 'var(--text-dim)' }}>{b.bucket}</span>
+                  ))}
+                </div>
+              </section>
+            </div>
 
-      <div className="card">
-        <h3 style={{ marginTop: 0 }}>Recent runs</h3>
-        {runs.length === 0 && <div className="text-dim">No runs yet.</div>}
-        {runs.map((r) => (
-          <div
-            key={r.id}
-            style={{
-              display: 'flex', justifyContent: 'space-between', alignItems: 'center',
-              padding: '9px 0', borderTop: '1px solid var(--border)', fontSize: 13,
-            }}
-          >
-            <div>
-              <Link to={`/activity/${r.id}`}>#{r.id}</Link>
-              <span className="text-dim"> · {formatRelative(r.started_at)}</span>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(min(100%,280px),1fr))', gap: 16 }}>
+              {summary.by_lang.length > 0 && (
+                <section className="card" aria-labelledby="h-bl">
+                  <h2 id="h-bl" style={{ margin: '0 0 12px', fontSize: 15 }}>Average score by language</h2>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                    {summary.by_lang.map((l) => (
+                      <div key={l.lang}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, marginBottom: 3 }}>
+                          <span>{languageName(l.lang)} <span className="text-dim">· {l.n} subtitles</span></span>
+                          <span style={{ fontWeight: 600, fontVariantNumeric: 'tabular-nums' }}>
+                            {l.avg_score !== null ? l.avg_score.toFixed(2) : '—'}
+                          </span>
+                        </div>
+                        <div aria-hidden="true" style={{ height: 6, background: 'var(--border)', borderRadius: 3, overflow: 'hidden' }}>
+                          <svg aria-hidden="true" width="100%" height="6" style={{ display: 'block' }}>
+                            <rect x="0" y="0" width={`${(l.avg_score ?? 0) * 100}%`} height="6" style={{ fill: 'var(--blue)' }} />
+                          </svg>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </section>
+              )}
+
+              {mvs.length > 0 && (
+                <section className="card" aria-labelledby="h-mv">
+                  <h2 id="h-mv" style={{ margin: '0 0 12px', fontSize: 15 }}>Movies vs series</h2>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+                    {mvs.map((m) => m && (
+                      <div key={m.label}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, marginBottom: 4 }}>
+                          <span style={{ fontWeight: 600 }}>{m.label}</span>
+                          <span className="text-dim">{m.pct}% in sync</span>
+                        </div>
+                        <div aria-hidden="true" style={{ display: 'flex', height: 10, borderRadius: 3, overflow: 'hidden', gap: 2, background: 'var(--border)' }}>
+                          <svg width="100%" height="10" style={{ display: 'block', flex: 1 }}>
+                            <rect x="0" y="0" width={`${m.w1}%`} height="10" style={{ fill: 'var(--green)' }} />
+                            <rect x={`${m.w1}%`} y="0" width={`${m.w2}%`} height="10" style={{ fill: 'var(--accent-dim)' }} />
+                            <rect x={`${m.w1 + m.w2}%`} y="0" width={`${m.w3}%`} height="10" style={{ fill: 'var(--red)' }} />
+                          </svg>
+                        </div>
+                        <div className="text-dim" style={{ fontSize: 12.5, marginTop: 4 }}>
+                          {m.a} in sync · {m.b} fixed · {m.c} flagged{m.missing > 0 ? ` · ${m.missing} missing` : ''}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </section>
+              )}
+
+              <section className="card" aria-labelledby="h-sw">
+                <h2 id="h-sw" style={{ margin: '0 0 12px', fontSize: 15 }}>Swapped lines</h2>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+                  <div>
+                    <div style={{ fontSize: 24, fontWeight: 700 }}>{summary.files.line_order_fixed_total ?? 0}</div>
+                    <div className="text-dim" style={{ fontSize: 13 }}>swapped line pairs put back in order</div>
+                  </div>
+                  <div>
+                    <div style={{ fontSize: 24, fontWeight: 700, color: (summary.files.line_order_flagged_total ?? 0) > 0 ? 'var(--red)' : undefined }}>
+                      {summary.files.line_order_flagged_total ?? 0}
+                    </div>
+                    <div className="text-dim" style={{ fontSize: 13 }}>pairs flagged as &quot;Lines out of order&quot;: too many to fix safely</div>
+                  </div>
+                  {(summary.files.line_order_flagged_total ?? 0) > 0 && (
+                    <button className="btn btn-sm" style={{ alignSelf: 'flex-start' }} onClick={() => navigate('/files?reason=lines_out_of_order')}>
+                      Show them
+                    </button>
+                  )}
+                </div>
+              </section>
             </div>
-            <div style={{ display: 'flex', gap: 16, alignItems: 'center' }}>
-              <span className="text-dim">{r.files_processed} files</span>
-              <StatusPill value={r.status} />
-            </div>
-          </div>
-        ))}
-        {runs.length > 0 && (
-          <div style={{ marginTop: 12 }}>
-            <Link to="/activity">See all activity →</Link>
-          </div>
+
+            <section className="card" aria-labelledby="h-rj" style={{ padding: 0, overflow: 'hidden' }}>
+              <div style={{ display: 'flex', alignItems: 'center', padding: '14px 16px 10px' }}>
+                <h2 id="h-rj" style={{ margin: 0, fontSize: 15, flex: 1 }}>Recent jobs</h2>
+                <button className="btn btn-sm" onClick={() => navigate('/activity')}>All activity</button>
+              </div>
+              {runs.length === 0 && (
+                <div className="text-dim" style={{ padding: '6px 16px 16px', fontSize: 13 }}>No jobs yet.</div>
+              )}
+              {runs.map((j) => (
+                <button
+                  key={j.id}
+                  onClick={() => navigate(`/activity/${j.id}`)}
+                  data-hover
+                  style={{ display: 'grid', gridTemplateColumns: 'minmax(0,1.3fr) minmax(0,2fr) 96px 110px', gap: 12, alignItems: 'center', width: '100%', background: 'none', border: 0, borderTop: '1px solid var(--border)', padding: '8px 16px', textAlign: 'left', color: 'var(--text)', fontSize: 13, cursor: 'pointer' }}
+                >
+                  <span style={{ fontWeight: 500 }}>{runTypeLabel(j)}</span>
+                  <span className="text-dim" style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    {runTargetLabel(j)} · {j.files_processed} files, {j.files_changed} changed, {j.files_suspect} flagged
+                  </span>
+                  <StatusPill value={j.status} />
+                  <span className="text-dim" title={formatExact(j.started_at)}>{formatRelative(j.started_at)}</span>
+                </button>
+              ))}
+            </section>
+          </>
         )}
       </div>
     </div>

@@ -12,10 +12,18 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
-from verifyarr import db, jobs
+from verifyarr import db, jobs, scheduler
+from verifyarr.settings import Config
 from verifyarr.web.deps import get_conn, require_auth, serialize_row
 
 router = APIRouter(prefix="/api/runs", tags=["runs"])
+
+
+@router.get("/next")
+def next_run(user=Depends(require_auth), conn=Depends(get_conn)):
+    """When the scheduled sweep fires next (the sidebar/dashboard's "Next scan") — derived
+    from scheduling.cron, the same expression the scheduler itself runs on."""
+    return {"next_run_at": scheduler.next_sweep_at(Config.from_db(conn).sweep_cron)}
 
 
 class StartRunBody(BaseModel):
@@ -33,8 +41,11 @@ class StartRunBody(BaseModel):
 
 @router.get("")
 def list_runs(page: int = Query(1, ge=1), page_size: int = Query(30, ge=1, le=200),
+              status: Optional[str] = None,
               user=Depends(require_auth), conn=Depends(get_conn)):
-    rows, total = db.list_runs(conn, page=page, page_size=page_size)
+    if status and status not in db.RUN_STATUSES:
+        raise HTTPException(status_code=422, detail=f"unknown status: {status}")
+    rows, total = db.list_runs(conn, page=page, page_size=page_size, status=status)
     return {"items": [serialize_row(r) for r in rows], "total": total, "page": page, "page_size": page_size,
             "current_run_id": jobs.runner.current_run_id()}
 

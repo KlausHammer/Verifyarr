@@ -4,6 +4,7 @@ whenever the scheduling group is saved."""
 
 from __future__ import annotations
 
+import re
 from typing import Optional
 
 from apscheduler.schedulers.background import BackgroundScheduler
@@ -67,10 +68,35 @@ def _prune_full_transcript_cache_job() -> None:
                             "subtitle-generation attempt record(s)")
 
 
+_CRON_DAYS = ("sun", "mon", "tue", "wed", "thu", "fri", "sat", "sun")
+
+
+def _cron_dow(field: str) -> str:
+    """Standard cron day-of-week (0/7 = Sunday) as APScheduler names; APScheduler's own
+    numbers start at Monday, so '0' would fire on Mondays."""
+    if field in ("0-6", "0-7", "1-7"):
+        return "*"
+    return re.sub(r"\d+", lambda m: _CRON_DAYS[int(m.group())] if int(m.group()) <= 7
+                  else m.group(), field)
+
+
 def _cron_to_trigger(cron_expr: str) -> CronTrigger:
-    # Standard 5-field cron (minute hour day-of-month month day-of-week) — APScheduler's
-    # CronTrigger.from_crontab covers exactly this format.
-    return CronTrigger.from_crontab(cron_expr)
+    # Standard 5-field cron in the container's local time (TZ), which is what users set.
+    minute, hour, day, month, dow = cron_expr.split()
+    return CronTrigger(minute=minute, hour=hour, day=day, month=month, day_of_week=_cron_dow(dow))
+
+
+def next_sweep_at(cron_expr: str, now=None) -> Optional[str]:
+    """Next scheduled-sweep fire time as an ISO timestamp (the sidebar/dashboard's "Next
+    scan"), computed from the cron expression alone — no running scheduler needed, so it
+    works the same in the web process and in tests. None when the expression is invalid."""
+    from datetime import datetime, timezone
+    try:
+        trigger = _cron_to_trigger(cron_expr)
+    except Exception:
+        return None
+    fire = trigger.get_next_fire_time(None, now or datetime.now(timezone.utc))
+    return fire.isoformat() if fire else None
 
 
 def start() -> BackgroundScheduler:

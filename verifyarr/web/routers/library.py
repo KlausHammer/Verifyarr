@@ -59,7 +59,8 @@ def accumulate_video_into_bucket(bucket: dict, video: dict, file_rows: list) -> 
     if any(row["last_processed"] for row in file_rows):
         bucket["processed_count"] += 1
     for row in file_rows:
-        if row["correctness_flag"] == "SUSPECT":
+        # SUSPECT and unknown both need attention (same population the Suspect link filters).
+        if row["correctness_flag"] in ("SUSPECT", "unknown"):
             bucket["suspect_count"] += 1
         elif row["correctness_flag"] == "ok":
             bucket["ok_count"] += 1
