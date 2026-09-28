@@ -1688,8 +1688,12 @@ REASON_MISSING_LINES = "missing_lines"
 REASON_PAST_AUDIO_END = "past_audio_end"
 REASON_LINES_OUT_OF_ORDER = "lines_out_of_order"
 REASON_UNRELIABLE_TIMING = "unreliable_timing"
+# Why a file is "unknown" (nothing could be verified).
+REASON_NO_SPEECH = "no_speech_heard"
+REASON_CHECK_FAILED = "check_failed"
 REASONS = (REASON_WRONG_SUBTITLE, REASON_PARTLY_OUT_OF_SYNC, REASON_MISSING_LINES,
-           REASON_PAST_AUDIO_END, REASON_LINES_OUT_OF_ORDER, REASON_UNRELIABLE_TIMING)
+           REASON_PAST_AUDIO_END, REASON_LINES_OUT_OF_ORDER, REASON_UNRELIABLE_TIMING,
+           REASON_NO_SPEECH, REASON_CHECK_FAILED)
 
 
 def _flag_suspect(row: dict, reason: str) -> None:
@@ -1697,6 +1701,14 @@ def _flag_suspect(row: dict, reason: str) -> None:
     file without a reason (it would land in "other")."""
     row["correctness_flag"] = "SUSPECT"
     row["reason"] = reason
+
+
+def _flag_unknown(row: dict, samples: Optional[list]) -> None:
+    """Nothing could be verified: no speech in any clip, or a technical failure (retry)."""
+    row["correctness_flag"] = "unknown"
+    failed = [s for s in samples or [] if s.get("error")
+              and not s["error"].startswith("VAD silence-skip")]
+    row["reason"] = REASON_CHECK_FAILED if failed or not samples else REASON_NO_SPEECH
 
 
 def _noisy_jitter(result: dict, escalated_samples: Optional[list]) -> Optional[float]:
@@ -2522,7 +2534,7 @@ def correctness_and_finish(video_path: Path, subtitle_path: Path, lang: Optional
                             or slope_breaks or unproven_step or run_offsets
                             or block_left or len(plan) >= 2):
                         if result.get("flag") not in ("ok", "SUSPECT"):
-                            row["correctness_flag"] = "unknown"
+                            _flag_unknown(row, result.get("samples"))
                             row["note"] = (row["note"] + " Correctness could not be "
                                            "determined after anchor resync: "
                                            f"{result['flag']}.").strip()
@@ -2606,7 +2618,7 @@ def correctness_and_finish(video_path: Path, subtitle_path: Path, lang: Optional
                 # samples)") -- every window failed, typically a foreign-language subtitle whose
                 # LLM translation never came back. That is "nothing was verified", and it used to
                 # fall through to the "ok" branch below and be recorded as a passed check.
-                row["correctness_flag"] = "unknown"
+                _flag_unknown(row, result.get("samples"))
                 row["note"] = (row["note"] + f" Correctness could not be determined: {result['flag']}.").strip()
             elif (detected := _detection_note(conn, video_path, current_subs, cfg, row, result,
                                               resolved_winner, escalated_samples, lang,

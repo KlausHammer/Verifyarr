@@ -31,6 +31,8 @@ const REASON_LABELS: Record<SuspectReason | 'other', string> = {
   past_audio_end: "Doesn't fit this video",
   lines_out_of_order: 'Lines out of order',
   unreliable_timing: 'Unreliable timing',
+  no_speech_heard: 'No speech heard',
+  check_failed: 'Check failed',
   other: 'Other',
 }
 

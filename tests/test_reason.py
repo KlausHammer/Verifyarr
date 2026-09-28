@@ -42,6 +42,23 @@ class ReasonTests(unittest.TestCase):
         self.assertEqual(stats_router.attention(user=None, conn=self.conn)["items"][0],
                          {"reason": "past_audio_end", "count": 2})
 
+    def test_unknown_files_carry_a_reason_and_need_attention(self):
+        row = {"lang": "en", "sync_status": "already in sync", "note": ""}
+        pipeline._flag_unknown(row, [{"error": "VAD silence-skip (<2s speech in window)"},
+                                     {"score": None}])
+        self.assertEqual(row["reason"], pipeline.REASON_NO_SPEECH)
+        db.update_state(self.conn, Path("/m/a.mkv"), Path("/m/a.en.srt"), row)
+        row = {"lang": "en", "sync_status": "already in sync", "note": ""}
+        pipeline._flag_unknown(row, [{"error": "audio extraction failed"},
+                                     {"error": "VAD silence-skip (<2s speech in window)"}])
+        self.assertEqual(row["reason"], pipeline.REASON_CHECK_FAILED)
+        db.update_state(self.conn, Path("/m/b.mkv"), Path("/m/b.en.srt"), row)
+        self.assertEqual(db.attention_counts(self.conn),
+                         {"check_failed": 1, "no_speech_heard": 1})
+        out = files_router.list_files(reason="check_failed", page=1, page_size=50,
+                                      user=None, conn=self.conn)
+        self.assertEqual(out["total"], 1)
+
     def test_unknown_reason_is_rejected(self):
         from fastapi import HTTPException
         with self.assertRaises(HTTPException) as ctx:

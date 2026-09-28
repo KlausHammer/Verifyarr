@@ -23,7 +23,7 @@ export interface FileRow {
   sync_split_blocks: number | null
   sync_block_spread_s: number | null
   correctness_flag: string | null
-  /** Why the file is SUSPECT; null otherwise or on old rows. */
+  /** Why the file is SUSPECT or unknown; null otherwise or on old rows. */
   reason: SuspectReason | null
   correctness_avg_score: number | null
   line_order_fixed: number | null
@@ -306,6 +306,8 @@ export type SuspectReason =
   | 'past_audio_end'
   | 'lines_out_of_order'
   | 'unreliable_timing'
+  | 'no_speech_heard'
+  | 'check_failed'
 
 /** GET /api/stats/attention -- flagged files per reason, largest first ("other" = no reason recorded). */
 export interface AttentionResponse {

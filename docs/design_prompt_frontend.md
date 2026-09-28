@@ -48,7 +48,7 @@ about subtitles - every verdict must say in plain words what happened and what t
    6) Schedule: nightly scan time, or manual only. Finish -> first scan starts -> Dashboard.
 3. **Login.**
 4. **Dashboard** (new; today "/" just redirects to Stats): library health (% of subtitles in
-   sync), "Needs attention" list grouped by reason with counts (links into filtered Files),
+   sync), "Needs attention" list grouped by reason with counts - every flagged or unchecked file has one (links into filtered Files),
    "Recently fixed" (last 10 with what was changed), current or last job with progress, next
    scheduled scan, primary action "Scan library". Empty state before the first scan.
 5. **Movies** and **Series**: one row per title - title, videos, subtitles found, Ok / Suspect /
@@ -95,7 +95,8 @@ about subtitles - every verdict must say in plain words what happened and what t
 | missing | grey "No subtitle" | No subtitle for this language. | Generate with Whisper, or wait for Bazarr. |
 | generated | blue "Generated" | Made from the audio by Whisper. | Nothing. |
 | skipped | grey "Skipped" | Audio is in a language the check doesn't cover. | Nothing, or change settings. |
-| unknown | yellow "Couldn't check" | Nothing could be verified (e.g. no speech recognized). | Re-check. |
+| unknown - no speech heard | yellow "No speech heard" | Speech recognition heard no speech in any sample (music, silence, wrong audio track). | Check the audio track; Re-check. |
+| unknown - check failed | yellow "Check failed" | A technical error stopped the check (audio extraction, speech recognition or translation). | Re-check. |
 | replacement failed | red + note | No replacement passed after N tries; the original was kept. | Try again later or pick one in Bazarr. |
 
 ## Data you can rely on (do not invent other features)

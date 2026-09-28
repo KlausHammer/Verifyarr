@@ -35,7 +35,7 @@ CREATE TABLE IF NOT EXISTS files (
     sync_block_spread_s    REAL,   -- max(shift_blocks) - min(shift_blocks); see Config.
                                     -- block_spread_suspect_threshold_s
     correctness_flag       TEXT,
-    reason                 TEXT,     -- why SUSPECT (pipeline.REASON_*); NULL otherwise/older rows
+    reason                 TEXT,     -- why SUSPECT/unknown (pipeline.REASONS); NULL otherwise/older rows
     correctness_avg_score  REAL,
     line_order_fixed       INTEGER,  -- see line_order.py. NULL = not checked (feature off),
     line_order_flagged     INTEGER,  -- 0 = checked and nothing found, >0 = counts from last run.
@@ -297,6 +297,12 @@ CREATE INDEX IF NOT EXISTS ix_generate_attempts_at ON generate_attempts(attempte
 """
 
 
+# Flags that need a look, each with a reason (pipeline.REASONS): SUSPECT, or unknown
+# (nothing could be verified).
+ATTENTION_FLAGS = ("SUSPECT", "unknown")
+_ATTENTION_SQL = "('SUSPECT', 'unknown')"
+
+
 # Columns added after their table first shipped: "CREATE TABLE IF NOT EXISTS" adds nothing
 # to an existing table. library_videos is pure cache, so empty/default values are harmless.
 _ADDED_COLUMNS = (
@@ -313,7 +319,7 @@ _ADDED_COLUMNS = (
     ("files", "line_order_cache_key", "TEXT"),
     ("files", "line_order_cache_json", "TEXT"),
     ("files", "sync_block_spread_s", "REAL"),
-    ("files", "reason", "TEXT"),  # why SUSPECT (pipeline.REASON_*); NULL on older rows
+    ("files", "reason", "TEXT"),  # see files.reason above
     ("runs", "target_kind", "TEXT"),
     ("runs", "target_title", "TEXT"),
     ("runs", "files_generated", "INTEGER DEFAULT 0"),
@@ -533,7 +539,7 @@ def update_state(conn: sqlite3.Connection, video_path: Path, subtitle_path: Path
           row.get("sync_status"), row.get("sync_max_shift_s"), int(bool(row.get("structural_change"))),
           row.get("sync_split_blocks"), row.get("sync_block_spread_s"),
           row.get("correctness_flag"),
-          row.get("reason") if row.get("correctness_flag") == "SUSPECT" else None,
+          row.get("reason") if row.get("correctness_flag") in ATTENTION_FLAGS else None,
           row.get("correctness_avg_score"),
           row.get("line_order_fixed"), row.get("line_order_flagged"),
           row.get("line_order_cache_key"), row.get("line_order_cache_json"),
@@ -632,10 +638,10 @@ def list_files(conn: sqlite3.Connection, q: Optional[str] = None, flag: Optional
         params.append(lang)
     if reason == "other":
         # Flagged before reasons were recorded, or by a path without one.
-        where.append("correctness_flag = 'SUSPECT' AND reason IS NULL")
+        where.append(f"correctness_flag IN {_ATTENTION_SQL} AND reason IS NULL")
     elif reason:
         # Same population as attention_counts (and ix_files_flag narrows the scan).
-        where.append("correctness_flag = 'SUSPECT' AND reason = ?")
+        where.append(f"correctness_flag IN {_ATTENTION_SQL} AND reason = ?")
         params.append(reason)
     where_sql = f"WHERE {' AND '.join(where)}" if where else ""
 
@@ -663,10 +669,10 @@ def set_auto_action(conn: sqlite3.Connection, subtitle_path: Path, auto_action: 
 
 
 def attention_counts(conn: sqlite3.Connection) -> dict:
-    """SUSPECT files per reason ("other" when none was recorded), for "Needs attention"."""
+    """SUSPECT/unknown files per reason ("other" when none was recorded), for "Needs attention"."""
     rows = conn.execute(
         "SELECT COALESCE(reason, 'other') AS reason, COUNT(*) AS n FROM files "
-        "WHERE correctness_flag = 'SUSPECT' GROUP BY 1 ORDER BY n DESC, reason"
+        f"WHERE correctness_flag IN {_ATTENTION_SQL} GROUP BY 1 ORDER BY n DESC, reason"
     ).fetchall()
     return {r["reason"]: r["n"] for r in rows}
 
