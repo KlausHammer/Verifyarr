@@ -19,15 +19,24 @@ Self-hosted subtitle sync + verification for a Plex/Bazarr library.
    an LLM (Groq, OpenRouter, or Gemini) into any wanted language Whisper didn't already speak.
 
 
-## Setup
+## Install with Docker
 
-Grab the compose file and edit its `volumes:` to point at your real media folders (it builds
-straight from this repo, no separate clone needed):
+Grab the compose file (it builds straight from this repo, no separate clone needed),
+then edit it before starting:
 
 ```bash
 curl -O https://raw.githubusercontent.com/KlausHammer/Verifyarr/main/docker-compose.yml
 docker compose up -d
 ```
+
+- `volumes:` — point `/media/movies` and `/media/tv` at your real media folders, using the
+  same paths Sonarr/Radarr see them under, so paths handed over from Bazarr exist here too.
+- `PUID`/`PGID` — your ids on the host (`id -u` / `id -g`), so files Verifyarr writes aren't
+  root-owned.
+- `TZ` — your timezone (scheduled scans run on the server's local time).
+- `./data` — keep it on a local disk: the SQLite database locks up on NFS/SMB shares.
+- Whisper models of your own (optional): uncomment the `/models:ro` mount and set Settings →
+  Correctness → "Model file path" to `/models/ggml-<name>.bin`.
 
 Open `http://your-server:8787`, create an admin password, then go through Settings: General
 (Root Folders), Correctness (local Whisper works out of the box; a free
@@ -123,8 +132,8 @@ field is flattened to one line and capped at 200 characters for that reason.
 
 ## Notes
 
-- Everything is configured in the webapp, not env vars — `docker-compose.yml` only needs real
-  Docker settings (volumes/port/TZ).
+- App settings live in the webapp; `docker-compose.yml` holds container identity
+  (`PUID`/`PGID`/`UMASK`/`TZ`/`PORT`) plus `WHISPER_MODEL`.
 - The correctness check skips audio in a language Whisper isn't reliable for by default
   (configurable); a subtitle in a different language than the audio is machine-translated before
   comparing, so language alone never causes a false flag.

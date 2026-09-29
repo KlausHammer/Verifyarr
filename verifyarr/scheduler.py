@@ -4,7 +4,9 @@ whenever the scheduling group is saved."""
 
 from __future__ import annotations
 
+import os
 import re
+from datetime import datetime
 from typing import Optional
 
 from apscheduler.schedulers.background import BackgroundScheduler
@@ -87,10 +89,9 @@ def _cron_to_trigger(cron_expr: str) -> CronTrigger:
 
 
 def next_sweep_at(cron_expr: str, now=None) -> Optional[str]:
-    """Next scheduled-sweep fire time as an ISO timestamp (the sidebar/dashboard's "Next
-    scan"), computed from the cron expression alone — no running scheduler needed, so it
-    works the same in the web process and in tests. None when the expression is invalid."""
-    from datetime import datetime, timezone
+    """Next sweep fire time as ISO ("Next scan"), from the cron alone. Carries the server's
+    UTC offset so the browser renders it in the viewer's own zone. None if invalid."""
+    from datetime import timezone
     try:
         trigger = _cron_to_trigger(cron_expr)
     except Exception:
@@ -99,11 +100,24 @@ def next_sweep_at(cron_expr: str, now=None) -> Optional[str]:
     return fire.isoformat() if fire else None
 
 
+def server_timezone_name() -> str:
+    """Server timezone name (e.g. "Europe/Copenhagen"). Prefers $TZ, else the local zone."""
+    tz = os.environ.get("TZ", "").strip()
+    if tz:
+        return tz
+    try:
+        from tzlocal import get_localzone
+        return str(get_localzone())
+    except Exception:
+        return datetime.now().astimezone().tzname() or "UTC"
+
+
 def start() -> BackgroundScheduler:
     global _scheduler
     if _scheduler is not None:
         return _scheduler
-    _scheduler = BackgroundScheduler(timezone="UTC")
+    # Local zone (the container's TZ), not UTC: the cron triggers resolve against it.
+    _scheduler = BackgroundScheduler()
     _scheduler.start()
     reschedule()
     return _scheduler
@@ -127,7 +141,8 @@ def reschedule() -> None:
         log.warning("Invalid cron expression in schedule.cron (%r): %s — schedule not changed", cfg.sweep_cron, e)
     else:
         _scheduler.add_job(_run_scheduled_sweep, trigger, id=_JOB_ID, replace_existing=True, max_instances=1)
-        log.info("Scheduled sweep set to: %s (UTC)", cfg.sweep_cron)
+        log.info("Scheduled sweep set to: %s (server time, %s)", cfg.sweep_cron,
+                 server_timezone_name())
 
     # Enable/disable itself is also checked live inside bazarr_poll.poll_wanted_subtitles()
     # (belt and braces), but the INTERVAL can only change here — APScheduler needs a fresh

@@ -18,7 +18,12 @@ async function request<T>(path: string, opts: RequestInit = {}): Promise<T> {
     let detail = res.statusText
     try {
       const body = await res.json()
-      if (body?.detail) detail = body.detail
+      // Surface FastAPI's `detail` (string, or {msg} array for 422s).
+      const d = body?.detail
+      if (typeof d === 'string' && d) detail = d
+      else if (Array.isArray(d) && d.length > 0) {
+        detail = d.map((e) => (typeof e?.msg === 'string' ? e.msg : JSON.stringify(e))).join('; ')
+      }
     } catch {
       // intet JSON-body — behold statusText
     }

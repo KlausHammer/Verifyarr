@@ -10,6 +10,7 @@ import type {
   GenerateSettings,
   LibraryResponse,
   LogSettings,
+  NextRunResponse,
   SchedulingSettings,
   SyncSettings,
 } from '../api/types'
@@ -855,6 +856,9 @@ function CorrectnessTab() {
             <Field advanced label="Model file path" tip="A ggml model file. Every threshold is measured on tiny.en (the default) -- other models transcribe differently and are not calibrated.">
               <input type="text" value={data.local_whisper_model} onChange={(e) => setData({ ...data, local_whisper_model: e.target.value })} />
             </Field>
+            <Field advanced label="Binary path" tip="The whisper.cpp binary. Ships at /usr/local/bin/whisper-cli in Docker.">
+              <input type="text" value={data.local_whisper_binary} onChange={(e) => setData({ ...data, local_whisper_binary: e.target.value })} />
+            </Field>
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, maxWidth: 540 }}>
               <Field advanced label="Use GPU" tip="Off forces CPU-only (-ng) even if the binary was built with Vulkan/GPU support.">
                 <label style={{ display: 'flex', alignItems: 'center', gap: 8, margin: 0 }}>
@@ -1431,6 +1435,7 @@ function SchedulingTab() {
   const [saving, setSaving] = useState(false)
   const [savedAt, setSavedAt] = useState<number | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [serverTz, setServerTz] = useState<string | null>(null)
   const initialized = useRef(false)
 
   useEffect(() => {
@@ -1439,6 +1444,15 @@ function SchedulingTab() {
       initialized.current = true
     }
   }, [data])
+
+  useEffect(() => {
+    api.get<NextRunResponse>('/runs/next').then(
+      (r) => setServerTz(r.timezone ?? null),
+      () => {},
+    )
+  }, [])
+
+  const tzNote = `Local time on the server${serverTz ? ` (${serverTz})` : ''}.`
 
   function updateSchedule(patch: Partial<FriendlySchedule>) {
     const next = { ...schedule!, ...patch }
@@ -1503,13 +1517,13 @@ function SchedulingTab() {
                 </select>
               </Field>
             )}
-            <Field label="At" tip="Local time on the server (the container's TZ setting).">
+            <Field label="At" tip={tzNote}>
               <TimeOfDayField value={schedule.time} onChange={(time) => updateSchedule({ time })} />
             </Field>
           </div>
         )}
         {schedule.mode === 'advanced' && (
-          <Field label="Cron expression" tip="Standard 5-field cron in the server's local time, e.g. '0 4 * * 0' = Sunday at 04:00.">
+          <Field label="Cron expression" tip={`Standard 5-field cron. ${tzNote} E.g. '0 4 * * 0' = Sunday at 04:00.`}>
             <input type="text" value={data.cron} onChange={(e) => setData({ ...data, cron: e.target.value })} style={{ fontFamily: 'var(--mono)' }} />
           </Field>
         )}

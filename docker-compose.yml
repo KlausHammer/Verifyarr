@@ -6,7 +6,16 @@ services:
     # Lowest CPU priority vs other containers (default is 1024). Soft weight, not a cap.
     cpu_shares: 128
     environment:
+      # Your ids on the host (run `id -u` / `id -g`): files Verifyarr writes get
+      # these owners instead of root, so Sonarr/Radarr/Bazarr/Plex can manage them.
+      PUID: 1000
+      PGID: 1000
+      # Permission mask for new files (022 = rw-r--r--). Must stay quoted (octal).
+      UMASK: "022"
+      # Server timezone for scheduled scans; use your own, e.g. Europe/Berlin.
       TZ: Europe/Copenhagen
+      # Webapp port inside the container; must match the right side of ports:.
+      PORT: 8787
       # Local Whisper model (Settings -> Correctness -> "Use local Whisper"). tiny.en ships
       # pre-baked and is what detection is calibrated and tested on (with VAD). Others download
       # once into ./data on first use, untested. Non-English audio needs a multilingual model.
@@ -14,14 +23,23 @@ services:
     ports:
       - "8787:8787"
     volumes:
-      # point these at your real media folders
+      # Use the SAME paths Sonarr/Radarr see, so Bazarr's hook passes paths that exist here.
       - /path/to/media/movies:/media/movies
       - /path/to/media/tv:/media/tv
+      # Keep on a LOCAL disk: SQLite locks break on NFS/SMB shares.
       - ./data:/data
+      # Optional: your own whisper.cpp models, read-only. Then set Settings ->
+      # Correctness -> "Model file path" to /models/ggml-<name>.bin.
+      # - /path/to/whisper-models:/models:ro
     # Uncomment for iGPU/GPU access (local Whisper, Settings -> Correctness). Without it: CPU-only.
     # devices:
     #   - /dev/dri:/dev/dri
     # group_add:
     #   - "104"   # your host's `getent group render` GID
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
 
     # In a VM (Proxmox etc.): set CPU type to "host", or AVX/AVX2 get hidden and CPU is much slower.

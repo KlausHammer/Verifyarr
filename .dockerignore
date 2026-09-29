@@ -6,6 +6,17 @@ __pycache__/
 verifyarr/web/static/
 frontend/node_modules/
 frontend/dist/
+frontend/.ds-sync/
+frontend/.design-sync/
 README.md
+docs/
+rapport/
+tests/
+.venv/
 *.db
 *.db-*
+*.jsonl
+**/*.jsonl
+*.log
+**/*.log
+SPAR_*.md

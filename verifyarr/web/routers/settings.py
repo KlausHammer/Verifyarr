@@ -47,7 +47,12 @@ def get_group(group: str, user=Depends(require_auth), conn=Depends(get_conn)):
 def put_group(group: str, body: SettingsGroupBody, user=Depends(require_auth), conn=Depends(get_conn)):
     if group not in settings_mod.GROUPS:
         raise HTTPException(status_code=404, detail=f"unknown settings group: {group}")
-    settings_mod.set_settings_group(conn, group, body.values)
+    try:
+        settings_mod.set_settings_group(conn, group, body.values)
+    except ValueError as e:
+        # set_settings_group raises ValueError for a value the user can fix (a bad model
+        # path, an unknown log level, ...) -- a 422 with the reason, not a 500.
+        raise HTTPException(status_code=422, detail=str(e))
     if group == "scheduling":
         scheduler.reschedule()
     elif group == "log":

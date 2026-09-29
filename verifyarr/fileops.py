@@ -22,6 +22,23 @@ class SubtitleAlreadyExists(Exception):
     file might be a real (if unverified) subtitle, not a placeholder."""
 
 
+def match_reference_ownership(dest: Path, reference: Path) -> None:
+    """Best-effort: new file takes the reference file's owner and rw-bits. Never raises."""
+    try:
+        st = reference.stat()
+    except OSError:
+        return
+    try:
+        os.chown(dest, st.st_uid, st.st_gid)
+    except OSError:
+        pass
+    try:
+        # 0o666, not 0o777: videos on SMB/NTFS are often 0777, subtitles need no exec bit.
+        os.chmod(dest, st.st_mode & 0o666)
+    except OSError:
+        pass
+
+
 def write_new_subtitle(subs: "pysubs2.SSAFile", video_path: Path, lang: str) -> Path:
     """Atomically writes a freshly GENERATED subtitle next to the video, as
     '<video_stem>.<lang>.srt' -- the exact naming discovery.find_subtitles_for_video /
@@ -60,9 +77,11 @@ def write_new_subtitle(subs: "pysubs2.SSAFile", video_path: Path, lang: str) -> 
             if dest.exists():
                 raise SubtitleAlreadyExists(f"subtitle already exists: {dest}")
             os.replace(tmp, dest)
+            match_reference_ownership(dest, video_path)
             return dest
     finally:
         tmp.unlink(missing_ok=True)
+    match_reference_ownership(dest, video_path)
     return dest
 
 
@@ -95,6 +114,11 @@ def _store_archived(subtitle_path: Path, archive_dir: Path, media_root: Path,
         shutil.move(str(subtitle_path), str(dest))
     else:
         shutil.copyfile(subtitle_path, dest)
+        # Keep the original's rw-bits on the copy (not copy2: mtime is the sort key).
+        try:
+            os.chmod(dest, subtitle_path.stat().st_mode & 0o666)
+        except OSError:
+            pass
     return dest
 
 
@@ -177,4 +201,6 @@ def restore_from_backup(rel_path: str, backup_dir: Path, media_root: Path) -> Pa
     if target.exists():
         backup_subtitle(target, backup_dir, media_root)
     shutil.copyfile(src, target)
+    # Put the archived rw-bits back so a restore keeps its old access.
+    match_reference_ownership(target, src)
     return target

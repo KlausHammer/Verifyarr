@@ -435,7 +435,9 @@ def _run_local_whisper(cfg: Config, audio_path: Path, language: Optional[str],
     if model and not Path(model).is_file():
         _download_local_whisper_model(Path(model))
     if not model or not Path(model).is_file():
-        raise RuntimeError(f"local Whisper model not found: {model!r} (see Settings -> Correctness)")
+        raise RuntimeError(f"local Whisper model not found: {model!r} (see Settings -> Correctness). "
+                           f"A ggml-*.bin file is downloaded automatically on first use, so a missing "
+                           f"file usually means the box is offline or the path is wrong")
 
     with tempfile.TemporaryDirectory(prefix="local-whisper-") as td:
         out_stem = Path(td) / "out"

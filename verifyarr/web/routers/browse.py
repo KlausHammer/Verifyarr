@@ -59,12 +59,13 @@ def browse(path: str = Query(str(BROWSE_ROOT)), user=Depends(require_auth)):
 
 @router.get("/check")
 def check_path(path: str = Query(...), user=Depends(require_auth)):
-    """Used to show a small status icon next to each already-configured Root Folder — does
-    the path exist right now, and how much is in it (a quick health check without having to
-    open the browser again)."""
+    """Status check for configured paths (exists? how many entries?). Plain files just
+    report exists (Whisper/VAD path fields)."""
     p = Path(path)
-    if not p.exists() or not p.is_dir():
+    if not p.exists():
         return {"exists": False, "entry_count": None}
+    if not p.is_dir():
+        return {"exists": True, "entry_count": None}
     try:
         entry_count = sum(1 for _ in p.iterdir())
     except PermissionError:

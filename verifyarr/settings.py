@@ -100,6 +100,61 @@ def clean_lang_code(raw: Optional[str]) -> str:
     return value if LANG_CODE_RE.match(value) else ""
 
 
+# Copy of correctness' filename check (not an import: circular). Rejects typos at save time.
+_GGML_MODEL_FILENAME_RE = re.compile(r"^ggml-[\w.\-]+\.bin$")
+
+# Settings -> Log's dropdown values. Anything else crashes setLevel at save AND on restart.
+LOG_LEVELS = ("DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL")
+
+
+def validate_local_whisper_model(raw: Optional[str]) -> Optional[str]:
+    """None when usable, else a plain-language reason. A missing ggml-*.bin is allowed
+    (downloaded on first use) unless its directory exists but is unwritable (:ro mount)."""
+    value = (raw or "").strip()
+    if not value:
+        return ("No model file configured -- enter the ggml model path (e.g. "
+                "/app/models/ggml-tiny.en.bin), or switch off local Whisper.")
+    p = Path(value)
+    if not _GGML_MODEL_FILENAME_RE.match(p.name):
+        return (f"{value!r} doesn't look like a whisper.cpp model file -- expected a "
+                f"ggml-*.bin filename (e.g. ggml-small.en.bin).")
+    if p.is_file():
+        if not os.access(p, os.R_OK):
+            return f"{value!r} exists but isn't readable by this container's user."
+        try:
+            size = p.stat().st_size
+        except OSError:
+            return f"{value!r} couldn't be read."
+        if size == 0:
+            return f"{value!r} exists but is empty (0 bytes) -- not a usable model."
+        return None
+    if p.exists():
+        return f"{value!r} exists but isn't a regular file."
+    parent = p.parent
+    if parent.exists() and not os.access(parent, os.W_OK | os.X_OK):
+        return (f"{value!r} was not found, and its folder isn't writable so it can't be "
+                f"downloaded on first use either -- check the mount and the spelling.")
+    return None  # missing but downloadable-looking: fetched on first use
+
+
+def validate_executable_file(raw: Optional[str], what: str) -> Optional[str]:
+    """Same None-or-reason shape for binary paths. Binaries are never downloaded, so a
+    missing one is always rejected. `what` names the field in the message."""
+    value = (raw or "").strip()
+    if not value:
+        return (f"No {what} configured -- enter the binary path (e.g. "
+                f"/usr/local/bin/whisper-cli), or switch off local Whisper.")
+    p = Path(value)
+    if not p.exists():
+        return (f"{what} {value!r} was not found -- check the path (the Docker image "
+                f"ships it at /usr/local/bin/whisper-cli).")
+    if not p.is_file():
+        return f"{what} {value!r} exists but isn't a file."
+    if not os.access(p, os.X_OK):
+        return f"{what} {value!r} exists but isn't executable."
+    return None
+
+
 def _parse_path_map(raw: str) -> list[tuple[str, str]]:
     pairs = []
     for chunk in _env_list("PATH_MAP", raw):
@@ -834,6 +889,15 @@ def set_settings_group(conn, group: str, values: dict) -> None:
     does NOT change the stored value (so the UI doesn't need to re-send it to save the rest
     of the group) — pass an explicit empty string to actually clear it."""
     from verifyarr import db
+    # Only validate local paths when local Whisper is on; cloud-only boxes lack the binaries.
+    local_whisper_on = False
+    if group == "correctness" and ({"local_whisper_binary", "local_whisper_model"} & set(values)):
+        if "use_local_whisper" in values:
+            local_whisper_on = bool(values["use_local_whisper"])
+        else:
+            raw_flag = db.get_setting_raw(conn, "correctness.use_local_whisper")
+            local_whisper_on = _deserialize("bool", raw_flag,
+                                            SETTING_DEFS["correctness.use_local_whisper"][2])
     for short, value in values.items():
         key = f"{group}.{short}"
         if key not in SETTING_DEFS or SETTING_DEFS[key][0] != group:
@@ -842,6 +906,17 @@ def set_settings_group(conn, group: str, values: dict) -> None:
             continue
         if key == "bazarr.url":
             value = normalize_url(value)
+        elif key == "log.level":
+            if value not in LOG_LEVELS:
+                raise ValueError(f"unknown log level: {value!r} — use one of {', '.join(LOG_LEVELS)}")
+        elif key == "correctness.local_whisper_model" and local_whisper_on:
+            problem = validate_local_whisper_model(value)
+            if problem is not None:
+                raise ValueError(problem)
+        elif key == "correctness.local_whisper_binary" and local_whisper_on:
+            problem = validate_executable_file(value, "local Whisper binary")
+            if problem is not None:
+                raise ValueError(problem)
         elif key == "generate.vocabulary_hint":
             value = clean_vocabulary_hint(value) or ""
         elif key == "generate.assume_spoken_lang":

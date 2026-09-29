@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { api, ApiError } from '../api/client'
-import type { BazarrSettings, CorrectnessSettings, GeneralSettings, SchedulingSettings } from '../api/types'
+import type { BazarrSettings, CorrectnessSettings, GeneralSettings, NextRunResponse, SchedulingSettings } from '../api/types'
 import FolderBrowser from '../components/FolderBrowser'
 import LanguageMultiSelect from '../components/LanguageMultiSelect'
 import { useToasts } from '../hooks/useToasts'
@@ -77,6 +77,7 @@ export default function Wizard() {
   const [bz, setBz] = useState<BzTest>({ status: 'idle', msg: '' })
   const [finishing, setFinishing] = useState(false)
   const [finishError, setFinishError] = useState<string | null>(null)
+  const [serverTz, setServerTz] = useState<string | null>(null)
   const timers = useRef<{ moviesDir?: ReturnType<typeof setTimeout>; seriesDir?: ReturnType<typeof setTimeout> }>({})
   const { toast } = useToasts()
   const navigate = useNavigate()
@@ -93,6 +94,10 @@ export default function Wizard() {
           api.get<SchedulingSettings>('/settings/scheduling'),
         ])
         if (cancelled) return
+        api.get<NextRunResponse>('/runs/next').then(
+          (r) => { if (!cancelled) setServerTz(r.timezone ?? null) },
+          () => {},
+        )
         const sched = parseCron(s.cron)
         // path_map pairs are [verifyarr-path, bazarr-path].
         const firstPair = b.path_map[0]
@@ -258,8 +263,8 @@ export default function Wizard() {
   const v = vals
   const needsBazarr = (v.badAction === 'blacklist' || v.badAction === 'remediate') && !v.bazarrKey && !v.bazarrKeySet
   const folders: { key: 'moviesDir' | 'seriesDir'; label: string; ph: string }[] = [
-    { key: 'moviesDir', label: 'Movies folder', ph: '/data/media/movies' },
-    { key: 'seriesDir', label: 'Series folder', ph: '/data/media/tv' },
+    { key: 'moviesDir', label: 'Movies folder', ph: '/media/movies' },
+    { key: 'seriesDir', label: 'Series folder', ph: '/media/tv' },
   ]
 
   return (
@@ -412,7 +417,7 @@ export default function Wizard() {
                   <span aria-hidden="true" className="text-dim" style={{ paddingBottom: 8 }}>→</span>
                   <div>
                     <label htmlFor="mp-t">Same folder in Verifyarr</label>
-                    <input id="mp-t" type="text" placeholder="/data/media/tv" value={v.mapTo} onChange={(e) => { setV({ mapTo: e.target.value }); setMapTouched(true) }} style={{ fontFamily: 'var(--mono)', fontSize: 13 }} />
+                    <input id="mp-t" type="text" placeholder="/media/tv" value={v.mapTo} onChange={(e) => { setV({ mapTo: e.target.value }); setMapTouched(true) }} style={{ fontFamily: 'var(--mono)', fontSize: 13 }} />
                   </div>
                 </div>
               </div>
@@ -487,7 +492,8 @@ export default function Wizard() {
           {step === 5 && (
             <>
               <p className="text-dim" style={{ margin: '0 0 16px', lineHeight: 1.5 }}>
-                When should Verifyarr look for new and changed files? A scan works the processor hard, so night is best.
+                When should Verifyarr look for new and changed files? A scan works the processor hard, so night is best.{' '}
+                Times are local time on the server{serverTz ? ` (${serverTz})` : ''}.
               </p>
               <RadioCards
                 name="sched"

@@ -120,6 +120,8 @@ export interface StatsSummary {
 
 export interface NextRunResponse {
   next_run_at: string | null
+  /** Server timezone name (e.g. "Europe/Copenhagen") for schedule fields. */
+  timezone?: string | null
 }
 
 export interface MatchRatePoint {

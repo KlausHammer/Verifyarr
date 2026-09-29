@@ -31,11 +31,21 @@ via the built-in webapp (see `verifyarr.web`).
 import logging
 import os
 
+# Unknown levels crash basicConfig, so validate first (case-insensitive).
+def _parse_log_level(raw: str) -> str:
+    level = (raw or "").strip().upper()
+    return level if level in ("CRITICAL", "ERROR", "WARNING", "INFO", "DEBUG") else "INFO"
+
+
+_raw_log_level = os.environ.get("LOG_LEVEL", "INFO")
+_log_level = _parse_log_level(_raw_log_level)
 logging.basicConfig(
-    level=os.environ.get("LOG_LEVEL", "INFO"),
+    level=_log_level,
     format="%(asctime)s %(levelname)s %(message)s",
 )
 log = logging.getLogger("verifyarr")
+if _log_level != _raw_log_level.strip().upper():
+    log.warning("Ignoring invalid LOG_LEVEL=%r, using INFO instead", _raw_log_level)
 
 # Custom levels for Activity's per-file log lines -- both between INFO(20) and WARNING(30) so
 # they're filtered out the same way ordinary INFO progress lines are once Settings -> Log's

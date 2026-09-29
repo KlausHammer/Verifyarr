@@ -21,9 +21,9 @@ router = APIRouter(prefix="/api/runs", tags=["runs"])
 
 @router.get("/next")
 def next_run(user=Depends(require_auth), conn=Depends(get_conn)):
-    """When the scheduled sweep fires next (the sidebar/dashboard's "Next scan") — derived
-    from scheduling.cron, the same expression the scheduler itself runs on."""
-    return {"next_run_at": scheduler.next_sweep_at(Config.from_db(conn).sweep_cron)}
+    """Next sweep fire time ("Next scan") from scheduling.cron, plus the server zone name."""
+    return {"next_run_at": scheduler.next_sweep_at(Config.from_db(conn).sweep_cron),
+            "timezone": scheduler.server_timezone_name()}
 
 
 class StartRunBody(BaseModel):

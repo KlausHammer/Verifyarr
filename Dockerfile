@@ -58,12 +58,16 @@ RUN npm run build
 # ---- final image ----
 FROM python:3.12-slim-bookworm
 
+ENV PYTHONUNBUFFERED=1 PUID=1000 PGID=1000 UMASK=022
+
 RUN apt-get update && apt-get install -y --no-install-recommends \
         ffmpeg \
         tzdata \
         procps \
         libvulkan1 \
         mesa-vulkan-drivers \
+        util-linux \
+        passwd \
     && rm -rf /var/lib/apt/lists/*
 # Note: no 'cron' anymore — the webapp is a persistent service with its own built-in
 # scheduling (APScheduler, see verifyarr/scheduler.py), not a cron-triggered one-off process.
@@ -87,8 +91,15 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY verifyarr.py ./
 COPY verifyarr/ ./verifyarr/
+COPY docker/entrypoint.sh ./docker/entrypoint.sh
+RUN chmod +x ./docker/entrypoint.sh
 COPY --from=frontend-builder /frontend/dist/ ./verifyarr/web/static/
+
+# No curl in slim: plain stdlib against the auth-free /api/health.
+HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
+    CMD python3 -c "import os,urllib.request;urllib.request.urlopen('http://127.0.0.1:%s/api/health' % os.environ.get('PORT', '8787'), timeout=5)"
 
 VOLUME ["/data"]
 EXPOSE 8787
-ENTRYPOINT ["python3", "-m", "verifyarr.web"]
+ENTRYPOINT ["/app/docker/entrypoint.sh"]
+CMD ["python3", "-m", "verifyarr.web"]

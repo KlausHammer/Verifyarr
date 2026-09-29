@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+import os
 import sys
 import threading
 from pathlib import Path
@@ -103,6 +104,23 @@ def cmd_generate(cfg: Config, conn, video: str, lang: str, trigger: str = "cli_g
                      video=video_p, lang=lang)
 
 
+def _drop_root_to_puid() -> None:
+    # `docker exec` runs as root: without this the CLI leaves root-owned db-wal/-shm
+    # behind and the PUID app user can't write its own DB. Supplementary groups kept.
+    if os.geteuid() != 0:
+        return
+    try:
+        puid = int(os.environ.get("PUID", "") or 0)
+        pgid = int(os.environ.get("PGID", "") or 1000)
+    except ValueError:
+        return
+    if puid <= 0:
+        return
+    os.setgid(pgid)
+    os.setuid(puid)
+    log.info("Dropped privileges to %d:%d (PUID/PGID)", puid, pgid)
+
+
 def cmd_reset_password() -> None:
     conn = db.connect()
     try:
@@ -113,6 +131,7 @@ def cmd_reset_password() -> None:
 
 
 def main() -> None:
+    _drop_root_to_puid()
     parser = argparse.ArgumentParser(description="Subtitle sync and correctness check")
     sub = parser.add_subparsers(dest="mode", required=True)
 

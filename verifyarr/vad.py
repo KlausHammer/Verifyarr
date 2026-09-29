@@ -13,9 +13,8 @@ Sources, cheapest first (all language-independent):
   2. A VAD TSV sidecar (the whisper_gpu_staging .vad.tsv format) -- parsing support
      for offline evaluation and future sidecars.
   3. A Silero VAD binary run (whisper-vad-speech-segments) when vad_binary/vad_model
-     are configured (local-only). The model file is NOT auto-downloaded: unlike the
-     Whisper models there is no verified stable URL for it, so it must be mounted or
-     placed at vad_model (default /app/models/ggml-silero-v5.1.2.bin).
+     are configured (local-only). Docker bakes both in; bare-metal must place the model
+     itself (never auto-downloaded: no verified stable URL).
 
 Deliberately NOT done: skipping silent stretches of a FULL transcription. Full-track
 timestamps must stay on the audio's own clock -- compressing out silence is the same
