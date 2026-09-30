@@ -124,6 +124,8 @@ SWEEP_MODELS = ["base.en-cpu", "base.en-greedy-cpu", "base.en-q5_1-cpu",
                 "tiny.en-cpu", "tiny.en-greedy-cpu", "tiny.en-q5_1-cpu",
                 "turbo-q5_0", "turbo-q8_0"]
 ALL_MODELS = [TURBO] + SWEEP_MODELS
+# Opt-in via --models: cloud Groq whisper-large-v3-turbo, only for the approved episodes.
+OPT_IN_MODELS = ["groq-turbo"]
 SLUGS = ["C_S03E03", "C_S03E08", "C_S03E10",
          "SH_S01E01", "SH_S01E02", "SH_S01E03",
          "SH_S01E04", "SH_S01E05", "SH_S01E06",
@@ -363,7 +365,7 @@ def cfg_for(conn, mode="full", audio="on", **over) -> Config:
         # Local Whisper, like production: the cloud providers only ever generate a missing
         # subtitle from scratch, which the matrix doesn't exercise. The binary just has to exist
         # (has_stt_configured); every call that would run it is patched below.
-        use_local_whisper=True, local_whisper_binary=sys.executable,
+        local_whisper_binary=sys.executable,
         # Sampled runs the SHIPPED defaults -- nothing tuning-related is pinned here. Pinning
         # made three separate "after" runs read as no-change while the default under test was
         # silently overridden; test_escalation_follows_the_shipped_default guards it now.
@@ -1121,7 +1123,7 @@ def main(argv=None):
     work = OUT_DIR / f"e2e_work_matrix{suffix}"
     work.mkdir(exist_ok=True)
     out_path = OUT_DIR / f"{out_stem}{suffix}.jsonl"
-    bad_models = [m for m in models if m not in ALL_MODELS]
+    bad_models = [m for m in models if m not in ALL_MODELS + OPT_IN_MODELS]
     if bad_models:
         raise SystemExit(f"unknown models: {bad_models} (choose from {ALL_MODELS})")
     bad_scen = [s for s in scen if s not in SCENARIOS]

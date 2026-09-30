@@ -46,6 +46,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Iterator, Optional
 
+from verifyarr.audiotrack import audio_map_args
 from verifyarr import log, HEADER, SUCCESS
 from verifyarr import db
 from verifyarr import correctness
@@ -172,8 +173,8 @@ def extract_full_audio(video_path: Path, out_path: Path, bitrate_kbps: int, time
     lets a 90+ minute movie fit into a handful of provider-sized chunks instead of one huge WAV
     (a raw WAV would be ~15x the size for the same duration). Doing this once, up front, also
     means slicing the individual chunks below never has to re-decode the video itself."""
-    cmd = ["ffmpeg", "-y", "-i", str(video_path), "-vn", "-ac", "1", "-ar", "16000",
-           "-b:a", f"{bitrate_kbps}k", "-f", "mp3", str(out_path)]
+    cmd = ["ffmpeg", "-y", "-i", str(video_path), "-vn", *audio_map_args(video_path),
+           "-ac", "1", "-ar", "16000", "-b:a", f"{bitrate_kbps}k", "-f", "mp3", str(out_path)]
     proc = _run_tool(cmd, timeout, cancel_event=cancel_event)
     return proc is not None and proc.returncode == 0 and _audio_written(out_path)
 
@@ -905,22 +906,9 @@ TRANSLATE_MAX_CHARS = 8000
 _NUMBER_PREFIX_COST = 8  # "123. " plus the newline, rounded up
 
 
-def _generate_llm_model_and_fallback(cfg: Config) -> tuple[str, Optional[str]]:
-    provider = cfg.generate_llm_provider
-    if provider == "gemini":
-        return cfg.generate_gemini_llm_model, cfg.generate_gemini_llm_model_fallback
-    if provider == "openrouter":
-        return cfg.generate_openrouter_llm_model, cfg.generate_openrouter_llm_model_fallback
-    return cfg.generate_groq_llm_model, cfg.generate_groq_llm_model_fallback
-
-
 def _llm_call_kwargs(cfg: Config) -> dict:
-    """The provider/model/key resolution shared by both translation call shapes below —
-    one place deciding which LLM (and whose key) a translation uses."""
-    provider = cfg.generate_llm_provider
-    llm_model, llm_fallback = _generate_llm_model_and_fallback(cfg)
-    return {"provider": provider, "api_key": cfg.active_generate_llm_api_key,
-            "llm_model": llm_model, "llm_model_fallback": llm_fallback}
+    """Which LLM (and whose key) a translation uses -- see Config.llm_call_kwargs."""
+    return cfg.llm_call_kwargs
 
 
 def _translate_one(cfg: Config, text: str, target_lang_name: str, cancel_event=None) -> Optional[str]:
@@ -1099,17 +1087,6 @@ def _adapter_local(cfg: Config, audio_path: Path, language: Optional[str], cance
     return {"language": result.get("language"), "segments": segments}
 
 
-def _adapter_groq_correctness(cfg: Config, audio_path: Path, language: Optional[str], cancel_event=None) -> dict:
-    return _transcribe_chunk_openai_compat("groq", audio_path, cfg.active_stt_api_key, cfg.groq_model,
-                                            cfg.groq_model_fallback or None, language, cancel_event=cancel_event)
-
-
-def _adapter_openrouter_correctness(cfg: Config, audio_path: Path, language: Optional[str], cancel_event=None) -> dict:
-    return _transcribe_chunk_openai_compat("openrouter", audio_path, cfg.active_stt_api_key,
-                                            cfg.openrouter_stt_model, cfg.openrouter_stt_model_fallback or None,
-                                            language, cancel_event=cancel_event)
-
-
 def _drop_nonspeech(segments: list[dict]) -> list[dict]:
     """Sound-effect/audio-condition tags ("[screaming]", "(music)") tokenize as ordinary words and
     can spuriously match real dialogue in line-order/correctness evidence. Applied only here, not
@@ -1120,22 +1097,11 @@ def _drop_nonspeech(segments: list[dict]) -> list[dict]:
 
 def full_transcript_for_check(cfg: Config, video_path: Path, tmp_dir: Path, conn,
                                cancel_event=None) -> tuple[Optional[str], list[dict]]:
-    """Full-track transcript for sync.whisper_mode == "full" -- routes through local Whisper when
-    correctness.use_local_whisper is on, otherwise correctness.stt_provider's cloud API."""
-    if cfg.use_local_whisper:
-        spoken_lang, segments = _transcribe_or_reuse(
-            cfg, video_path, tmp_dir, conn, cancel_event=cancel_event,
-            provider="local", model=Path(cfg.local_whisper_model).name,
-            adapter=_adapter_local, chunk_seconds=LOCAL_FULLTRACK_CHUNK_SECONDS, label="local Whisper")
-        return spoken_lang, _drop_repetition_loops(_drop_nonspeech(segments))
-    if cfg.stt_provider == "openrouter":
-        adapter, model = _adapter_openrouter_correctness, cfg.openrouter_stt_model
-    else:
-        adapter, model = _adapter_groq_correctness, cfg.groq_model
+    """Full-track transcript for sync.whisper_mode == "full" -- always local whisper.cpp."""
     spoken_lang, segments = _transcribe_or_reuse(
         cfg, video_path, tmp_dir, conn, cancel_event=cancel_event,
-        provider=cfg.stt_provider, model=model, adapter=adapter,
-        chunk_seconds=CLOUD_FULLTRACK_CHUNK_SECONDS, label=cfg.stt_provider)
+        provider="local", model=Path(cfg.local_whisper_model).name,
+        adapter=_adapter_local, chunk_seconds=LOCAL_FULLTRACK_CHUNK_SECONDS, label="local Whisper")
     return spoken_lang, _drop_repetition_loops(_drop_nonspeech(segments))
 
 

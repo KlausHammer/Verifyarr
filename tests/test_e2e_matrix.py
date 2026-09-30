@@ -562,9 +562,7 @@ class AudioCacheTests(unittest.TestCase):
                 # enable_correctness_check=False keeps pipeline.screen_pair (which run_one now
                 # calls before sync_pair) out of the way: this test is about the audio cache
                 # reaching sync_pair, not about screening.
-                cfg = SimpleNamespace(stt_provider="groq", groq_model="turbo",
-                                      use_local_whisper=True,
-                                      local_whisper_model="/models/ggml-tiny.en.bin",
+                cfg = SimpleNamespace(local_whisper_model="/models/ggml-tiny.en.bin",
                                       enable_correctness_check=False, has_stt_configured=False,
                                       line_order_enabled=True, line_order_audio_confirm=True)
                 shared = {Path("/media/v.mkv"): Path("/staging/V.wav")}

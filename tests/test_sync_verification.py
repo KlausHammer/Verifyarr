@@ -81,7 +81,7 @@ def _test_config(conn) -> Config:
         # generating a missing subtitle from scratch, which these tests don't touch. The binary
         # only has to EXIST (has_stt_configured checks that); patch_whisper intercepts every call
         # that would actually run it.
-        use_local_whisper=True, local_whisper_binary=sys.executable,
+        local_whisper_binary=sys.executable,
         backup_originals=False, dry_run=False, sync_enabled=True,
         enable_correctness_check=True, anchor_check_enabled=True,
         line_order_enabled=True, line_order_audio_confirm=True,
@@ -163,23 +163,18 @@ class LineOrderCacheKeyTests(unittest.TestCase):
         return cache_key_for(self._subs(), self._cfg(**over))
 
     def test_a_different_local_model_is_a_different_key(self):
-        a = self._key(use_local_whisper=True, local_whisper_model="/m/ggml-tiny.en.bin")
-        b = self._key(use_local_whisper=True, local_whisper_model="/m/ggml-small.en.bin")
+        a = self._key(local_whisper_model="/m/ggml-tiny.en.bin")
+        b = self._key(local_whisper_model="/m/ggml-small.en.bin")
         self.assertNotEqual(a, b)
 
-    def test_switching_provider_is_a_different_key(self):
-        local = self._key(use_local_whisper=True, local_whisper_model="/m/ggml-tiny.en.bin")
-        cloud = self._key(use_local_whisper=False)
-        self.assertNotEqual(local, cloud)
-
     def test_the_same_settings_still_give_the_same_key(self):
-        a = self._key(use_local_whisper=True, local_whisper_model="/m/ggml-tiny.en.bin")
-        b = self._key(use_local_whisper=True, local_whisper_model="/m/ggml-tiny.en.bin")
+        a = self._key(local_whisper_model="/m/ggml-tiny.en.bin")
+        b = self._key(local_whisper_model="/m/ggml-tiny.en.bin")
         self.assertEqual(a, b)
 
     def test_it_agrees_with_the_full_transcript_cache_key(self):
         # One source for (provider, model) -- a reader and a writer can't disagree.
-        cfg = self._cfg(use_local_whisper=True, local_whisper_model="/m/ggml-tiny.en.bin")
+        cfg = self._cfg(local_whisper_model="/m/ggml-tiny.en.bin")
         provider, model = full_transcript_cache_key(cfg)
         from verifyarr.line_order import cache_key_for
         self.assertTrue(cache_key_for(self._subs(), cfg).endswith(f":{provider}:{model}"))

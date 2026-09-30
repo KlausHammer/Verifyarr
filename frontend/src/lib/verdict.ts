@@ -172,12 +172,16 @@ export function verdict(f: FileRow): Verdict {
       'The correctness check is turned off in Settings.',
       'Turn it on to check this subtitle, or leave it.', 'settings')
   }
-  const noKey = flag.match(/^no (\S+) API key$/)
-  if (noKey) {
-    const provider = noKey[1].charAt(0).toUpperCase() + noKey[1].slice(1)
+  if (flag === 'no local Whisper binary') {
     return make('no_key', 'pill-warn', '!', "Can't check",
-      `No ${provider} API key is set, so this subtitle couldn't be checked.`,
-      'Add an API key in Settings, then Re-check.', 'settings')
+      'The local Whisper program was not found, so this subtitle could not be checked.',
+      'Check the Whisper binary path in Settings, then Re-check.', 'settings')
+  }
+  // Rows from before checks went local-only: "no groq API key" etc.
+  if (/^no \S+ API key$/.test(flag)) {
+    return make('no_key', 'pill-warn', '!', "Can't check",
+      'This was recorded by an older version that needed a cloud key. Checks now run locally.',
+      'Re-check.', 'recheck')
   }
   if (status.startsWith('error') || status === 'unexpected-error') {
     return make('sync_error', 'pill-warn', '!', 'Sync failed',

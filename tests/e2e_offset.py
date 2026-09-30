@@ -102,7 +102,7 @@ def cfg_for(conn, **over) -> Config:
         enable_correctness_check=True, line_order_enabled=True,
         line_order_audio_confirm=True, whisper_mode="full",
         # Local Whisper, like production -- the cloud providers only generate missing subtitles.
-        use_local_whisper=True, local_whisper_binary=sys.executable,
+        local_whisper_binary=sys.executable,
     )
     vals.update(over)
     for k, v in vals.items():

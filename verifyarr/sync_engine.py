@@ -7,12 +7,14 @@ import os
 import re
 import shutil
 import subprocess
+import tempfile
 import threading
 from contextlib import nullcontext
 from pathlib import Path
 from typing import Optional
 
 from verifyarr import log
+from verifyarr.audiotrack import audio_map_args, english_audio_index
 from verifyarr.procprio import wrap_low_priority
 
 SHIFT_BLOCK_RE = re.compile(r"shifted block of \d+ subtitles with length [\d:.]+ by (-?)([\d:.]+)")
@@ -64,8 +66,8 @@ def extract_audio_wav(video_path: Path, out_path: Path, timeout: int = 600) -> b
     behind and never truncates a previous good one (ffmpeg's -y used to do both)."""
     out_path = Path(out_path)
     tmp_path = out_path.with_name(out_path.name + ".part")
-    cmd = ["ffmpeg", "-y", "-i", str(video_path), "-vn", "-ac", "1", "-ar", "16000",
-           "-f", "wav", str(tmp_path)]
+    cmd = ["ffmpeg", "-y", "-i", str(video_path), "-vn", *audio_map_args(video_path),
+           "-ac", "1", "-ar", "16000", "-f", "wav", str(tmp_path)]
     try:
         proc = subprocess.run(wrap_low_priority(cmd), capture_output=True, text=True, timeout=timeout)
     except (subprocess.TimeoutExpired, OSError):
@@ -165,7 +167,18 @@ def resolve_alass_reference(video_path: Path, audio_cache: Optional[dict],
     video could both see "not cached yet" at once and race to extract/overwrite the same WAV
     path. A plain sequential caller (CLI, single-file jobs) passes None, same as before."""
     if audio_cache is None or audio_cache_dir is None:
-        return video_path
+        # alass can't pick a track itself: a non-first English track needs its own WAV.
+        idx = english_audio_index(video_path)
+        if not idx:
+            return video_path
+        try:
+            st = Path(video_path).stat()
+            ident = f"{video_path}|{st.st_mtime_ns}|{st.st_size}"
+        except OSError:
+            ident = str(video_path)
+        digest = hashlib.md5(ident.encode()).hexdigest()[:12]
+        wav_path = Path(tempfile.gettempdir()) / f"{video_path.stem}.{digest}.en.wav"
+        return wav_path if wav_path.exists() or extract_audio_wav(video_path, wav_path) else video_path
     with lock if lock is not None else nullcontext():
         if video_path not in audio_cache:
             digest = hashlib.md5(str(video_path).encode()).hexdigest()[:12]

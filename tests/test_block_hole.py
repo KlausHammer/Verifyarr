@@ -64,6 +64,26 @@ class MusicFilterTests(unittest.TestCase):
         self.assertGreater(secs, 0)
 
 
+class SongWindowTests(unittest.TestCase):
+    def test_bare_lyrics_between_music_marks_are_ignored(self):
+        raw = _segs((30, 34, "(upbeat music)"), (40, 50, "bare lyric one two three"),
+                    (60, 70, "more bare lyric words here"), (80, 84, "♪ la la ♪"))
+        kept = [s for s in raw if "(" not in s["text"]]
+        self.assertGreater(C.gap_speech(kept, 10.0, 200.0)[1], 0)
+        self.assertEqual(C.gap_speech(kept, 10.0, 200.0, C.music_spans(raw)), (0.0, 0))
+
+    def test_speech_outside_the_song_still_counts(self):
+        raw = _segs((30, 50, "(music)"), (120, 140, "a real scene goes on here now"))
+        kept = [raw[1]]
+        secs, words = C.gap_speech(kept, 10.0, 200.0, C.music_spans(raw))
+        self.assertEqual(words, 7)
+
+    def test_no_marks_changes_nothing(self):
+        raw = _segs((40, 50, "just talking here"))
+        self.assertEqual(C.gap_speech(raw, 10.0, 200.0, C.music_spans(raw)),
+                         C.gap_speech(raw, 10.0, 200.0))
+
+
 class MissingMiddleTests(unittest.TestCase):
     def test_lower_bar_catches_120_words(self):
         subs = _subs((0, 10, "a"), (500, 510, "b"))

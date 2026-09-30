@@ -18,10 +18,6 @@ interface WizVals {
   bazarrKeySet: boolean
   mapFrom: string
   mapTo: string
-  speech: 'local' | 'cloud'
-  cloud: 'groq' | 'openrouter'
-  apiKey: string
-  cloudKeySet: boolean
   badAction: 'off' | 'quarantine' | 'blacklist' | 'remediate'
   schedMode: 'nightly' | 'weekly' | 'keep'
   schedTime: string
@@ -101,7 +97,6 @@ export default function Wizard() {
         const sched = parseCron(s.cron)
         // path_map pairs are [verifyarr-path, bazarr-path].
         const firstPair = b.path_map[0]
-        const cloud = c.stt_provider === 'openrouter' ? 'openrouter' : 'groq'
         setVals({
           moviesDir: fromSettings ? g.movies_folder : '',
           seriesDir: fromSettings ? g.series_folder : '',
@@ -111,10 +106,6 @@ export default function Wizard() {
           bazarrKeySet: b.api_key.is_set,
           mapFrom: fromSettings && firstPair ? (firstPair[1] ?? '') : '',
           mapTo: fromSettings && firstPair ? (firstPair[0] ?? '') : '',
-          speech: c.use_local_whisper ? 'local' : 'cloud',
-          cloud,
-          apiKey: '',
-          cloudKeySet: cloud === 'groq' ? c.groq_api_key.is_set : c.openrouter_api_key.is_set,
           badAction: c.auto_action,
           schedMode: sched.mode === 'advanced' ? 'keep' : sched.mode === 'weekly' ? 'weekly' : 'nightly',
           schedTime: sched.time,
@@ -186,12 +177,7 @@ export default function Wizard() {
     setFinishError(null)
     try {
       const correctnessValues: Record<string, unknown> = {
-        use_local_whisper: vals.speech === 'local',
-        stt_provider: vals.cloud,
         auto_action: vals.badAction,
-      }
-      if (vals.speech === 'cloud' && vals.apiKey) {
-        correctnessValues[vals.cloud === 'groq' ? 'groq_api_key' : 'openrouter_api_key'] = vals.apiKey
       }
       const bazarrValues: Record<string, unknown> = { url: vals.bazarrUrl }
       if (vals.bazarrKey) bazarrValues.api_key = vals.bazarrKey
@@ -429,39 +415,11 @@ export default function Wizard() {
               <p className="text-dim" style={{ margin: '0 0 16px', lineHeight: 1.5 }}>
                 Verifyarr listens to the audio with speech recognition and compares it with each subtitle.
               </p>
-              <div style={{ marginBottom: 16 }}>
-                <RadioCards
-                  name="speech"
-                  value={v.speech}
-                  onPick={(speech) => setV({ speech })}
-                  options={[
-                    { value: 'local', title: 'Local Whisper (recommended)', desc: 'Runs on this server. Free and private, no API key. Slower on small servers like an Intel N100, but it runs at night.' },
-                    { value: 'cloud', title: 'Cloud provider', desc: 'Much faster. Short audio clips are sent to the provider; needs an API key and may cost money.' },
-                  ]}
-                />
-              </div>
-              {v.speech === 'cloud' && (
-                <>
-                  <div className="field">
-                    <label htmlFor="cp">Provider</label>
-                    <select id="cp" value={v.cloud} onChange={(e) => setV({ cloud: e.target.value as WizVals['cloud'] })}>
-                      <option value="groq">Groq</option>
-                      <option value="openrouter">OpenRouter</option>
-                    </select>
-                  </div>
-                  <div className="field">
-                    <label htmlFor="ck">API key</label>
-                    <input
-                      id="ck"
-                      type="password"
-                      placeholder={v.cloudKeySet ? '••••••••••••••••  (saved — leave blank to keep)' : ''}
-                      value={v.apiKey}
-                      onChange={(e) => setV({ apiKey: e.target.value })}
-                    />
-                    <div className="field-hint" style={{ color: 'var(--text-dim)' }}>Stored on this server only. Short audio clips are sent to the provider.</div>
-                  </div>
-                </>
-              )}
+              <p style={{ margin: 0, lineHeight: 1.5 }}>
+                <strong>Local Whisper.</strong> It runs on this server: free and private, no API key. It can be slow on small
+                servers like an Intel N100, but it runs at night. Cloud providers are only used for generating
+                subtitles, which you set up later under Settings → Generate.
+              </p>
             </>
           )}
 

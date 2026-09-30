@@ -356,7 +356,7 @@ function WhatRunsTable({ general, sync, correctness, generate }: ReturnType<type
     },
     {
       key: 'correctness', name: 'Correctness check',
-      tip: 'Compares a bit of audio to the subtitle with Whisper, to catch a mismatched file. Needs an API key on the Speech recognition tab.',
+      tip: 'Compares a bit of audio to the subtitle with Whisper, to catch a mismatched file. Runs on this machine with local Whisper; no API key needed.',
       manual: c.enabled, setManual: (v: boolean) => correctness.setData({ ...c, enabled: v }),
       auto: g.auto_scan_correctness_enabled, setAuto: (v: boolean) => general.setData({ ...g, auto_scan_correctness_enabled: v }),
       action: (
@@ -768,42 +768,31 @@ function SyncTab() {
 
 function CorrectnessTab() {
   const { data, setData, error: loadError, reload } = useGroup<CorrectnessSettings>('correctness')
-  const [newGroqKey, setNewGroqKey] = useState('')
-  const [newOpenRouterKey, setNewOpenRouterKey] = useState('')
   const [snapshot, setSnapshot] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
   const [savedAt, setSavedAt] = useState<number | null>(null)
   const [error, setError] = useState<string | null>(null)
 
-  const pick = (d: CorrectnessSettings, gk: string, ok: string) => {
-    const { groq_api_key: _g, openrouter_api_key: _o, enabled: _e, auto_action: _a, ...rest } = d
-    return { ...rest, newGroqKey: gk, newOpenRouterKey: ok }
+  // NOT "enabled"/"auto_action" — Automation's "What runs" table owns those, from its own
+  // copy of this group.
+  const pick = (d: CorrectnessSettings) => {
+    const { enabled: _e, auto_action: _a, ...rest } = d
+    return rest
   }
 
   useEffect(() => {
-    if (data && snapshot === null) setSnapshot(JSON.stringify(pick(data, '', '')))
+    if (data && snapshot === null) setSnapshot(JSON.stringify(pick(data)))
   }, [data, snapshot])
-  const dirty = data !== null && snapshot !== null && JSON.stringify(pick(data, newGroqKey, newOpenRouterKey)) !== snapshot
+  const dirty = data !== null && snapshot !== null && JSON.stringify(pick(data)) !== snapshot
 
   async function save() {
     if (!data) return
     setSaving(true)
     setError(null)
     try {
-      const values: Record<string, unknown> = pick(data, '', '')
-      delete (values as Record<string, unknown>).newGroqKey
-      delete (values as Record<string, unknown>).newOpenRouterKey
-      // Secrets go over the wire only when the user typed a new one — otherwise the server's
-      // stored key must survive untouched. Never render the stored secret back into the input.
-      if (newGroqKey) values.groq_api_key = newGroqKey
-      if (newOpenRouterKey) values.openrouter_api_key = newOpenRouterKey
-      // NOT "enabled"/"auto_action" — Automation's "What runs" table owns those, from its own
-      // copy of this group.
-      const r = await api.put<CorrectnessSettings>('/settings/correctness', { values })
+      const r = await api.put<CorrectnessSettings>('/settings/correctness', { values: pick(data) })
       setData(r)
-      setNewGroqKey('')
-      setNewOpenRouterKey('')
-      setSnapshot(JSON.stringify(pick(r, '', '')))
+      setSnapshot(JSON.stringify(pick(r)))
       setSavedAt(Date.now())
     } catch (err) {
       setError(err instanceof ApiError ? err.message : String(err))
@@ -813,8 +802,6 @@ function CorrectnessTab() {
   }
 
   function discard() {
-    setNewGroqKey('')
-    setNewOpenRouterKey('')
     setSnapshot(null)
     setError(null)
     reload()
@@ -823,111 +810,34 @@ function CorrectnessTab() {
   useToolbarApi(dirty, error ?? loadError, savedAt, true, saving, save, discard)
 
   if (!data) return <span className="spinner" />
-  const isOpenRouter = data.stt_provider === 'openrouter'
 
   return (
     <>
       <section className="card" aria-labelledby="sc-corr0">
-        <h2 id="sc-corr0" style={{ margin: '0 0 4px', fontSize: 15 }}>Provider</h2>
+        <h2 id="sc-corr0" style={{ margin: '0 0 4px', fontSize: 15 }}>Whisper (local)</h2>
         <p className="text-dim" style={{ fontSize: 12.5, maxWidth: 560, margin: '0 0 14px', lineHeight: 1.5 }}>
-          Turned on/off from Settings → Automation → What runs — the fields below configure the
-          provider it uses once it&apos;s on.
+          Turned on/off from Settings → Automation → What runs. The checks always listen with
+          whisper.cpp on this machine — no cloud speech recognition and no API key. Cloud is
+          only for generating subtitles (Settings → Generate), and for translating a subtitle
+          that is in another language than the audio.
         </p>
-        <ChoiceField
-          label="Provider"
-          tip="Used for translation always, and for transcription unless local Whisper (below) is turned on."
-          name="stt_provider"
-          value={data.stt_provider}
-          onPick={(stt_provider) => setData({ ...data, stt_provider })}
-          options={[
-            { value: 'groq', title: 'Groq', desc: 'fast Whisper API' },
-            { value: 'openrouter', title: 'OpenRouter', desc: 'Whisper via OpenRouter' },
-          ]}
-        />
-        <ToggleRow
-          id="use_local_whisper"
-          checked={data.use_local_whisper}
-          onChange={(use_local_whisper) => setData({ ...data, use_local_whisper })}
-          label="Use local Whisper for transcription"
-          tip="Runs the per-clip Whisper calls on this box's own CPU/GPU via whisper.cpp instead of the cloud provider above — no API key or network needed for them. Translation still uses the provider above regardless of this."
-        />
-        {data.use_local_whisper && (
-          <>
-            <Field advanced label="Model file path" tip="A ggml model file. Every threshold is measured on tiny.en (the default) -- other models transcribe differently and are not calibrated.">
-              <input type="text" value={data.local_whisper_model} onChange={(e) => setData({ ...data, local_whisper_model: e.target.value })} />
-            </Field>
-            <Field advanced label="Binary path" tip="The whisper.cpp binary. Ships at /usr/local/bin/whisper-cli in Docker.">
-              <input type="text" value={data.local_whisper_binary} onChange={(e) => setData({ ...data, local_whisper_binary: e.target.value })} />
-            </Field>
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, maxWidth: 540 }}>
-              <Field advanced label="Use GPU" tip="Off forces CPU-only (-ng) even if the binary was built with Vulkan/GPU support.">
-                <label style={{ display: 'flex', alignItems: 'center', gap: 8, margin: 0 }}>
-                  <input type="checkbox" checked={data.local_whisper_use_gpu} onChange={(e) => setData({ ...data, local_whisper_use_gpu: e.target.checked })} style={{ width: 16, height: 16, accentColor: 'var(--accent)' }} />
-                </label>
-              </Field>
-              <Field advanced label="CPU threads">
-                <input type="number" min={1} value={data.local_whisper_threads} onChange={(e) => setData({ ...data, local_whisper_threads: Number(e.target.value) })} />
-              </Field>
-            </div>
-          </>
-        )}
+        <Field advanced label="Model file path" tip="A ggml model file. Every threshold is measured on tiny.en (the default) -- other models transcribe differently and are not calibrated.">
+          <input type="text" value={data.local_whisper_model} onChange={(e) => setData({ ...data, local_whisper_model: e.target.value })} />
+        </Field>
+        <Field advanced label="Binary path" tip="The whisper.cpp binary. Ships at /usr/local/bin/whisper-cli in Docker.">
+          <input type="text" value={data.local_whisper_binary} onChange={(e) => setData({ ...data, local_whisper_binary: e.target.value })} />
+        </Field>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, maxWidth: 540 }}>
+          <Field advanced label="Use GPU" tip="Off forces CPU-only (-ng) even if the binary was built with Vulkan/GPU support.">
+            <label style={{ display: 'flex', alignItems: 'center', gap: 8, margin: 0 }}>
+              <input type="checkbox" checked={data.local_whisper_use_gpu} onChange={(e) => setData({ ...data, local_whisper_use_gpu: e.target.checked })} style={{ width: 16, height: 16, accentColor: 'var(--accent)' }} />
+            </label>
+          </Field>
+          <Field advanced label="CPU threads">
+            <input type="number" min={1} value={data.local_whisper_threads} onChange={(e) => setData({ ...data, local_whisper_threads: Number(e.target.value) })} />
+          </Field>
+        </div>
       </section>
-
-      {!isOpenRouter && (
-        <section className="card" aria-labelledby="sc-corr1">
-          <h2 id="sc-corr1" style={{ margin: '0 0 14px', fontSize: 15 }}>Groq</h2>
-          <Field
-            label="Groq API key"
-            tip={data.groq_api_key.is_set ? 'A key is already saved — type here only to replace it.' : 'Not set yet.'}
-          >
-            <input
-              type="text"
-              autoComplete="off"
-              placeholder={data.groq_api_key.is_set ? '••••••••••••••••  (saved — leave blank to keep)' : 'gsk_…'}
-              value={newGroqKey}
-              onChange={(e) => setNewGroqKey(e.target.value)}
-            />
-          </Field>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
-            {!data.use_local_whisper && (
-              <Field advanced label="Whisper model">
-                <input type="text" value={data.groq_model} onChange={(e) => setData({ ...data, groq_model: e.target.value })} />
-              </Field>
-            )}
-            <Field advanced label="Translation model (LLM)">
-              <input type="text" value={data.groq_llm_model} onChange={(e) => setData({ ...data, groq_llm_model: e.target.value })} />
-            </Field>
-          </div>
-        </section>
-      )}
-
-      {isOpenRouter && (
-        <section className="card" aria-labelledby="sc-corr1">
-          <h2 id="sc-corr1" style={{ margin: '0 0 14px', fontSize: 15 }}>OpenRouter</h2>
-          <Field
-            label="OpenRouter API key"
-            tip={data.openrouter_api_key.is_set ? 'A key is already saved — type here only to replace it.' : 'Not set yet.'}
-          >
-            <input
-              type="text"
-              autoComplete="off"
-              placeholder={data.openrouter_api_key.is_set ? '••••••••••••••••  (saved — leave blank to keep)' : 'sk-or-…'}
-              value={newOpenRouterKey}
-              onChange={(e) => setNewOpenRouterKey(e.target.value)}
-            />
-          </Field>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
-            {!data.use_local_whisper && (
-              <Field advanced label="Whisper model">
-                <input type="text" value={data.openrouter_stt_model} onChange={(e) => setData({ ...data, openrouter_stt_model: e.target.value })} />
-              </Field>
-            )}
-            <Field advanced label="Translation model (LLM)">
-              <input type="text" value={data.openrouter_llm_model} onChange={(e) => setData({ ...data, openrouter_llm_model: e.target.value })} />
-            </Field>
-          </div>
-        </section>
-      )}
 
       <section className="card" aria-labelledby="sc-corr2">
         <h2 id="sc-corr2" style={{ margin: '0 0 14px', fontSize: 15 }}>Checking</h2>
@@ -1011,8 +921,8 @@ function GenerateTab() {
           Generates a subtitle from scratch (via Whisper) for a video that has no subtitle at all,
           then translates it into any other wanted language with an LLM. Turned on/off from
           Settings → Automation → What runs — the fields below configure the providers it uses once
-          it&apos;s on. Uses its own API keys, separate from the Speech recognition tab, so this heavier
-          full-length transcription never competes with the cheap correctness check&apos;s own quota.
+          it&apos;s on. These are the only cloud keys in the app: the correctness check listens locally
+          and only borrows the translation model below for subtitles in another language.
         </p>
         <ChoiceField
           label="Provider"
@@ -1096,7 +1006,8 @@ function GenerateTab() {
         <p className="text-dim" style={{ fontSize: 12.5, maxWidth: 560, margin: '0 0 14px', lineHeight: 1.5 }}>
           Whisper can only translate speech straight to English — any OTHER wanted language goes
           through this LLM step instead, translating the already-timed lines without touching their
-          timestamps.
+          timestamps. The correctness check also uses it to compare a subtitle in another language
+          with the English audio.
         </p>
         <ChoiceField
           label="Provider"

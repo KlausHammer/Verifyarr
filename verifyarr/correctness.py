@@ -17,6 +17,7 @@ from typing import Optional
 import requests
 
 from verifyarr import log
+from verifyarr.audiotrack import audio_map_args, english_audio_index
 from verifyarr.memo import BoundedMemo
 from verifyarr import db
 from verifyarr import vad
@@ -69,6 +70,8 @@ def _map_lang_tag(tag: str) -> Optional[str]:
 
 
 def detect_audio_language_ffprobe(video_path: Path) -> Optional[str]:
+    if english_audio_index(video_path) is not None:
+        return "en"  # the English track is what we listen to (see audiotrack)
     data = _ffprobe_json(video_path, "-select_streams", "a:0",
                          "-show_entries", "stream_tags=language", timeout=30)
     streams = data.get("streams", [])
@@ -143,7 +146,8 @@ def _audio_mime(path: Path) -> str:
 
 def extract_clip(video_path: Path, start_sec: float, duration_sec: int, out_path: Path) -> bool:
     cmd = ["ffmpeg", "-y", "-ss", str(max(0.0, start_sec)), "-t", str(duration_sec),
-           "-i", str(video_path), "-vn", "-ac", "1", "-ar", "16000", "-f", "wav", str(out_path)]
+           "-i", str(video_path), "-vn", *audio_map_args(video_path),
+           "-ac", "1", "-ar", "16000", "-f", "wav", str(out_path)]
     try:
         proc = subprocess.run(wrap_low_priority(cmd), capture_output=True, text=True, timeout=120)
     except subprocess.TimeoutExpired:
@@ -151,9 +155,9 @@ def extract_clip(video_path: Path, start_sec: float, duration_sec: int, out_path
     return proc.returncode == 0 and out_path.exists() and out_path.stat().st_size > 1000
 
 
-# Two providers are supported for BOTH transcription and translation — Config.stt_provider
-# picks which (see Settings -> Correctness). Both have OpenAI-compatible /audio/transcriptions
-# and /chat/completions endpoints, so only URL/key/model names change, not the request shape.
+# Cloud providers, used by generate.py (subtitle generation) and for translation only -- checks
+# never send audio to the cloud. Both have OpenAI-compatible /audio/transcriptions and
+# /chat/completions endpoints, so only URL/key/model names change, not the request shape.
 _STT_URLS = {
     "groq": "https://api.groq.com/openai/v1/audio/transcriptions",
     "openrouter": "https://openrouter.ai/api/v1/audio/transcriptions",  # docs: openrouter.ai/docs/guides/overview/multimodal/stt
@@ -163,7 +167,7 @@ _LLM_URLS = {
     "openrouter": "https://openrouter.ai/api/v1/chat/completions",
     # Google's OpenAI-compatible endpoint — same request/response shape as the two above (see
     # https://ai.google.dev/gemini-api/docs/openai), added for generate.py's translation step
-    # (Settings -> Generate's llm_provider). Not used by correctness.py's own translate_to_english.
+    # (Settings -> Generate's llm_provider); correctness.py's translate_to_english uses it too.
     "gemini": "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions",
 }
 
@@ -287,12 +291,6 @@ def _transcribe_once(provider: str, audio_path: Path, api_key: str, model: str, 
         if attempt < retries:
             sleep_cancellable(2 * (attempt + 1), cancel_event)
     raise RuntimeError(last_err or f"unknown {provider} error")
-
-
-def _stt_model_and_fallback(cfg: Config) -> tuple[str, Optional[str]]:
-    if cfg.stt_provider == "openrouter":
-        return cfg.openrouter_stt_model, (cfg.openrouter_stt_model_fallback or None)
-    return cfg.groq_model, (cfg.groq_model_fallback or None)
 
 
 def _run_cancellable(cmd: list[str], timeout: float, cancel_event=None) -> tuple[int, str, str]:
@@ -475,28 +473,6 @@ def _run_local_whisper(cfg: Config, audio_path: Path, language: Optional[str],
     return _parse_local_whisper_json(data)
 
 
-def _transcribe_with_fallback(cfg: Config, audio_path: Path, language: Optional[str],
-                              response_format: str, cancel_event=None):
-    """Primary STT model, then the configured fallback model if that fails -- switching
-    immediately (without waiting out the rate-limit period) if the failure was specifically a
-    429 and a fallback actually exists (see _post_ratelimited's fail_fast_on_429). language=None
-    lets Whisper detect the spoken language itself (verbose_json reports it back)."""
-    model, fallback = _stt_model_and_fallback(cfg)
-    api_key = cfg.active_stt_api_key
-    try:
-        return _transcribe_once(cfg.stt_provider, audio_path, api_key, model, language=language,
-                                response_format=response_format, cancel_event=cancel_event,
-                                fail_fast_on_429=bool(fallback))
-    except Exception as e:
-        if not fallback or fallback == model:
-            raise
-        reason = "hit its rate limit" if isinstance(e, RateLimitExceeded) else f"failed ({e})"
-        log.warning("%s transcription with model %s %s, trying fallback %s",
-                    cfg.stt_provider, model, reason, fallback)
-        return _transcribe_once(cfg.stt_provider, audio_path, api_key, fallback, language=language,
-                                response_format=response_format, cancel_event=cancel_event)
-
-
 def transcribe_verbose(cfg: Config, audio_path: Path, language: Optional[str], cancel_event=None) -> dict:
     """Same call as transcribe(), but Whisper's full verbose_json response: {"text", "language",
     "segments": [{"start","end","text"}, ...]}. Same request, same price -- the segment timing
@@ -504,10 +480,8 @@ def transcribe_verbose(cfg: Config, audio_path: Path, language: Optional[str], c
     this module transcribes uses this shape and caches the segments (db.save_transcript_cache)
     for whoever checks the same video next. language=None -> Whisper detects it.
 
-    use_local_whisper routes this through _run_local_whisper instead."""
-    if cfg.use_local_whisper:
-        return _run_local_whisper(cfg, audio_path, language, cancel_event=cancel_event)
-    return _transcribe_with_fallback(cfg, audio_path, language, "verbose_json", cancel_event=cancel_event)
+    Local whisper.cpp only -- cloud speech recognition is for generating subtitles."""
+    return _run_local_whisper(cfg, audio_path, language, cancel_event=cancel_event)
 
 
 def translate_text(text: str, target_lang: str, *, provider: str, api_key: str, llm_model: str,
@@ -601,16 +575,16 @@ def translate_to_english(cfg: Config, text: str, cancel_event=None) -> Optional[
     -- unchanged behavior/call sites (line_order.py, _compare_transcript_to_window above) from
     before translate_text was extracted out of this function -- plus a memo of successful
     results (see _TRANSLATION_MEMO), so re-scoring the same window text costs nothing."""
-    provider = cfg.stt_provider
-    llm_model = cfg.openrouter_llm_model if provider == "openrouter" else cfg.groq_llm_model
-    fallback_model = (cfg.openrouter_llm_model_fallback if provider == "openrouter"
-                       else cfg.groq_llm_model_fallback) or None
-    key = (provider, llm_model, text)
+    kw = cfg.llm_call_kwargs
+    if not kw["api_key"]:
+        log.warning("No %s API key under Settings -> Generate: cannot translate a subtitle for the check",
+                    kw["provider"])
+        return None
+    key = (kw["provider"], kw["llm_model"], text)
     hit = _TRANSLATION_MEMO.get(key)
     if hit is not None:
         return hit
-    translated = translate_text(text, "English", provider=provider, api_key=cfg.active_stt_api_key,
-                                llm_model=llm_model, llm_model_fallback=fallback_model, cancel_event=cancel_event)
+    translated = translate_text(text, "English", cancel_event=cancel_event, **kw)
     if translated is not None:
         if len(_TRANSLATION_MEMO) >= _TRANSLATION_MEMO_MAX:
             _TRANSLATION_MEMO.pop(next(iter(_TRANSLATION_MEMO)))
@@ -814,10 +788,41 @@ def _is_music(text: str) -> bool:
     return "♪" in text or "♫" in text
 
 
-def gap_speech(segments: list[dict], g0: float, g1: float) -> tuple[float, int]:
+MUSIC_TAG_RE = re.compile(r"\b(?:music|song|singing|sings)\b", re.IGNORECASE)
+MUSIC_MARGIN_S = 8.0
+# Marks further apart than this are separate songs, each with its own window.
+MUSIC_CLUSTER_GAP_S = 60.0
+
+
+def music_spans(segments: list[dict]) -> list[tuple[float, float]]:
+    """(start, end) of raw transcript segments marked as music: ♪, or a bracket-only
+    tag naming music ("(upbeat music)")."""
+    out = []
+    for s in segments or []:
+        t = s.get("text") or ""
+        if _is_music(t) or (is_nonspeech_annotation(t) and MUSIC_TAG_RE.search(t)):
+            try:
+                out.append((float(s["start"]), float(s["end"])))
+            except (KeyError, TypeError, ValueError):
+                continue
+    return out
+
+
+def gap_speech(segments: list[dict], g0: float, g1: float,
+               music: Optional[list[tuple[float, float]]] = None) -> tuple[float, int]:
     """(overlap seconds, words) of transcript segments in [g0, g1). Words count
     segments starting inside (one utterance, one vote); seconds count overlap.
-    Music-tagged segments don't count -- a song is not a missing scene."""
+    Music-tagged segments don't count -- a song is not a missing scene. With `music`
+    spans, everything from the first to the last mark inside the gap (+margin) is
+    ignored too: tiny writes some lyrics without a mark, turbo writes all of them
+    bare, so only the speech outside the song can show a missing scene."""
+    windows: list[list[float]] = []
+    for m in sorted(m for m in music or [] if m[1] > g0 and m[0] < g1):
+        if windows and m[0] - windows[-1][1] <= MUSIC_CLUSTER_GAP_S:
+            windows[-1][1] = max(windows[-1][1], m[1])
+        else:
+            windows.append([m[0], m[1]])
+    windows = [(lo - MUSIC_MARGIN_S, hi + MUSIC_MARGIN_S) for lo, hi in windows]
     secs, words = 0.0, 0
     for s in segments:
         try:
@@ -825,6 +830,8 @@ def gap_speech(segments: list[dict], g0: float, g1: float) -> tuple[float, int]:
         except (KeyError, TypeError, ValueError):
             continue
         if en <= st or _is_music(s.get("text") or ""):
+            continue
+        if any(st < hi and en > lo for lo, hi in windows):
             continue
         if min(en, g1) - max(st, g0) > 0:
             secs += min(en, g1) - max(st, g0)
@@ -870,7 +877,8 @@ def overrun_evidence(subs, duration_s: Optional[float]) -> Optional[dict]:
 
 def missing_middle_evidence(subs, segments: list[dict],
                             duration_s: Optional[float] = None,
-                            min_words: Optional[int] = None) -> Optional[dict]:
+                            min_words: Optional[int] = None,
+                            music: Optional[list[tuple[float, float]]] = None) -> Optional[dict]:
     """Loudest cue gap clearing both speech bars, or None. Segments must already
     carry full_transcript_for_check's own filters (nonspeech + repetition loops):
     unfiltered, one turbo loop hallucinated 653 words into a healthy gap.
@@ -881,7 +889,7 @@ def missing_middle_evidence(subs, segments: list[dict],
     for g0, g1 in gaps:
         if declared_music_gap(subs, g0, g1):
             continue
-        secs, words = gap_speech(segments, g0, g1)
+        secs, words = gap_speech(segments, g0, g1, music)
         if clears_missing_middle(secs, words, min_words) \
                 and (best is None or secs > best["speech_s"]):
             best = {"gap_start": g0, "gap_end": g1, "speech_s": secs, "words": words}
@@ -1222,10 +1230,7 @@ def correctness_check(video_path: Path, subs: "pysubs2.SSAFile", sub_lang: Optio
     if not duration:
         return {"skipped": True, "reason": "could not read duration (ffprobe)"}
 
-    if cfg.use_local_whisper:
-        log.info("Whisper: local (whisper.cpp, %s)", Path(cfg.local_whisper_model).name)
-    else:
-        log.info("Whisper: %s (cloud)", cfg.stt_provider)
+    log.info("Whisper: local (whisper.cpp, %s)", Path(cfg.local_whisper_model).name)
 
     audio_lang = detect_audio_language_ffprobe(video_path)
     if cfg.require_audio_lang and audio_lang and audio_lang != cfg.require_audio_lang:

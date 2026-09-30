@@ -6,7 +6,7 @@ Self-hosted subtitle sync + verification for a Plex/Bazarr library.
    which finds multiple sync points per file (handles mid-episode jumps, not just a global
    offset). `.srt`/`.ass`/`.ssa`/`.vtt`.
 2. **Checks the subtitle is actually right** — samples audio clips, transcribes them with
-   Whisper (local whisper.cpp `tiny.en` on the CPU by default; Groq or OpenRouter optional), and
+   local Whisper (whisper.cpp `tiny.en` on the CPU; no cloud speech recognition), and
    compares the words against the subtitle at those timestamps. A Silero VAD model ships in the
    image and is on by default. Fixed on its own: constant offsets, framerate (23.976↔24),
    PAL (24↔25) and any steady drift. Detected and flagged "fetch a fresh one" instead of
@@ -39,8 +39,7 @@ docker compose up -d
   Correctness → "Model file path" to `/models/ggml-<name>.bin`.
 
 Open `http://your-server:8787`, create an admin password, then go through Settings: General
-(Root Folders), Correctness (local Whisper works out of the box; a free
-[Groq](https://console.groq.com/keys) API key is optional), Bazarr (URL + API key),
+(Root Folders), Correctness (local Whisper works out of the box, no key needed), Bazarr (URL + API key),
 Automation, Scheduling. Generate (see below) is optional and off by default.
 
 Forgot the admin password? `docker exec -it verifyarr python3 verifyarr.py reset-password`.
@@ -103,9 +102,9 @@ file shows up as `generated` rather than as a check that passed.
 One caveat worth knowing before turning this on: once the file exists, Bazarr considers that
 language covered and stops looking for a real subtitle for it.
 
-Uses its **own** API keys and provider choice (Settings → Generate), separate from the
-correctness check's — a free tier's quota for a full-length transcription job is easy to exhaust,
-so `Max. videos per day` caps how many distinct videos get generated in any 24 hours, counted
+Uses its **own** API keys and provider choice (Settings → Generate) — the only cloud keys in the
+app; the correctness check listens locally. A free tier's quota for a full-length transcription
+job is easy to exhaust, so `Max. videos per day` caps how many distinct videos get generated in any 24 hours, counted
 across every sweep and poll together. A video whose generation fails isn't retried for a day, so
 one broken file can't keep taking that day's slots. A manual "Generate" button (Files page, or a
 file's own detail page) runs one file immediately and ignores both limits.
@@ -114,10 +113,10 @@ Free options for both steps:
 
 | | Provider | Notes |
 |---|---|---|
-| Speech-to-text | [Groq](https://console.groq.com/keys) | Generous free tier. Its own key field here, so a long transcription job can't eat the correctness check's quota |
+| Speech-to-text | [Groq](https://console.groq.com/keys) | Generous free tier. Key and models set under Settings → Generate |
 | | OpenRouter | Free-tier availability varies by model |
 | | [Cloudflare Workers AI](https://developers.cloudflare.com/workers-ai/) | ~10,000 free "neurons"/day; its per-request audio limit isn't documented — start with a short chunk length (Settings → Generate) and raise it only after testing against your own account |
-| Translation | Groq / OpenRouter | The same chat-completions models the correctness check uses, configured separately here |
+| Translation | Groq / OpenRouter | Chat-completions models. Also used by the correctness check when a subtitle is in another language than the audio |
 | | [Google Gemini](https://aistudio.google.com/apikey) | Free tier; Google may use free-tier prompts to improve its models — don't use it on anything sensitive |
 
 Whisper itself can only translate speech straight to English, which is why any other target

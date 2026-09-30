@@ -12,6 +12,7 @@ import dataclasses
 import json
 import re
 import shutil
+import bisect
 import statistics
 import sqlite3
 import tempfile
@@ -48,7 +49,7 @@ from verifyarr.correctness import (
     anchor_jitter, JITTER_MIN_MAD_S, JITTER_ESCALATE_MAD_S,
     ANCHOR_RESYNC_INTERVAL_S, ANCHOR_SUSPECT_MIN_SAMPLES,
     all_gaps, missing_middle_evidence, MISSING_MIDDLE_ESCALATE_GAP_S,
-    gap_probe_windows, gap_speech, clears_missing_middle, missing_middle_min_words,
+    gap_probe_windows, gap_speech, music_spans, clears_missing_middle, missing_middle_min_words,
     declared_music_gap, overrun_evidence,
     anchor_block_clusters, anchor_point_runs, dense_anchor_points,
     full_transcript_cache_key,
@@ -1638,7 +1639,8 @@ def _missing_middle_probe(conn: sqlite3.Connection, video_path: Path, subs, cfg:
                                      "end": start + float(sg["end"]), "text": sg.get("text", "")})
                     except (KeyError, TypeError, ValueError):
                         continue
-                secs, words = gap_speech(_drop_repetition_loops(_drop_nonspeech(segs)), g0, g1)
+                secs, words = gap_speech(_drop_repetition_loops(_drop_nonspeech(segs)), g0, g1,
+                                         music_spans(segs))
                 if clears_missing_middle(secs, words, min_words):
                     break  # bar met, no need to hear the rest
             if clears_missing_middle(secs, words, min_words) \
@@ -1745,31 +1747,37 @@ def _mmss(sec: float) -> str:
 _FULL_SEG_MEMO = BoundedMemo(8)
 
 
-def _cached_full_segments(conn: sqlite3.Connection, video_path: Path, cfg: Config
-                          ) -> Optional[list]:
-    """The cached full transcript, filtered like full_transcript_for_check, or None.
+def _cached_full_segments_and_music(conn: sqlite3.Connection, video_path: Path, cfg: Config
+                                    ) -> tuple[Optional[list], list]:
+    """The cached full transcript, filtered like full_transcript_for_check, plus its music
+    spans (taken from the unfiltered text, where "(music)" tags still are), or (None, []).
     Filtered once per transcript: 4-6 callers per file each re-ran the filters and
     re-logged their warnings."""
     provider, model = full_transcript_cache_key(cfg)
     cached = db.get_full_transcript_cache(conn, video_path, stt_provider=provider, stt_model=model)
     if cached is None or not cached.get("segments"):
-        return None
+        return None, []
     raw = cached["segments"]
     key = (str(video_path), provider, model, len(raw),
            json.dumps(raw[:2] + raw[-2:], sort_keys=True, default=str))
     if key not in _FULL_SEG_MEMO:
-        _FULL_SEG_MEMO.put(key, _drop_repetition_loops(_drop_nonspeech(raw)))
+        _FULL_SEG_MEMO.put(key, (_drop_repetition_loops(_drop_nonspeech(raw)), music_spans(raw)))
     return _FULL_SEG_MEMO[key]
+
+
+def _cached_full_segments(conn: sqlite3.Connection, video_path: Path, cfg: Config
+                          ) -> Optional[list]:
+    return _cached_full_segments_and_music(conn, video_path, cfg)[0]
 
 
 def _missing_middle_hit(conn: sqlite3.Connection, video_path: Path, subs, cfg: Config) -> Optional[dict]:
     """Gap evidence (mid, head, tail) from the cached full transcript, or None."""
-    segments = _cached_full_segments(conn, video_path, cfg)
+    segments, music = _cached_full_segments_and_music(conn, video_path, cfg)
     if not segments:
         return None
     return missing_middle_evidence(subs, segments,
                                    duration_s=get_duration_seconds(video_path),
-                                   min_words=_min_words(cfg))
+                                   min_words=_min_words(cfg), music=music)
 
 
 # How far a displaced line is looked for. 30/60s missed commercial cuts (-82s, -106s);
@@ -1810,6 +1818,68 @@ def _block_runs_hit(conn: sqlite3.Connection, video_path: Path, subs, cfg: Confi
             log.info("block run %s-%s (%+.1fs) not confirmed by VAD -- Whisper timing, not the file",
                      _mmss(r["from"]), _mmss(r["to"]), r["dev"])
     return kept
+
+
+# A run of lines sitting at another offset than the file (a block-fit remainder, e.g. the
+# last 40s of an episode left 2.5s out) is shifted by the run's own measured offset. Written
+# only when the corrected file shows no run at all afterwards and the dense residual is no
+# worse; otherwise the file stays as it was and the detector flags it.
+RUN_REPAIR_MAX_SHIFT_S = 30.0
+
+
+def _run_repair_plan(subs, runs: list, last_audio_s: float) -> list[dict]:
+    """Regions for apply_anchor_resync: each run's cues shifted by its dev, the rest by 0.
+    Edges sit halfway between the run's first/last cue and its neighbour."""
+    ev = sorted(subs.events, key=lambda e: e.start)
+    starts = [e.start for e in ev]
+
+    def edge(t_s: float, before: bool) -> float:
+        i = bisect.bisect_left(starts, t_s * 1000.0 - 1.0)
+        if before:
+            prev_end = ev[i - 1].end if i > 0 else None
+            return starts[i] if prev_end is None else (prev_end + starts[i]) / 2.0
+        j = bisect.bisect_right(starts, t_s * 1000.0 + 1.0)
+        return float("inf") if j >= len(ev) else (ev[j - 1].end + starts[j]) / 2.0
+
+    plan, cursor = [], float("-inf")
+    for r in sorted(runs, key=lambda r: r["cue_from"]):
+        lo, hi = edge(r["cue_from"], True), edge(r["cue_to"], False)
+        if r["to"] >= last_audio_s - 5.0:
+            hi = float("inf")
+        if lo < cursor:
+            return []
+        plan += [{"lo_ms": cursor, "hi_ms": lo, "shift": 0.0, "n": 0},
+                 {"lo_ms": lo, "hi_ms": hi, "shift": round(r["dev"], 2), "n": r["n"]}]
+        cursor = hi
+    plan.append({"lo_ms": cursor, "hi_ms": float("inf"), "shift": 0.0, "n": 0})
+    return plan
+
+
+def _repair_block_runs(conn: sqlite3.Connection, video_path: Path, subtitle_path: Path, cfg: Config,
+                       media_root: Path, subs, proven_block: bool) -> Optional[tuple]:
+    """(fixed_subs, note) when the point runs against the cached full transcript were shifted
+    into place and re-measured clean, else None (nothing written)."""
+    runs = _block_runs_hit(conn, video_path, subs, cfg, proven_block=proven_block)
+    if not runs or any(abs(r["dev"]) > RUN_REPAIR_MAX_SHIFT_S for r in runs):
+        return None
+    segments = _cached_full_segments(conn, video_path, cfg)
+    last_audio = max((float(s.get("end") or 0.0) for s in segments or []), default=0.0)
+    plan = _run_repair_plan(subs, runs, last_audio)
+    if not plan:
+        return None
+    fixed = apply_anchor_resync(subs, plan)
+
+    def _residual(candidate) -> float:
+        pts = _dense_pool(conn, video_path, candidate, cfg)
+        return statistics.median(abs(a - c) for a, c in pts) if pts else float("inf")
+
+    if _block_runs_hit(conn, video_path, fixed, cfg, proven_block=True) \
+            or _residual(fixed) > _residual(subs):
+        log.info("Run repair for %s discarded: the corrected file did not verify", subtitle_path.name)
+        return None
+    _write_fix(subtitle_path, cfg, media_root, fixed)
+    return fixed, (f" Re-timed {len(runs)} stretch(es) sitting at another offset [{_runs_text(runs)}] "
+                   "and re-verified against the full transcript afterwards.")
 
 
 def _dense_pool(conn: sqlite3.Connection, video_path: Path, subs, cfg: Config) -> list:
@@ -2230,7 +2300,7 @@ def correctness_and_finish(video_path: Path, subtitle_path: Path, lang: Optional
     if not cfg.enable_correctness_check:
         correctness_unavailable_flag = "disabled"
     elif not cfg.has_stt_configured:
-        correctness_unavailable_flag = f"no {cfg.stt_provider} API key"
+        correctness_unavailable_flag = "no local Whisper binary"
 
     if correctness_unavailable_flag is None:
         # Whenever correctness runs, collect line-order candidate/Whisper-verdict data too (see
@@ -2415,6 +2485,16 @@ def correctness_and_finish(video_path: Path, subtitle_path: Path, lang: Optional
                               and abs(s["anchor"]["shift"]) >= ANCHOR_HUGE_SINGLE_S
                               and s.get("score") is not None
                               and s["score"] >= cfg.overlap_threshold]
+            if (result["flag"] == "ok" and not anchor_bad and cfg.anchor_resync_enabled
+                    and not cfg.dry_run
+                    and (resolved_winner == "blocks" or _block_repair_parts(row) >= 2)
+                    and (result.get("full_coverage") or escalated_samples is not None
+                         or ev_cfg.whisper_mode == "full")):
+                repaired = _repair_block_runs(conn, video_path, subtitle_path, cfg, media_root,
+                                              current_subs, resolved_winner == "blocks")
+                if repaired is not None:
+                    current_subs, repair_note = repaired
+                    row["note"] = (row["note"] + repair_note).strip()
             if result["flag"] == "SUSPECT":
                 _flag_suspect(row, REASON_WRONG_SUBTITLE)
                 excerpts = " || ".join(

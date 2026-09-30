@@ -113,7 +113,7 @@ def validate_local_whisper_model(raw: Optional[str]) -> Optional[str]:
     value = (raw or "").strip()
     if not value:
         return ("No model file configured -- enter the ggml model path (e.g. "
-                "/app/models/ggml-tiny.en.bin), or switch off local Whisper.")
+                "/app/models/ggml-tiny.en.bin).")
     p = Path(value)
     if not _GGML_MODEL_FILENAME_RE.match(p.name):
         return (f"{value!r} doesn't look like a whisper.cpp model file -- expected a "
@@ -143,7 +143,7 @@ def validate_executable_file(raw: Optional[str], what: str) -> Optional[str]:
     value = (raw or "").strip()
     if not value:
         return (f"No {what} configured -- enter the binary path (e.g. "
-                f"/usr/local/bin/whisper-cli), or switch off local Whisper.")
+                f"/usr/local/bin/whisper-cli).")
     p = Path(value)
     if not p.exists():
         return (f"{what} {value!r} was not found -- check the path (the Docker image "
@@ -194,29 +194,9 @@ class Config:
     min_change_seconds: float
 
     enable_correctness_check: bool
-    stt_provider: str  # groq | openrouter — used for BOTH transcription and translation
-    groq_api_key: Optional[str]
-    groq_model: str
-    groq_model_fallback: Optional[str]
-    groq_llm_model: str
-    groq_llm_model_fallback: Optional[str]
-    openrouter_api_key: Optional[str]
-    openrouter_stt_model: str
-    openrouter_stt_model_fallback: Optional[str]
-    openrouter_llm_model: str
-    openrouter_llm_model_fallback: Optional[str]
-    # Runs actual TRANSCRIPTION (transcribe/transcribe_verbose — the per-clip Whisper calls that
-    # dominate correctness-check's API usage) through a local whisper.cpp binary instead of
-    # stt_provider's cloud endpoint — no network call, no API key, no rate limit, no per-request
-    # cost. Deliberately narrow: translation (translate_to_english) is a plain-text
-    # chat-completion call, not speech recognition, so it keeps using stt_provider's cloud key
-    # exactly as before regardless of this flag — a local setup that also wants translated
-    # subtitles either keeps a (much cheaper, rarely-hit) cloud key for just that, or only checks
-    # same-language subtitles. See has_stt_configured, and correctness._run_local_whisper for the
-    # actual subprocess call. Aimed at Intel iGPU boxes (e.g. N100) via whisper.cpp's Vulkan
-    # backend baked into the Docker image — see Dockerfile — but works anywhere the binary+model
-    # exist, GPU or not.
-    use_local_whisper: bool
+    # Correctness checks transcribe with local whisper.cpp only (no cloud speech recognition,
+    # no API key). Cloud is for generating subtitles (generate_* below) and for translating a
+    # foreign-language subtitle window, which uses generate's LLM settings.
     local_whisper_binary: str
     local_whisper_model: str
     local_whisper_use_gpu: bool
@@ -425,18 +405,6 @@ class Config:
             dry_run=vals["automation.dry_run"],
             min_change_seconds=vals["sync.min_change_seconds"],
             enable_correctness_check=vals["correctness.enabled"],
-            stt_provider=vals["correctness.stt_provider"],
-            groq_api_key=vals["correctness.groq_api_key"] or None,
-            groq_model=vals["correctness.groq_model"],
-            groq_model_fallback=vals["correctness.groq_model_fallback"] or None,
-            groq_llm_model=vals["correctness.groq_llm_model"],
-            groq_llm_model_fallback=vals["correctness.groq_llm_model_fallback"] or None,
-            openrouter_api_key=vals["correctness.openrouter_api_key"] or None,
-            openrouter_stt_model=vals["correctness.openrouter_stt_model"],
-            openrouter_stt_model_fallback=vals["correctness.openrouter_stt_model_fallback"] or None,
-            openrouter_llm_model=vals["correctness.openrouter_llm_model"],
-            openrouter_llm_model_fallback=vals["correctness.openrouter_llm_model_fallback"] or None,
-            use_local_whisper=vals["correctness.use_local_whisper"],
             local_whisper_binary=vals["correctness.local_whisper_binary"],
             local_whisper_model=vals["correctness.local_whisper_model"],
             local_whisper_use_gpu=vals["correctness.local_whisper_use_gpu"],
@@ -514,30 +482,13 @@ class Config:
         )
 
     @property
-    def active_stt_api_key(self) -> Optional[str]:
-        """The API key for the currently selected transcription/translation provider
-        (correctness.stt_provider — groq or openrouter). One place to ask instead of every
-        caller needing to know both fields and switch on the provider name."""
-        return self.openrouter_api_key if self.stt_provider == "openrouter" else self.groq_api_key
-
-    @property
     def has_stt_configured(self) -> bool:
-        """Whether correctness.py has SOMETHING it can transcribe audio with — either a cloud
-        API key, or use_local_whisper (which needs no key at all). The gate every "can a
-        correctness check even run" check should use INSTEAD OF active_stt_api_key directly —
-        that one alone would wrongly say "not configured" for a local-only setup with no cloud
-        key. Doesn't verify local_whisper_binary/local_whisper_model actually point at real
-        files — that failure surfaces per-sample instead (same as a cloud key that turns out to
-        be invalid only failing on first use), not as a static config gate.
-
-        The binary IS checked, because local Whisper is now the default: without it a box that
-        never installed whisper-cli reports "STT configured", fails on every clip, and every file
-        it touches comes out SUSPECT — an accusation against the subtitle for a missing
-        dependency. Not verifying anything has to mean "skipped", never "bad". The model file is
-        deliberately not checked: it downloads itself on first use."""
-        if self.use_local_whisper:
-            return bool(self.local_whisper_binary) and Path(self.local_whisper_binary).is_file()
-        return bool(self.active_stt_api_key)
+        """Whether correctness.py can transcribe: the local whisper.cpp binary exists. Without it
+        a box that never installed whisper-cli would fail every clip and flag every file SUSPECT
+        -- an accusation against the subtitle for a missing dependency; not verifying has to mean
+        "skipped", never "bad". The model file is deliberately not checked: it downloads itself
+        on first use."""
+        return bool(self.local_whisper_binary) and Path(self.local_whisper_binary).is_file()
 
     @property
     def active_generate_stt_api_key(self) -> Optional[str]:
@@ -556,6 +507,21 @@ class Config:
         if self.generate_llm_provider == "openrouter":
             return self.generate_openrouter_api_key
         return self.generate_groq_api_key
+
+    @property
+    def llm_call_kwargs(self) -> dict:
+        """provider/model/key for a cloud LLM translation -- generate.llm_provider's settings,
+        used both by subtitle generation and by the correctness check when a subtitle is in
+        another language than the audio (the only cloud call a check can make)."""
+        provider = self.generate_llm_provider
+        if provider == "gemini":
+            model, fallback = self.generate_gemini_llm_model, self.generate_gemini_llm_model_fallback
+        elif provider == "openrouter":
+            model, fallback = self.generate_openrouter_llm_model, self.generate_openrouter_llm_model_fallback
+        else:
+            model, fallback = self.generate_groq_llm_model, self.generate_groq_llm_model_fallback
+        return {"provider": provider, "api_key": self.active_generate_llm_api_key,
+                "llm_model": model, "llm_model_fallback": fallback}
 
     def generate_chunk_seconds_for(self, provider: str) -> int:
         """Per-provider STT chunk length in seconds (see generate.py) -- each provider has a
@@ -722,25 +688,10 @@ SETTING_DEFS: dict = {
     "sync.line_order_swap_threshold_min": ("sync", "int", 3),
 
     "correctness.enabled":                  ("correctness", "bool", True),
-    "correctness.stt_provider":             ("correctness", "str", "groq"),  # groq | openrouter
-    "correctness.groq_api_key":             ("correctness", "str", "", ),
-    "correctness.groq_model":               ("correctness", "str", "whisper-large-v3"),
-    # Falls back to the turbo model only when the primary hits its own rate limit (fail-fast,
-    # doesn't wait it out) — see _post_ratelimited's fail_fast_on_429 in correctness.py.
-    "correctness.groq_model_fallback":      ("correctness", "str", "whisper-large-v3-turbo"),
-    "correctness.groq_llm_model":           ("correctness", "str", "openai/gpt-oss-20b"),
-    "correctness.groq_llm_model_fallback":  ("correctness", "str", "allam-2-7b"),
-    "correctness.openrouter_api_key":            ("correctness", "str", ""),
-    "correctness.openrouter_stt_model":          ("correctness", "str", "openai/whisper-large-v3"),
-    "correctness.openrouter_stt_model_fallback": ("correctness", "str", ""),
-    "correctness.openrouter_llm_model":          ("correctness", "str", "openai/gpt-4o-mini"),
-    "correctness.openrouter_llm_model_fallback": ("correctness", "str", ""),
-    # Local whisper.cpp transcription — see Config.use_local_whisper's docstring for exactly
-    # what this does and doesn't replace. Binary defaults to where the Dockerfile bakes it; model
-    # defaults to WHISPER_MODEL (docker-compose env var, default "tiny.en" — see
-    # DEFAULT_LOCAL_WHISPER_MODEL_PATH), downloaded on first use if it isn't already baked into
-    # the image. Only relevant once use_local_whisper is turned on.
-    "correctness.use_local_whisper":     ("correctness", "bool", True),
+    # Local whisper.cpp transcription (the only speech recognition the checks use). Binary defaults
+    # to where the Dockerfile bakes it; model defaults to WHISPER_MODEL (docker-compose env var,
+    # default "tiny.en" — see DEFAULT_LOCAL_WHISPER_MODEL_PATH), downloaded on first use if it
+    # isn't already baked into the image.
     "correctness.local_whisper_binary":  ("correctness", "str", "/usr/local/bin/whisper-cli"),
     "correctness.local_whisper_model":   ("correctness", "str", str(DEFAULT_LOCAL_WHISPER_MODEL_PATH)),
     "correctness.local_whisper_use_gpu": ("correctness", "bool", True),
@@ -819,7 +770,7 @@ SETTING_DEFS: dict = {
 }
 # Keys whose value is never returned in plaintext to the frontend (only "is_set: true/false").
 SECRET_KEYS = {
-    "correctness.groq_api_key", "correctness.openrouter_api_key", "bazarr.api_key",
+    "bazarr.api_key",
     "generate.groq_api_key", "generate.openrouter_api_key", "generate.cloudflare_api_token",
     "generate.gemini_api_key",
 }
@@ -889,15 +840,6 @@ def set_settings_group(conn, group: str, values: dict) -> None:
     does NOT change the stored value (so the UI doesn't need to re-send it to save the rest
     of the group) — pass an explicit empty string to actually clear it."""
     from verifyarr import db
-    # Only validate local paths when local Whisper is on; cloud-only boxes lack the binaries.
-    local_whisper_on = False
-    if group == "correctness" and ({"local_whisper_binary", "local_whisper_model"} & set(values)):
-        if "use_local_whisper" in values:
-            local_whisper_on = bool(values["use_local_whisper"])
-        else:
-            raw_flag = db.get_setting_raw(conn, "correctness.use_local_whisper")
-            local_whisper_on = _deserialize("bool", raw_flag,
-                                            SETTING_DEFS["correctness.use_local_whisper"][2])
     for short, value in values.items():
         key = f"{group}.{short}"
         if key not in SETTING_DEFS or SETTING_DEFS[key][0] != group:
@@ -909,14 +851,15 @@ def set_settings_group(conn, group: str, values: dict) -> None:
         elif key == "log.level":
             if value not in LOG_LEVELS:
                 raise ValueError(f"unknown log level: {value!r} — use one of {', '.join(LOG_LEVELS)}")
-        elif key == "correctness.local_whisper_model" and local_whisper_on:
-            problem = validate_local_whisper_model(value)
-            if problem is not None:
-                raise ValueError(problem)
-        elif key == "correctness.local_whisper_binary" and local_whisper_on:
-            problem = validate_executable_file(value, "local Whisper binary")
-            if problem is not None:
-                raise ValueError(problem)
+        elif key in ("correctness.local_whisper_model", "correctness.local_whisper_binary"):
+            # The whole group is sent on every save: only a path the user changed is checked,
+            # so an unrelated field still saves on a box whose stored path is not valid here.
+            stored = _deserialize("str", db.get_setting_raw(conn, key), SETTING_DEFS[key][2])
+            if value != stored:
+                problem = (validate_local_whisper_model(value) if key.endswith("model")
+                           else validate_executable_file(value, "local Whisper binary"))
+                if problem is not None:
+                    raise ValueError(problem)
         elif key == "generate.vocabulary_hint":
             value = clean_vocabulary_hint(value) or ""
         elif key == "generate.assume_spoken_lang":
@@ -942,10 +885,7 @@ _ENV_IMPORT_MAP = {
     "sync.window_minutes":                  ("CORRECTNESS_WINDOW_MINUTES", "float"),
     "sync.overlap_threshold":               ("CORRECTNESS_OVERLAP_THRESHOLD", "float"),
     "correctness.enabled":                  ("ENABLE_CORRECTNESS_CHECK", "bool"),
-    "correctness.groq_api_key":             ("GROQ_API_KEY", "str"),
-    "correctness.groq_model":               ("GROQ_MODEL", "str"),
-    "correctness.groq_llm_model":           ("GROQ_LLM_MODEL", "str"),
-    "correctness.groq_llm_model_fallback":  ("GROQ_LLM_MODEL_FALLBACK", "str"),
+    "generate.groq_api_key":                ("GROQ_API_KEY", "str"),
     "correctness.require_audio_lang":       ("CORRECTNESS_REQUIRE_AUDIO_LANG", "str"),
     # The old single AUTO_ACTION_ON_SUSPECT still seeds this, so an upgrading user's behavior is
     # preserved; it used to seed a line-order action too, which no longer exists.

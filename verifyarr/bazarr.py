@@ -327,7 +327,7 @@ def verify_subtitle_candidate(video_path: Path, subtitle_path: Path, lang: Optio
     if not (cfg.enable_correctness_check and cfg.has_stt_configured):
         apply_pending_sync(subtitle_path, cfg, row, reason="correctness check disabled or no API key")
         return {"ok": None, "flag": "cannot verify", "avg_score": None,
-                "reason": f"correctness check disabled or no {cfg.stt_provider} API key"}
+                "reason": "correctness check disabled or no local Whisper binary"}
 
     with tempfile.TemporaryDirectory() as td2:
         result = correctness_check(video_path, current_subs, lang, cfg, Path(td2), conn=conn, cancel_event=cancel_event)

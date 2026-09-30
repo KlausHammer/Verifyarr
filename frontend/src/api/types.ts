@@ -231,18 +231,6 @@ export interface SyncSettings {
 
 export interface CorrectnessSettings {
   enabled: boolean
-  stt_provider: 'groq' | 'openrouter'
-  groq_api_key: SecretField
-  groq_model: string
-  groq_model_fallback: string
-  groq_llm_model: string
-  groq_llm_model_fallback: string
-  openrouter_api_key: SecretField
-  openrouter_stt_model: string
-  openrouter_stt_model_fallback: string
-  openrouter_llm_model: string
-  openrouter_llm_model_fallback: string
-  use_local_whisper: boolean
   local_whisper_binary: string
   local_whisper_model: string
   local_whisper_use_gpu: boolean

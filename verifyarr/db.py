@@ -469,12 +469,12 @@ def should_skip(conn: sqlite3.Connection, video_path: Path, subtitle_path: Path,
         # sync_pair sets exactly this string when cfg.sync_enabled was False at the time.
         if cfg.sync_enabled and row["sync_status"] == "skipped (disabled in settings)":
             return False
-        # correctness_and_finish sets correctness_flag to exactly "disabled", or "no {provider}
-        # API key", when correctness couldn't run because of settings (not file content) — see
-        # correctness_unavailable_flag in pipeline.py.
+        # correctness_and_finish sets correctness_flag to exactly "disabled", or "no local
+        # Whisper binary" (older rows: "no {provider} API key"), when correctness couldn't run
+        # because of settings (not file content) — see correctness_unavailable_flag in pipeline.py.
         if cfg.enable_correctness_check and cfg.has_stt_configured:
             flag = row["correctness_flag"] or ""
-            if flag == "disabled" or flag.endswith("API key"):
+            if flag in ("disabled", "no local Whisper binary") or flag.endswith("API key"):
                 return False
 
     return True
@@ -1158,11 +1158,7 @@ def full_transcript_cache_key(cfg) -> tuple[str, str]:
     rather than in correctness.py so vad.py can key its reads too without a circular
     import; correctness re-exports it, so existing `correctness.full_transcript_cache_key`
     references keep working.)"""
-    if cfg.use_local_whisper:
-        return "local", Path(cfg.local_whisper_model).name
-    if cfg.stt_provider == "openrouter":
-        return cfg.stt_provider, cfg.openrouter_stt_model
-    return cfg.stt_provider, cfg.groq_model
+    return "local", Path(cfg.local_whisper_model).name
 
 
 def _video_signature(video_path: Path) -> tuple[Optional[float], Optional[int]]:

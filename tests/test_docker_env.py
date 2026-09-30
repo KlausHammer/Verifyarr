@@ -132,32 +132,18 @@ class SetSettingsGroupValidationTests(unittest.TestCase):
     def test_bad_model_name_blocked_when_local_whisper_on(self):
         with self.assertRaises(ValueError):
             settings.set_settings_group(self.conn, "correctness", {
-                "use_local_whisper": True,
                 "local_whisper_model": "/models/small.bin",
             })
 
     def test_missing_binary_blocked_when_local_whisper_on(self):
         with self.assertRaises(ValueError):
             settings.set_settings_group(self.conn, "correctness", {
-                "use_local_whisper": True,
                 "local_whisper_binary": "/nonexistent/whisper-cli",
             })
 
-    def test_paths_not_validated_for_cloud_only(self):
-        # A cloud-only user (or the wizard's speech=cloud step) must be able to
-        # save without local binaries installed.
-        settings.set_settings_group(self.conn, "correctness", {
-            "use_local_whisper": False,
-            "local_whisper_binary": "/nonexistent/whisper-cli",
-            "local_whisper_model": "/models/small.bin",
-        })
-
-    def test_paths_not_revalidated_when_flag_not_in_values(self):
+    def test_partial_update_without_paths_saves(self):
         # Partial updates (wizard, automation tab) only carry their own keys.
-        settings.set_settings_group(self.conn, "correctness", {
-            "use_local_whisper": False,
-        })
-        settings.set_settings_group(self.conn, "correctness", {"groq_model": "x"})
+        settings.set_settings_group(self.conn, "correctness", {"require_audio_lang": "en"})
 
     def test_bad_log_level_blocked(self):
         with self.assertRaises(ValueError):
@@ -348,10 +334,7 @@ class PutSettingsGroupHttpTests(unittest.TestCase):
     def test_bad_model_returns_422_not_500(self):
         from fastapi import HTTPException
         from verifyarr.web.routers import settings as settings_router
-        body = settings_router.SettingsGroupBody(values={
-            "use_local_whisper": True,
-            "local_whisper_model": "/models/small.bin",
-        })
+        body = settings_router.SettingsGroupBody(values={"local_whisper_model": "/models/small.bin"})
         with self.assertRaises(HTTPException) as ctx:
             settings_router.put_group("correctness", body, user=None, conn=self.conn)
         self.assertEqual(ctx.exception.status_code, 422)
@@ -359,9 +342,10 @@ class PutSettingsGroupHttpTests(unittest.TestCase):
 
     def test_good_save_returns_group(self):
         from verifyarr.web.routers import settings as settings_router
-        body = settings_router.SettingsGroupBody(values={"use_local_whisper": False})
+        body = settings_router.SettingsGroupBody(values={"local_whisper_threads": 2})
         saved = settings_router.put_group("correctness", body, user=None, conn=self.conn)
-        self.assertFalse(saved["use_local_whisper"])
+        self.assertEqual(saved["local_whisper_threads"], 2)
+        self.assertNotIn("stt_provider", saved)
 
 
 class NextRunEndpointTests(unittest.TestCase):
