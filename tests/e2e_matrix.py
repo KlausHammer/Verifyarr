@@ -106,21 +106,25 @@ from verifyarr.correctness import full_transcript_cache_key
 from verifyarr.settings import Config
 from verifyarr.subtitles import load_subs, speech_text
 
-FIX = Path("/home/hammer/Auto sync sub/verifyarr/tests/fixtures/whisper_full")
-SWEEP = Path("/mnt/c/Users/knham/Desktop/undertekst auto/whisper_gpu_staging/sweep")
+# External test data (never in the repo: copyrighted media, subtitles and stored transcripts).
+# Point VERIFYARR_TEST_DATA at a folder laid out like the default one; tests that need it skip
+# when it is missing. See tests/README.md.
+DATA_ROOT = Path(_os.environ.get("VERIFYARR_TEST_DATA", "/mnt/c/Users/knham/Desktop/undertekst auto"))
+FIX = Path(__file__).resolve().parent / "fixtures" / "whisper_full"
+SWEEP = DATA_ROOT / "whisper_gpu_staging" / "sweep"
 DIRS = {
-    "C_S02": Path("/mnt/c/Users/knham/Desktop/undertekst auto/Season 2"),
-    "C_S03": Path("/mnt/c/Users/knham/Desktop/undertekst auto/Season 3"),
-    "SH_S01": Path("/mnt/c/Users/knham/Desktop/undertekst auto/Slow Horse/Season 1"),
+    "C_S02": DATA_ROOT / "Season 2",
+    "C_S03": DATA_ROOT / "Season 3",
+    "SH_S01": DATA_ROOT / "Slow Horse/Season 1",
     # User-confirmed correct episodes from other shows (2026-09-27).
-    "KG_": Path("/mnt/c/Users/knham/Desktop/undertekst auto/Known Good"),
+    "KG_": DATA_ROOT / "Known Good",
 }
 # Real flawed episodes from the library (not in SLUGS: run with --only). Each has its own folder.
 REAL_CASE_SLUGS = {"COMM_S03E20", "BKLN_S01E02", "EARL_S03E13", "SWAT_S02E12", "TASK_S06E02"}
 for _s in REAL_CASE_SLUGS:
-    DIRS[_s] = Path("/mnt/c/Users/knham/Desktop/undertekst auto/Z5_flaggede") / _s
+    DIRS[_s] = DATA_ROOT / "Z5_flaggede" / _s
 SWEEP_LINUX = SWEEP.parent / "sweep_linux"
-WAV_DIR = Path("/mnt/c/Users/knham/Desktop/undertekst auto/whisper_gpu_staging/wav")
+WAV_DIR = DATA_ROOT / "whisper_gpu_staging" / "wav"
 TURBO = "turbo"
 SWEEP_MODELS = ["base.en-cpu", "base.en-greedy-cpu", "base.en-q5_1-cpu",
                 "medium.en", "medium.en-greedy", "medium.en-q5_0",
@@ -356,7 +360,7 @@ def _fresh_conn_cfg(work, key, mode, audio, model, esc_over):
     return conn, cfg_for(conn, mode, audio, groq_model=model, **esc_over)
 
 
-LOCAL_VAD_BINARY = Path("/home/hammer/whisper.cpp/build/bin/whisper-vad-speech-segments")
+LOCAL_VAD_BINARY = Path(_os.environ.get("VERIFYARR_VAD_BINARY", "/home/hammer/whisper.cpp/build/bin/whisper-vad-speech-segments"))
 LOCAL_VAD_MODEL = SWEEP.parent / "model" / "ggml-silero-v5.1.2.bin"
 
 

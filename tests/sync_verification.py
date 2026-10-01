@@ -34,6 +34,7 @@ from __future__ import annotations
 
 import contextlib
 import json
+import os
 import statistics
 from pathlib import Path
 from typing import Optional
@@ -45,7 +46,7 @@ from verifyarr import line_order as line_order_mod
 from verifyarr import correctness as correctness_mod
 from verifyarr.subtitles import load_subs, tokenize
 
-MEDIA_DIR = Path("/mnt/c/Users/knham/Desktop/undertekst auto/Season 2")
+MEDIA_DIR = Path(os.environ.get("VERIFYARR_TEST_DATA", "/mnt/c/Users/knham/Desktop/undertekst auto")) / "Season 2"
 FIXTURES_DIR = Path(__file__).resolve().parent / "fixtures" / "whisper_full"
 
 FIXTURE_SLUGS = ["S02E01", "S02E06", "S02E10", "S02E15", "S02E21"]

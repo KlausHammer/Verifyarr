@@ -1,6 +1,7 @@
 """Real flawed library episodes (Z5_flaggede) through the matrix harness: what the pipeline does with each.
 Needs the staging data on the Windows side; skipped when it is not there."""
 import json
+import os
 import subprocess
 import sys
 import unittest
@@ -8,7 +9,8 @@ from pathlib import Path
 
 HERE = Path(__file__).parent
 ROOT = HERE.parent
-Z = Path("/mnt/c/Users/knham/Desktop/undertekst auto/Z5_flaggede")
+DATA_ROOT = Path(os.environ.get("VERIFYARR_TEST_DATA", "/mnt/c/Users/knham/Desktop/undertekst auto"))
+Z = DATA_ROOT / "Z5_flaggede"
 CASES = ["COMM_S03E20", "BKLN_S01E02", "EARL_S03E13", "SWAT_S02E12", "TASK_S06E02"]
 OUT = "realcases_test"
 
