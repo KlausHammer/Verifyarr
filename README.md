@@ -46,7 +46,7 @@ Every model catches and fixes the same errors; they differ in what they cost. `t
 - **What it gives up is word accuracy** (F1 0.78 vs 0.88–0.90). The checks compare anchors and timing, which the larger models do not improve: the pass rate is 236–240 of 242 for every local model, with no ranking.
 - **Cloud Whisper (Groq) is not better** (232 of 242) and adds a key, a network dependency and rate limits, so checks never use it. Cloud is for *generating* subtitles only.
 
-All thresholds are calibrated on `tiny.en`; other models transcribe differently. Details (Danish): [`docs/modelvalg_godkendte.md`](docs/modelvalg_godkendte.md).
+All thresholds are calibrated on `tiny.en`; other models transcribe differently. Details: [`docs/modelvalg_godkendte.md`](docs/modelvalg_godkendte.md).
 
 ## How well it works
 
