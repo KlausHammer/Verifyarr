@@ -841,6 +841,25 @@ def _ramp_rescue_probe(result: dict, new_subs, cfg: Config) -> Optional[dict]:
     return probe
 
 
+def _baseline_shows_ramp(conn: sqlite3.Connection, video_path: Path, cfg: Config, *baselines) -> bool:
+    """False only when a baseline's full pool is measurably NOT a rate (flat, any offset).
+    A rate that exists only in alass' output is alass' own clamped/guessed staircase: Taskmaster
+    S06E02 had a flat -3.9s original, alass wrote -88s (early cues clamped to 0), and the
+    "ramp" in that output was rescued into a -4% fix. Unknown (no pool) counts as a ramp."""
+    seen = False
+    for b in baselines:
+        if b is None:
+            continue
+        pts = _dense_pool(conn, video_path, b, cfg)
+        if not pts:
+            return True
+        seen = True
+        p = _dense_probe(pts)
+        if rate_gates_pass(p) or _stretch_gates_pass(p) or _ramp_overwhelming(p):
+            return True
+    return not seen
+
+
 def _resolve_ambiguous_sync(conn: sqlite3.Connection, video_path: Path, subtitle_path: Path,
                              lang: Optional[str], cfg: Config, media_root: Path,
                              ambiguous: dict, result: dict, row: dict, cancel_event=None) -> tuple:
@@ -1024,6 +1043,9 @@ def _resolve_ambiguous_sync(conn: sqlite3.Connection, video_path: Path, subtitle
     old_verifies = (old_t is not None and old_t["mean_abs_shift"] <= ANCHOR_PREFER_MARGIN_S
                     and len(old_t["regions"]) >= SCREEN_MIN_CLIPS)
     ramp_probe = None if old_verifies else _ramp_rescue_probe(result, new_subs, cfg)
+    if ramp_probe is not None and not _baseline_shows_ramp(conn, video_path, cfg, orig_subs, old_subs):
+        log.info("ramp rescue for %s dropped: the original's own pool is flat", subtitle_path.name)
+        ramp_probe = None
     ramp_via_old = False
     ramp_decided = False
     old_scored = False
@@ -2405,9 +2427,13 @@ def correctness_and_finish(video_path: Path, subtitle_path: Path, lang: Optional
                 # A rate error is measured on the untouched original, not on alass'
                 # fit -- the veto must not skip it (KG_BMS 4.6%, KG_BOB 0.1%).
                 rate_fix = rate_fixes()
-            if vetoed and rate_fix is None:
+            if (vetoed and rate_fix is None
+                    and not (cfg.anchor_resync_enabled and not cfg.dry_run
+                             and plan_anchor_resync(current_subs, result.get("samples") or []))):
                 # Anchors disproved alass' fit; the original was kept unwritten.
                 # Flagged, not silently kept: the file alass moved is suspect.
+                # (When the original's own anchors give a plan -- Taskmaster: flat -3.9s --
+                # the anchor branch below re-times it instead.)
                 _flag_suspect(row, REASON_PARTLY_OUT_OF_SYNC)
                 row["note"] = (row["note"] + " Fetch a fresh subtitle.").strip()
                 row["line_order_fixed"] = 0

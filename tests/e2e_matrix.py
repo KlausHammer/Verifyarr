@@ -115,6 +115,10 @@ DIRS = {
     # User-confirmed correct episodes from other shows (2026-09-27).
     "KG_": Path("/mnt/c/Users/knham/Desktop/undertekst auto/Known Good"),
 }
+# Real flawed episodes from the library (not in SLUGS: run with --only). Each has its own folder.
+REAL_CASE_SLUGS = {"COMM_S03E20", "BKLN_S01E02", "EARL_S03E13", "SWAT_S02E12", "TASK_S06E02"}
+for _s in REAL_CASE_SLUGS:
+    DIRS[_s] = Path("/mnt/c/Users/knham/Desktop/undertekst auto/Z5_flaggede") / _s
 SWEEP_LINUX = SWEEP.parent / "sweep_linux"
 WAV_DIR = Path("/mnt/c/Users/knham/Desktop/undertekst auto/whisper_gpu_staging/wav")
 TURBO = "turbo"
@@ -135,7 +139,7 @@ SLUGS = ["C_S03E03", "C_S03E08", "C_S03E10",
 # against its own timings would punish the pipeline for syncing to the audio,
 # so drift-case rows carry drift_case=True and skip "recovered" -- they measure
 # whether the drift is DETECTED (flag/sync), not recreated.
-DRIFT_CASE_SLUGS = {"C_S03E04"}
+DRIFT_CASE_SLUGS = {"C_S03E04"} | REAL_CASE_SLUGS
 
 
 def scores_recovery(slug, scenario):
