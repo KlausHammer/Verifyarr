@@ -218,8 +218,10 @@ class RampDecisionUnitTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as td:
             sub_path = Path(td) / "t.srt"
             sub_path.write_text("1\n00:00:00,000 --> 00:00:01,000\nx\n")
+            # The original's own full pool is the scenario's pool (the ramp guard reads it).
             with mock.patch.object(P, "evaluate_against_cached_transcripts",
-                                   side_effect=fake):
+                                   side_effect=fake), \
+                    mock.patch.object(P, "_dense_pool", return_value=pool):
                 _subs, _res, _sev, winner = P._resolve_ambiguous_sync(
                     None, Path("/tmp/vid.mkv"), sub_path, "en", cfg, Path(td),
                     ambiguous, result, row)

@@ -1,22 +1,87 @@
-# verifyarr
+# Verifyarr
 
-Self-hosted subtitle sync + verification for a Plex/Bazarr library.
+[![tests](https://github.com/KlausHammer/Verifyarr/actions/workflows/tests.yml/badge.svg)](https://github.com/KlausHammer/Verifyarr/actions/workflows/tests.yml)
 
-1. **Syncs** every subtitle against its own video with [alass](https://github.com/kaegi/alass),
-   which finds multiple sync points per file (handles mid-episode jumps, not just a global
-   offset). `.srt`/`.ass`/`.ssa`/`.vtt`.
-2. **Checks the subtitle is actually right** — samples audio clips, transcribes them with
-   local Whisper (whisper.cpp `tiny.en` on the CPU; no cloud speech recognition), and
-   compares the words against the subtitle at those timestamps. A Silero VAD model ships in the
-   image and is on by default. Fixed on its own: constant offsets, framerate (23.976↔24),
-   PAL (24↔25) and any steady drift. Detected and flagged "fetch a fresh one" instead of
-   repaired: missing parts (middle, start, end), mistimed blocks, many swapped lines, per-line
-   noise, wrong episode.
-3. **Cleans up suspect files on its own**, if you turn it on: quarantine (never permanent
-   deletion), tell Bazarr to blacklist the source, or have it fetch a replacement itself.
-4. **Generates a subtitle from scratch**, if you turn it on, for a video that has none at all —
-   full-track Whisper transcription (Groq, OpenRouter, or Cloudflare Workers AI), translated with
-   an LLM (Groq, OpenRouter, or Gemini) into any wanted language Whisper didn't already speak.
+**Self-hosted subtitle checker and fixer for a Plex/Bazarr library.** Bazarr downloads subtitles; many
+of them are out of sync, cut for another release, missing lines or simply for the wrong episode.
+Verifyarr *listens* to the audio with a small local Whisper model, compares what is said with what the
+subtitle says at the same moment, **fixes what can be fixed safely**, and **flags the rest** so Bazarr can
+fetch a new one. No cloud speech recognition, no API key, runs on a small CPU box.
+
+| Problem in the subtitle | What Verifyarr does |
+|---|---|
+| Constant offset, framerate (23.976 ↔ 24), PAL (24 ↔ 25), steady drift | **Fixes it** (original backed up) |
+| Blocks at different offsets (cut versions, ads) | Re-times from audio anchors when the evidence is dense, else flags |
+| Missing stretch (middle, start, end) | Flags it. Songs and lyrics are not counted as missing speech |
+| Wrong episode or release | Flags it, never rewrites it |
+| Swapped line pairs, per-line noise | Flags it |
+| Suspect file | Optional: quarantine, tell Bazarr to blacklist, or fetch a replacement |
+| No subtitle at all | Optional: generate one with a cloud Whisper (Groq / OpenRouter / Cloudflare) |
+
+## How it works
+
+```mermaid
+flowchart LR
+  A[Subtitle + video] --> B[alass fits:<br/>single offset, blocks]
+  A --> C[Listen: 2 clips per 10 min<br/>local tiny.en + VAD]
+  B --> D{Which fit matches<br/>the audio anchors?}
+  C --> D
+  D -->|clips disagree| E[Whole-episode transcript]
+  E --> D
+  D --> F[Fix and verify again]
+  D --> G[Flag: quarantine / Bazarr blacklist + refetch]
+```
+
+alass proposes timings; the audio decides. A fix is only written when the corrected file measures clean
+against the same Whisper evidence, so a bad fit (alass is sometimes wildly wrong) is rejected instead of applied.
+
+## Why `tiny.en`
+
+![Ten Whisper models on the same 242 tests: detection is flat, cost is not](docs/img/models.svg)
+
+Every model catches and fixes the same errors; they differ in what they cost. `tiny.en` is the default because:
+
+- **Same result, 5–20× faster.** A 58-minute episode takes about **2 min** (tiny), 12 min (small) or 30–45 min (medium / large-v3-turbo), on 4 CPU threads.
+- **0.6 GB RAM** instead of 1.2–2.7 GB, so it fits an Intel N100.
+- **What it gives up is word accuracy** (F1 0.78 vs 0.88–0.90). The checks compare anchors and timing, which the larger models do not improve: the pass rate is 236–240 of 242 for every local model, with no ranking.
+- **Cloud Whisper (Groq) is not better** (232 of 242) and adds a key, a network dependency and rate limits, so checks never use it. Cloud is for *generating* subtitles only.
+
+All thresholds are calibrated on `tiny.en`; other models transcribe differently. Details (Danish): [`docs/modelvalg_godkendte.md`](docs/modelvalg_godkendte.md).
+
+## How well it works
+
+![Pass rate per error type, production setup](docs/img/errors.svg)
+
+| Test | What was run | Result |
+|---|---|---|
+| Unit and integration tests | `pytest`, 462 tests, run by GitHub Actions on every push and pull request (badge above): backend tests, frontend type check + build, Docker image build | all pass: 384 run on GitHub, 72 that need the real media library or the Whisper data are skipped there and run locally |
+| Injected-error matrix | 11 approved episodes (6 *Slow Horses* + 5 other series) × 23 error scenarios × 15 model setups × sampled/full = **7,590 runs** | 0 errors. Production setup: 239 of 242. Every miss is a +0.3 s shift (just above the 0.25 s decision bar) or per-line jitter (nothing to fix) |
+| Healthy files | the same 11 episodes with no error | 11 of 11 left untouched, no false alarms |
+| Real library, read-only | 20 random episodes, two rounds, library mounted read-only, dry run | found and fixed two real bugs (wrong audio track on multi-language files, a song counted as missing lines); the rest ok or correctly flagged |
+| Real flawed episodes | 5 episodes with known problems, judged by a *different* Whisper model (small.en), table below | 4 fixed or correctly left alone, 1 wrong subtitle flagged |
+| Docker | clean build, health check, `PUID`/`PGID`, timezone, file ownership | pass |
+| Frontend ↔ backend | every API call, settings field, database column and reason code compared | consistent |
+
+**Five real flawed episodes: share of lines more than 2 s from the audio**
+
+| Episode | Problem | Before | alass alone | Verifyarr |
+|---|---|---|---|---|
+| Community S03E20 | two blocks, −25.7 s and −19.4 s | 62 % | 62 % (sees nothing) | **6 %** |
+| Brooklyn Nine-Nine S01E02 | drift +0.28 % | 62 % | 90 % (writes −16 s) | **8 %** |
+| S.W.A.T. S02E12 | already in sync | 6 % | 60 % (splits into 6 blocks, up to 209 s) | **4 %** (not damaged) |
+| Taskmaster S06E02 | constant −4.0 s | 98 % | 98 % (writes +30 to +54 s) | **6 %** |
+| My Name Is Earl S03E13 | wrong subtitle | – | – | flagged, left untouched |
+
+Taskmaster is also the worst failure found: a rate "rescue" built on alass' own clamped output once moved
+the first line from 7 s to 82 s. It is fixed and is now a regression test (`tests/test_real_cases.py`).
+
+### Known limits
+
+- Whisper evidence is thin where there is no dialogue (credits, the last minute): an error confined there cannot be judged reliably.
+- Block detection depends on dialogue density; thin-dialogue episodes give fewer anchors.
+- A file that alass splits into several blocks is always reported as "fetch a fresh subtitle", even after a verified repair.
+- Tested on English audio, 11 approved episodes for the matrix and 25 real episodes; injected errors are a model of real ones, not a sample.
+- Chart data and script: [`docs/make_charts.py`](docs/make_charts.py).
 
 
 ## Install with Docker

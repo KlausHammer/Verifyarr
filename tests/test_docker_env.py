@@ -71,6 +71,7 @@ class ValidateLocalWhisperModelTests(unittest.TestCase):
         finally:
             p.chmod(0o644)
 
+    @unittest.skipIf(hasattr(os, "geteuid") and os.geteuid() == 0, "root ignores directory permissions")
     def test_missing_in_readonly_dir_is_rejected(self):
         # A :ro bind-mount (e.g. - /models:/models:ro) with a typo'd filename can
         # never be downloaded into — fail at save time, not per audio clip.
@@ -176,6 +177,11 @@ class ServerTimezoneTests(unittest.TestCase):
             self.skipTest("needs time.tzset")
         os.environ["TZ"] = name
         time.tzset()
+        try:  # tzlocal caches the zone it first saw; apscheduler builds its triggers from it
+            import tzlocal
+            tzlocal.reload_localzone()
+        except Exception:
+            pass
 
     def test_server_timezone_name_prefers_tz_env(self):
         self._set_tz("Europe/Copenhagen")

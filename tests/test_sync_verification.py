@@ -90,6 +90,14 @@ def _test_config(conn) -> Config:
     return cfg
 
 
+def _require_media(fixtures) -> None:
+    """alass runs on the real video: skip where it is not on disk (CI, deleted episodes)."""
+    for fx in fixtures.values():
+        video_path, sub_path = fixture_paths(fx)
+        if not video_path.exists() or not sub_path.exists():
+            raise unittest.SkipTest(f"real media not available: {video_path.name}")
+
+
 def _prime_full_cache(conn, cfg, fixtures) -> None:
     """Pre-populate the full-transcript cache from fixtures -- the same pattern
     verifyarr_handoff/e2e_after.py's run_one uses. Anything that escalates to a
@@ -335,6 +343,7 @@ class SyncVerificationCase(unittest.TestCase):
         # need their own fixtures too (wrong-episode pairs, clamp probe).
         need = list(dict.fromkeys(list(HEALTHY_SLUGS) + ["S02E01", "S02E06"]))
         cls.fixtures = {slug: load_fixture(slug) for slug in need}
+        _require_media(cls.fixtures)
         cls.ground_truths = {slug: build_ground_truth(f) for slug, f in cls.fixtures.items()}
 
     def _run(self, slug: str, subs, lang: str = "en"):
@@ -628,6 +637,7 @@ class RealWorldFixTests(SyncVerificationCase):
         cls.conn = db.connect(SCRATCH_DIR / "scratch_e21.db")
         cls.cfg = _test_config(cls.conn)
         cls.fixtures = {"S02E21": load_fixture("S02E21")}
+        _require_media(cls.fixtures)
         _prime_full_cache(cls.conn, cls.cfg, cls.fixtures)
         cls.ground_truths = {"S02E21": build_ground_truth(cls.fixtures["S02E21"])}
 
