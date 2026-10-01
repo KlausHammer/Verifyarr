@@ -24,6 +24,11 @@ class BaselineRampTests(unittest.TestCase):
     def test_unknown_pool_keeps_the_old_behaviour(self):
         self.assertTrue(self.check([], object()))
 
+    def test_an_empty_baseline_does_not_hide_a_flat_one(self):
+        pools = [[], _pool(lambda a: a + 3.9)]
+        with mock.patch.object(pipeline, "_dense_pool", side_effect=pools):
+            self.assertFalse(pipeline._baseline_shows_ramp(None, Path("v.mkv"), None, object(), object()))
+
     def test_no_baseline_at_all_keeps_the_old_behaviour(self):
         self.assertTrue(self.check(_pool(lambda a: a), None))
 

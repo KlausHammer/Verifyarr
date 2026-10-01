@@ -852,7 +852,7 @@ def _baseline_shows_ramp(conn: sqlite3.Connection, video_path: Path, cfg: Config
             continue
         pts = _dense_pool(conn, video_path, b, cfg)
         if not pts:
-            return True
+            continue
         seen = True
         p = _dense_probe(pts)
         if rate_gates_pass(p) or _stretch_gates_pass(p) or _ramp_overwhelming(p):
@@ -2428,7 +2428,11 @@ def correctness_and_finish(video_path: Path, subtitle_path: Path, lang: Optional
                 # fit -- the veto must not skip it (KG_BMS 4.6%, KG_BOB 0.1%).
                 rate_fix = rate_fixes()
             if (vetoed and rate_fix is None
-                    and not (cfg.anchor_resync_enabled and not cfg.dry_run
+                    and not (cfg.anchor_resync_enabled and cfg.anchor_check_enabled
+                             and not cfg.dry_run and result.get("flag") == "ok"
+                             and significant_anchor_residuals(
+                                 result.get("samples") or [], ANCHOR_SUSPECT_THRESHOLD_S,
+                                 min_samples=cfg.anchor_suspect_min_samples)
                              and plan_anchor_resync(current_subs, result.get("samples") or []))):
                 # Anchors disproved alass' fit; the original was kept unwritten.
                 # Flagged, not silently kept: the file alass moved is suspect.
