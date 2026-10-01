@@ -39,6 +39,23 @@ against the same Whisper evidence, so a bad fit (alass is sometimes wildly wrong
 
 ![Ten Whisper models on the same 242 tests: detection is flat, cost is not](docs/img/models.svg)
 
+<details><summary>Data behind the chart</summary>
+
+| Model | Passed of 242 | Speed (× real time, 4 CPU threads) | Word F1 |
+|---|---|---|---|
+| **tiny.en (greedy), default** | 239 | 25 | 0.78 |
+| tiny.en | 236 | 17 | 0.79 |
+| base.en (greedy) | 239 | 16 | 0.83 |
+| small.en (greedy) | 240 | 5.8 | 0.88 |
+| small.en | 237 | 4.5 | 0.88 |
+| medium.en (greedy) | 237 | 2.1 | 0.90 |
+| medium.en | 237 | 1.8 | 0.89 |
+| large-v3-turbo q8_0 | 238 | 1.7 | 0.89 |
+| large-v3-turbo q5_0 | 238 | 1.3 | 0.89 |
+| cloud: Groq large-v3-turbo | 232 | network | 0.89 |
+
+</details>
+
 Every model catches and fixes the same errors; they differ in what they cost. `tiny.en` is the default because:
 
 - **Same result, 5–20× faster.** A 58-minute episode takes about **2 min** (tiny), 12 min (small) or 30–45 min (medium / large-v3-turbo), on 4 CPU threads.
@@ -51,6 +68,23 @@ All thresholds are calibrated on `tiny.en`; other models transcribe differently.
 ## How well it works
 
 ![Pass rate per error type, production setup](docs/img/errors.svg)
+
+<details><summary>Data behind the chart</summary>
+
+| Error type | Passed / run | Note |
+|---|---|---|
+| Constant offset (fixed) | 63 / 66 | 3 misses: +0.3 s, just over the 0.25 s bar |
+| Framerate, PAL, drift (fixed) | 66 / 66 | |
+| Mistimed blocks (detected) | 44 / 44 | |
+| Missing middle (detected) | 11 / 11 | |
+| Wrong episode (detected) | 11 / 11 | |
+| Swapped lines (detected) | 11 / 11 | |
+| Drift + swapped lines (detected) | 11 / 11 | |
+| Healthy file, no false alarm | 11 / 11 | |
+| Dropped / duplicated cues | 11 / 11 | |
+| Per-line jitter (nothing to fix) | 8 / 11 | alass chases the noise (all models) |
+
+</details>
 
 | Test | What was run | Result |
 |---|---|---|
@@ -67,7 +101,6 @@ All thresholds are calibrated on `tiny.en`; other models transcribe differently.
 - Block detection depends on dialogue density; thin-dialogue episodes give fewer anchors.
 - A file that alass splits into several blocks is always reported as "fetch a fresh subtitle", even after a verified repair.
 - Tested on English audio, 11 approved episodes for the matrix and 25 real episodes; injected errors are a model of real ones, not a sample.
-- Chart data and script: [`docs/make_charts.py`](docs/make_charts.py).
 
 
 ## Install with Docker
