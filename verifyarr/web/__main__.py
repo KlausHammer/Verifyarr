@@ -9,11 +9,11 @@ import uvicorn
 from verifyarr import log
 from verifyarr.settings import DATA_DIR, DEFAULT_BACKUP_DIR, DEFAULT_REPORT_DIR, DEFAULT_QUARANTINE_DIR
 
-DEFAULT_PORT = 8787
+DEFAULT_PORT = 6868
 
 
 def port_from_env() -> int:
-    """The webapp's listen port: $PORT, or 8787. Garbage falls back to 8787 with a
+    """The webapp's listen port: $PORT, or 6868. Garbage falls back to 6868 with a
     warning instead of crashing the container on a typo."""
     raw = (os.environ.get("PORT") or "").strip()
     if not raw:

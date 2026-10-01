@@ -54,7 +54,7 @@ docker compose up -d
 - Whisper models of your own (optional): uncomment the `/models:ro` mount and set Settings →
   Correctness → "Model file path" to `/models/ggml-<name>.bin`.
 
-Open `http://your-server:8787`, create an admin password, then go through Settings: General
+Open `http://your-server:6868`, create an admin password, then go through Settings: General
 (Root Folders), Correctness (local Whisper works out of the box, no key needed), Bazarr (URL + API key),
 Automation, Scheduling. Generate (see below) is optional and off by default.
 
@@ -63,7 +63,13 @@ Forgot the admin password? `docker exec -it verifyarr python3 verifyarr.py reset
 
 ## Connecting it to Bazarr
 
-Settings → General → Post-processing → **Use post processing**, command for series:
+Enter Bazarr's URL and API key under Settings → Bazarr. That is all that is needed. Verifyarr then
+watches Bazarr's "wanted" lists and a scheduled sweep (Settings → Scheduling) for new downloads, checks
+them, and uses Bazarr's API to blacklist a bad subtitle and fetch another.
+
+**Post-processing is optional.** It only makes Verifyarr check a subtitle the moment Bazarr downloads it,
+instead of on the next poll or sweep. To use it: Bazarr → Settings → General → Post-processing →
+**Use post processing**, command for series:
 
 ```
 docker exec verifyarr python3 verifyarr.py single \
@@ -73,9 +79,7 @@ docker exec verifyarr python3 verifyarr.py single \
 ```
 
 (For movies, swap in Bazarr's movie placeholders — `{{movie}}`, `{{radarr_id}}`, etc. — check
-Bazarr's own placeholder list.) Needs the Bazarr container to be able to `docker exec` into this
-one. If that's not set up, the periodic sweep (Settings → Scheduling) catches new downloads too,
-just on a delay.
+Bazarr's own placeholder list.) It needs the Bazarr container to be able to `docker exec` into this one.
 
 
 ## Action on a suspect file

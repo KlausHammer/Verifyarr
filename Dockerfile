@@ -97,9 +97,9 @@ COPY --from=frontend-builder /frontend/dist/ ./verifyarr/web/static/
 
 # No curl in slim: plain stdlib against the auth-free /api/health.
 HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
-    CMD python3 -c "import os,urllib.request;urllib.request.urlopen('http://127.0.0.1:%s/api/health' % os.environ.get('PORT', '8787'), timeout=5)"
+    CMD python3 -c "import os,urllib.request;urllib.request.urlopen('http://127.0.0.1:%s/api/health' % os.environ.get('PORT', '6868'), timeout=5)"
 
 VOLUME ["/data"]
-EXPOSE 8787
+EXPOSE 6868
 ENTRYPOINT ["/app/docker/entrypoint.sh"]
 CMD ["python3", "-m", "verifyarr.web"]

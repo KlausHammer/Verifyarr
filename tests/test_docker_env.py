@@ -228,7 +228,7 @@ class PortFromEnvTests(unittest.TestCase):
         old = os.environ.get("PORT")
         try:
             os.environ.pop("PORT", None)
-            self.assertEqual(port_from_env(), 8787)
+            self.assertEqual(port_from_env(), 6868)
             os.environ["PORT"] = "9999"
             self.assertEqual(port_from_env(), 9999)
         finally:
@@ -242,7 +242,7 @@ class PortFromEnvTests(unittest.TestCase):
         old = os.environ.get("PORT")
         try:
             os.environ["PORT"] = "notaport"
-            self.assertEqual(port_from_env(), 8787)
+            self.assertEqual(port_from_env(), 6868)
         finally:
             if old is None:
                 os.environ.pop("PORT", None)

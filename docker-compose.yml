@@ -15,13 +15,13 @@ services:
       # Server timezone for scheduled scans; use your own, e.g. Europe/Berlin.
       TZ: Europe/Copenhagen
       # Webapp port inside the container; must match the right side of ports:.
-      PORT: 8787
+      PORT: 6868
       # Local Whisper model (Settings -> Correctness -> "Use local Whisper"). tiny.en ships
       # pre-baked and is what detection is calibrated and tested on (with VAD). Others download
       # once into ./data on first use, untested. Non-English audio needs a multilingual model.
       WHISPER_MODEL: tiny.en
     ports:
-      - "8787:8787"
+      - "6868:6868"
     volumes:
       # Use the SAME paths Sonarr/Radarr see, so Bazarr's hook passes paths that exist here.
       - /path/to/media/movies:/media/movies
