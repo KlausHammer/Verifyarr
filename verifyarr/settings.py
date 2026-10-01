@@ -175,6 +175,9 @@ def _is_under(path: Path, root: Path) -> bool:
         return False
 
 
+# Subtitle generation is built but not released (see README "To do"; frontend GENERATE_UI).
+GENERATE_RELEASED = False
+
 @dataclass
 class Config:
     movies_folder: Optional[Path]
@@ -451,8 +454,10 @@ class Config:
             auto_scan_correctness_enabled=vals["general.auto_scan_correctness_enabled"],
             auto_scan_line_order_enabled=vals["general.auto_scan_line_order_enabled"],
             backup_originals=vals["general.backup_originals"],
-            generate_enabled=vals["generate.enabled"],
-            auto_scan_generate_enabled=vals["general.auto_scan_generate_enabled"],
+            # Generation is not released: a value saved earlier must not keep it running now that the UI
+            # can no longer turn it off. Drop the override when it ships.
+            generate_enabled=vals["generate.enabled"] and GENERATE_RELEASED,
+            auto_scan_generate_enabled=vals["general.auto_scan_generate_enabled"] and GENERATE_RELEASED,
             generate_stt_provider=vals["generate.stt_provider"],
             generate_groq_api_key=vals["generate.groq_api_key"] or None,
             generate_groq_stt_model=vals["generate.groq_stt_model"],

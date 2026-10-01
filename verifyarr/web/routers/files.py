@@ -78,7 +78,7 @@ def generate_for_file(file_id: int, user=Depends(require_auth), conn=Depends(get
         raise HTTPException(status_code=400, detail="no wanted language recorded for this file")
     cfg = Config.from_db(conn)
     if not cfg.generate_enabled:
-        raise HTTPException(status_code=400, detail="subtitle generation is disabled (Settings -> Generate)")
+        raise HTTPException(status_code=400, detail="subtitle generation is not released yet")
 
     video_path = Path(row["video_path"])
     if not video_path.exists():

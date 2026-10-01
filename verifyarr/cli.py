@@ -92,7 +92,7 @@ def cmd_generate(cfg: Config, conn, video: str, lang: str, trigger: str = "cli_g
     everywhere else (see jobs._AUTO_TRIGGERS)."""
     video_p = _existing_path(video, "Video")
     if not cfg.generate_enabled:
-        log.error("generate.enabled is off — turn it on under Settings -> Generate first.")
+        log.error("Subtitle generation is not released yet.")
         sys.exit(1)
     if not clean_lang_code(lang):
         log.error("Not a usable subtitle language code: %r — use a short code like 'en' or 'da'.", lang)

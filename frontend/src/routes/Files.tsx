@@ -9,6 +9,7 @@ import { useToasts } from '../hooks/useToasts'
 import { formatExact, formatRelative } from '../lib/format'
 import { languageName } from '../lib/languages'
 import { runMatchesFile, runTypeLabel } from '../lib/runLabels'
+import { GENERATE_UI } from '../lib/features'
 import { fileDisplayName, syncText, verdict } from '../lib/verdict'
 
 const PAGE_SIZE = 25
@@ -30,6 +31,7 @@ const RESULT_OPTIONS: { value: string; label: string; params: Record<string, str
   { value: 'unknown', label: "Couldn't check", params: { flag: 'unknown' } },
   { value: 'other', label: 'Flagged (no reason recorded)', params: { reason: 'other' } },
   { value: 'nosub', label: 'No subtitle', params: { status: 'missing' } },
+  { value: 'generated', label: 'Generated', params: { flag: 'generated' } },
   { value: 'skipped', label: 'Skipped', params: { flag: 'skipped' } },
 ]
 
@@ -70,6 +72,7 @@ export default function Files() {
   const [confirm, setConfirm] = useState<PendingConfirm | null>(null)
   const [sort, setSort] = useState('-last_processed')
   const [langs, setLangs] = useState<string[]>([])
+  const [hasGenerated, setHasGenerated] = useState(false)
   const [runsTotal, setRunsTotal] = useState<number | null>(null)
   const { run: runningRun, isRunning } = useRunningJob()
   const { toast } = useToasts()
@@ -152,7 +155,10 @@ export default function Files() {
 
   useEffect(() => {
     api.get<StatsSummary>('/stats/summary').then(
-      (s) => setLangs(s.by_lang.map((l) => l.lang)),
+      (s) => {
+        setLangs(s.by_lang.map((l) => l.lang))
+        setHasGenerated((s.health.generated ?? 0) > 0)
+      },
       () => setLangs([]),
     )
     api.get<Paginated<RunRow>>('/runs?page_size=1').then(
@@ -354,7 +360,7 @@ export default function Files() {
           <div style={{ width: 210 }}>
             <label htmlFor="f-res">Result</label>
             <select id="f-res" value={resultValue(params)} onChange={(e) => setResult(e.target.value)}>
-              {RESULT_OPTIONS.map((o) => (
+              {RESULT_OPTIONS.filter((o) => o.value !== 'generated' || GENERATE_UI || hasGenerated).map((o) => (
                 <option key={o.value} value={o.value}>{o.label}</option>
               ))}
             </select>
