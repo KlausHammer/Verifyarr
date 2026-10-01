@@ -1,12 +1,14 @@
 """Fixtures for the real flawed episodes (Z5_flaggede): small.en transcript as the 'turbo' slot.
 Run once: .venv/bin/python tests/build_real_case_fixtures.py"""
 import json
+import os
 import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-Z = Path("/mnt/c/Users/knham/Desktop/undertekst auto/Z5_flaggede")
-SW = Path("/mnt/c/Users/knham/Desktop/undertekst auto/whisper_gpu_staging/sweep_linux/small.en-greedy-cpu")
+DATA_ROOT = Path(os.environ.get("VERIFYARR_TEST_DATA", "/mnt/c/Users/knham/Desktop/undertekst auto"))
+Z = DATA_ROOT / "Z5_flaggede"
+SW = DATA_ROOT / "whisper_gpu_staging" / "sweep_linux" / "small.en-greedy-cpu"
 OUT = Path(__file__).parent / "fixtures" / "whisper_full"
 
 meta = json.loads((Z / "meta.json").read_text(encoding="utf-8"))

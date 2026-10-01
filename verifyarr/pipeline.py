@@ -33,6 +33,7 @@ from verifyarr.subtitles import (
     FPS_RATIOS, FPS_ANCHOR_TILT_MIN_S, FPS_BINNED_TILT_MIN_S, FPS_LOO_TILT_MIN_S,
     FPS_VAD_TILT_MIN_S, FPS_MIN_ANCHORS,
     FPS_MAX_BASE_SPREAD_S, rate_gates_pass, rate_is_flat, snap_rate, RATE_MIN_TILT_S,
+    RATE_FLAT_TILT_S, RATE_MIN_KEEP,
     probe_gates_pass, stretch_ratio, stretch_name, _theil_tilt,
 )
 from verifyarr.sync_engine import (
@@ -842,22 +843,53 @@ def _ramp_rescue_probe(result: dict, new_subs, cfg: Config) -> Optional[dict]:
 
 
 def _baseline_shows_ramp(conn: sqlite3.Connection, video_path: Path, cfg: Config, *baselines) -> bool:
-    """False only when a baseline's full pool is measurably NOT a rate (flat, any offset).
+    """False only when a baseline's full pool is positively FLAT (one line at any offset, no tilt).
     A rate that exists only in alass' output is alass' own clamped/guessed staircase: Taskmaster
     S06E02 had a flat -3.9s original, alass wrote -88s (early cues clamped to 0), and the
-    "ramp" in that output was rescued into a -4% fix. Unknown (no pool) counts as a ramp."""
-    seen = False
+    "ramp" in that output was rescued into a -4% fix. Unknown counts as a ramp: no pool, a
+    pool too thin to probe, or a noisy/block-shaped one that is neither a ramp nor a flat line."""
+    flat = False
+    done: list = []
     for b in baselines:
-        if b is None:
+        if b is None or any(b is d or _same_timing(b, d) for d in done):
             continue
-        pts = _dense_pool(conn, video_path, b, cfg)
-        if not pts:
+        done.append(b)
+        p = _dense_probe(_dense_pool(conn, video_path, b, cfg))
+        if p is None:
             continue
-        seen = True
-        p = _dense_probe(pts)
         if rate_gates_pass(p) or _stretch_gates_pass(p) or _ramp_overwhelming(p):
             return True
-    return not seen
+        flat = flat or (p["keep_frac"] >= RATE_MIN_KEEP and abs(p["tilt"]) < RATE_FLAT_TILT_S)
+    return not flat
+
+
+def _same_timing(a, b) -> bool:
+    """Two subtitle objects with identical cue starts (a presync that changed nothing)."""
+    return len(a.events) == len(b.events) and all(x.start == y.start for x, y in zip(a.events, b.events))
+
+
+def _anchor_bad_samples(cfg: Config, ev_cfg: Config, result: dict, row: dict,
+                        resolved_winner) -> list:
+    """The anchors that condemn the file -- what the anchor branch of correctness_and_finish acts on.
+    Also asked by the veto path, so the two can never disagree about whether that branch fires.
+    2 of ~51 full anchors is noise (SH_S01E04 fired on exactly that), so dense evidence needs 3.
+    A resolved old/blocks winner keeps 2: block structure is already proven there, and a sampled
+    resolution judges on sparse cached clips anyway."""
+    if not cfg.anchor_check_enabled:
+        return []
+    dense = ev_cfg.whisper_mode == "full" and resolved_winner in (None, "new")
+    suspect_min = ANCHOR_SUSPECT_MIN_SAMPLES if dense else cfg.anchor_suspect_min_samples
+    bad = significant_anchor_residuals(result.get("samples") or [], ANCHOR_SUSPECT_THRESHOLD_S,
+                                       min_samples=suspect_min)
+    if (not bad and row["sync_block_spread_s"] is not None
+            and row["sync_block_spread_s"] >= cfg.block_spread_suspect_threshold_s
+            and (resolved_winner is None or resolved_winner == "blocks")):
+        bad = [s for s in result.get("samples") or []
+               if s.get("anchor")
+               and abs(s["anchor"]["shift"]) >= ANCHOR_HUGE_SINGLE_S
+               and s.get("score") is not None
+               and s["score"] >= cfg.overlap_threshold]
+    return bad
 
 
 def _resolve_ambiguous_sync(conn: sqlite3.Connection, video_path: Path, subtitle_path: Path,
@@ -2428,11 +2460,9 @@ def correctness_and_finish(video_path: Path, subtitle_path: Path, lang: Optional
                 # fit -- the veto must not skip it (KG_BMS 4.6%, KG_BOB 0.1%).
                 rate_fix = rate_fixes()
             if (vetoed and rate_fix is None
-                    and not (cfg.anchor_resync_enabled and cfg.anchor_check_enabled
-                             and not cfg.dry_run and result.get("flag") == "ok"
-                             and significant_anchor_residuals(
-                                 result.get("samples") or [], ANCHOR_SUSPECT_THRESHOLD_S,
-                                 min_samples=cfg.anchor_suspect_min_samples)
+                    and not (cfg.anchor_resync_enabled and not cfg.dry_run
+                             and result.get("flag") == "ok"
+                             and _anchor_bad_samples(cfg, ev_cfg, result, row, resolved_winner)
                              and plan_anchor_resync(current_subs, result.get("samples") or []))):
                 # Anchors disproved alass' fit; the original was kept unwritten.
                 # Flagged, not silently kept: the file alass moved is suspect.
@@ -2457,7 +2487,8 @@ def correctness_and_finish(video_path: Path, subtitle_path: Path, lang: Optional
             # gathered against cue times this fix just changed, so re-gather before
             # the verdict chain judges the corrected file.
             ramp_probe_saved = row.pop("_ramp_rescued", None)
-            fps_fix = rate_fix or rate_fixes()
+            # A vetoed file already ran rate_fixes() on these same inputs above.
+            fps_fix = rate_fix if vetoed else rate_fixes()
             if fps_fix is None and ramp_probe_saved is not None:
                 # The normal path cannot fire here (new's SUSPECT flag, or a
                 # second-path pool under the strict keep bar) -- but the rescue
@@ -2494,27 +2525,7 @@ def correctness_and_finish(video_path: Path, subtitle_path: Path, lang: Optional
             # Shared by the safety net and the anchor branch below: a file the
             # anchors condemn always gets the resync ATTEMPT first -- the net only
             # fires when the anchors have nothing to plan from.
-            # 2 of ~51 full anchors is noise (SH_S01E04 fired on exactly that),
-            # so dense evidence needs 3. A resolved old/blocks winner keeps 2:
-            # block structure is already proven there, and a sampled resolution
-            # judges on sparse cached clips anyway.
-            dense = (ev_cfg.whisper_mode == "full"
-                     and resolved_winner in (None, "new"))
-            suspect_min = (ANCHOR_SUSPECT_MIN_SAMPLES if dense
-                           else cfg.anchor_suspect_min_samples)
-            anchor_bad = (significant_anchor_residuals(
-                result.get("samples") or [], ANCHOR_SUSPECT_THRESHOLD_S,
-                min_samples=suspect_min)
-                if cfg.anchor_check_enabled else [])
-            if (cfg.anchor_check_enabled and not anchor_bad
-                    and row["sync_block_spread_s"] is not None
-                    and row["sync_block_spread_s"] >= cfg.block_spread_suspect_threshold_s
-                    and (resolved_winner is None or resolved_winner == "blocks")):
-                anchor_bad = [s for s in result.get("samples") or []
-                              if s.get("anchor")
-                              and abs(s["anchor"]["shift"]) >= ANCHOR_HUGE_SINGLE_S
-                              and s.get("score") is not None
-                              and s["score"] >= cfg.overlap_threshold]
+            anchor_bad = _anchor_bad_samples(cfg, ev_cfg, result, row, resolved_winner)
             if (result["flag"] == "ok" and not anchor_bad and cfg.anchor_resync_enabled
                     and not cfg.dry_run
                     and (resolved_winner == "blocks" or _block_repair_parts(row) >= 2)

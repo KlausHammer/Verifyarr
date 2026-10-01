@@ -1242,6 +1242,8 @@ def main(argv=None):
                             after_ev = list(after.events)
                             rec.update(flag=row.get("correctness_flag"), reason=row.get("reason"),
                                        sync=row.get("sync_status"),
+                                       fps_ratio=row.get("fps_ratio"),
+                                       max_shift_s=row.get("sync_max_shift_s"),
                                        lo_fixed=row.get("line_order_fixed"),
                                        lo_flagged=row.get("line_order_flagged"),
                                        lo_fixed_indices=row.get("lo_fixed_indices", []),

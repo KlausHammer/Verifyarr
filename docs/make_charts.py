@@ -1,5 +1,5 @@
 """Writes docs/img/models.svg and docs/img/errors.svg for the README.
-Data: whisper_gpu_staging/rapport/modelvalg_godkendte.md and matrixdata/godkendte_2026-09-30/analyse.txt.
+Data: docs/modelvalg_godkendte.md (numbers copied from it by hand; update both together).
 Run: python3 docs/make_charts.py"""
 from pathlib import Path
 
@@ -63,7 +63,7 @@ def models():
         b.append(f'<rect class="{cls}" x="{x0[2]}" y="{y + 3}" width="{pw * f1:.1f}" height="16" rx="3"/>')
         b.append(f'<text class="t1" x="{x0[2] + pw + 6}" y="{y + 16}" font-size="12">{f1:.2f}</text>')
     b.append(f'<text class="t2" x="20" y="{H - 14}" font-size="11.5">Speed: 4 CPU threads, one episode at a time. Bars start at 0. '
-             f'Source: rapport/modelvalg_godkendte.md</text>')
+             f'Source: docs/modelvalg_godkendte.md</text>')
     return svg(W, H, "".join(b), "Whisper model comparison",
                "tiny.en greedy passes 239 of 242 tests like the larger models, runs 25 times realtime and has the lowest word accuracy, 0.78.")
 
