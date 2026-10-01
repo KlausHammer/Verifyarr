@@ -5,6 +5,7 @@ import type { AttentionResponse, NextRunResponse, StatsSummary } from '../api/ty
 import { useAuth } from '../hooks/useAuth'
 import { useRunningJob } from '../hooks/useRunningJob'
 import { formatExact, nextScanLabel } from '../lib/format'
+import { GENERATE_UI } from '../lib/features'
 import { runTargetLabel, runTypeLabel } from '../lib/runLabels'
 
 // Settings submenu, shown expanded under the Settings nav item (Bazarr-style) instead of as
@@ -19,7 +20,7 @@ export const SETTINGS_TABS = [
   { key: 'scheduling', label: 'Scheduling' },
   { key: 'log', label: 'Log' },
   { key: 'account', label: 'Account' },
-]
+].filter((t) => GENERATE_UI || t.key !== 'generate')
 
 const NAV_ITEMS: { to: string; label: string; end?: boolean }[] = [
   { to: '/', label: 'Dashboard', end: true },

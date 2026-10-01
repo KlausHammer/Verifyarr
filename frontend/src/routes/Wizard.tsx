@@ -417,8 +417,7 @@ export default function Wizard() {
               </p>
               <p style={{ margin: 0, lineHeight: 1.5 }}>
                 <strong>Local Whisper.</strong> It runs on this server: free and private, no API key. It can be slow on small
-                servers like an Intel N100, but it runs at night. Cloud providers are only used for generating
-                subtitles, which you set up later under Settings → Generate.
+                servers like an Intel N100, but it runs at night.
               </p>
             </>
           )}

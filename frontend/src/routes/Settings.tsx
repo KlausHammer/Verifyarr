@@ -21,6 +21,7 @@ import FolderBrowser from '../components/FolderBrowser'
 import LanguageMultiSelect from '../components/LanguageMultiSelect'
 import CopyLogButton from '../components/CopyLogButton'
 import { SETTINGS_TABS } from '../components/Layout'
+import { GENERATE_UI } from '../lib/features'
 import { useAuth } from '../hooks/useAuth'
 import { useAutoScrollLog } from '../hooks/useAutoScrollLog'
 import { useToasts } from '../hooks/useToasts'
@@ -378,13 +379,13 @@ function WhatRunsTable({ general, sync, correctness, generate }: ReturnType<type
         </span>
       ),
     },
-    {
+    ...(!GENERATE_UI ? [] : [{
       key: 'generate', name: 'Generate missing subtitles',
       tip: 'Transcribes the whole file with Whisper and translates it if needed, for a video that has no subtitle at all. Configured on the Generate tab.',
       manual: gen.enabled, setManual: (v: boolean) => generate.setData({ ...gen, enabled: v }),
       auto: g.auto_scan_generate_enabled, setAuto: (v: boolean) => general.setData({ ...g, auto_scan_generate_enabled: v }),
       action: <span className="text-faint">—</span>,
-    },
+    }]),
   ]
 
   return (
@@ -817,9 +818,7 @@ function CorrectnessTab() {
         <h2 id="sc-corr0" style={{ margin: '0 0 4px', fontSize: 15 }}>Whisper (local)</h2>
         <p className="text-dim" style={{ fontSize: 12.5, maxWidth: 560, margin: '0 0 14px', lineHeight: 1.5 }}>
           Turned on/off from Settings → Automation → What runs. The checks always listen with
-          whisper.cpp on this machine — no cloud speech recognition and no API key. Cloud is
-          only for generating subtitles (Settings → Generate), and for translating a subtitle
-          that is in another language than the audio.
+          whisper.cpp on this machine — no cloud speech recognition and no API key.
         </p>
         <Field advanced label="Model file path" tip="A ggml model file. Every threshold is measured on tiny.en (the default) -- other models transcribe differently and are not calibrated.">
           <input type="text" value={data.local_whisper_model} onChange={(e) => setData({ ...data, local_whisper_model: e.target.value })} />
@@ -1733,7 +1732,7 @@ export default function Settings() {
           {active === 'general' && <GeneralTab />}
           {active === 'sync' && <SyncTab />}
           {active === 'correctness' && <CorrectnessTab />}
-          {active === 'generate' && <GenerateTab />}
+          {GENERATE_UI && active === 'generate' && <GenerateTab />}
           {active === 'automation' && <AutomationTab />}
           {active === 'bazarr' && <BazarrTab />}
           {active === 'scheduling' && <SchedulingTab />}

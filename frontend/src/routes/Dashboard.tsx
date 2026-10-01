@@ -199,7 +199,7 @@ export default function Dashboard() {
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '4px 12px', marginTop: 10, fontSize: 12.5 }}>
                   {[
                     { color: 'var(--green)', label: 'In sync', v: n(h.insync) },
-                    { color: 'var(--accent-dim)', label: 'Fixed or generated', v: n(h.fixed) + n(h.generated) },
+                    { color: 'var(--accent-dim)', label: 'Fixed', v: n(h.fixed) + n(h.generated) },
                     { color: 'var(--red)', label: 'Flagged', v: n(h.suspect) },
                     { color: 'var(--grey)', label: "Couldn't check", v: n(h.unknown) },
                     ...(n(h.other) > 0 ? [{ color: 'var(--yellow)', label: 'Other', v: n(h.other) }] : []),

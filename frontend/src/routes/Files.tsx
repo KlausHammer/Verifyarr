@@ -30,7 +30,6 @@ const RESULT_OPTIONS: { value: string; label: string; params: Record<string, str
   { value: 'unknown', label: "Couldn't check", params: { flag: 'unknown' } },
   { value: 'other', label: 'Flagged (no reason recorded)', params: { reason: 'other' } },
   { value: 'nosub', label: 'No subtitle', params: { status: 'missing' } },
-  { value: 'generated', label: 'Generated', params: { flag: 'generated' } },
   { value: 'skipped', label: 'Skipped', params: { flag: 'skipped' } },
 ]
 

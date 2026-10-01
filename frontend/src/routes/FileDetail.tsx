@@ -9,6 +9,7 @@ import { useRunningJob } from '../hooks/useRunningJob'
 import { useToasts } from '../hooks/useToasts'
 import { fileName, formatBytes, formatExact, formatRelative } from '../lib/format'
 import { languageName } from '../lib/languages'
+import { GENERATE_UI } from '../lib/features'
 import { runMatchesFile } from '../lib/runLabels'
 import { changeLines, fileDisplayName, historyVerdict, verdict, type VerdictAction } from '../lib/verdict'
 
@@ -192,14 +193,16 @@ export default function FileDetail() {
             <button className="btn" onClick={doReplace} disabled={buttonsDisabled || nosub}>
               {busy === 'replace' ? <span className="spinner" /> : 'Fetch replacement'}
             </button>
-            <button
-              className="btn"
-              onClick={askGenerate}
-              disabled={buttonsDisabled || !nosub}
-              title={nosub ? '' : 'Only for videos without a subtitle in this language'}
-            >
-              {busy === 'generate' ? <span className="spinner" /> : 'Generate with Whisper'}
-            </button>
+            {GENERATE_UI && (
+              <button
+                className="btn"
+                onClick={askGenerate}
+                disabled={buttonsDisabled || !nosub}
+                title={nosub ? '' : 'Only for videos without a subtitle in this language'}
+              >
+                {busy === 'generate' ? <span className="spinner" /> : 'Generate with Whisper'}
+              </button>
+            )}
             <button className="btn btn-danger" disabled={buttonsDisabled || nosub} onClick={() => setConfirm({
               title: 'Quarantine this subtitle?',
               message: `${fileName(f.subtitle_path)} is moved out of the media folder so players stop showing it. You can restore it from Quarantine & Backups.`,

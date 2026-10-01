@@ -81,7 +81,7 @@ export function verdict(f: FileRow): Verdict {
   if (status === 'missing') {
     return make('nosub', 'pill-muted', '–', 'No subtitle',
       'No subtitle for this language.',
-      'Generate one with Whisper, or wait for Bazarr.', 'generate')
+      'Wait for Bazarr.', null)
   }
   if (flag === 'generated') {
     return make('generated', 'pill-info', '●', 'Generated',
@@ -282,5 +282,5 @@ export const ATTENTION_META: Record<SuspectReason | 'other' | 'nosub', Attention
   no_speech_heard: { label: 'No speech heard', cls: 'pill-warn', icon: '!', todo: 'Check the audio track, then Re-check.' },
   check_failed: { label: 'Check failed', cls: 'pill-warn', icon: '!', todo: 'Re-check.' },
   other: { label: 'Needs attention', cls: 'pill-bad', icon: '✕', todo: 'Re-check to get a fresh verdict.' },
-  nosub: { label: 'No subtitle', cls: 'pill-muted', icon: '–', todo: 'Generate one with Whisper, or wait for Bazarr.' },
+  nosub: { label: 'No subtitle', cls: 'pill-muted', icon: '–', todo: 'Wait for Bazarr.' },
 }
