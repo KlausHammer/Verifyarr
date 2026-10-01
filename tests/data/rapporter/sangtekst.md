@@ -1,147 +1,147 @@
-# Sangtekst som sync-bevis (opgave F)
+# Song lyrics as sync evidence (task F)
 
-**Konklusion: byg det ikke.** Sangtekst-anchors ER dårligere end gennemsnittet
-(10,3 % forkerte mod 3,9 % i grundraten) — men bidraget er forsvindende lille
-(13 af 289 forkerte anchors, 4,5 %), koncentreret i to musiknumre, og alle
-afprøvede filtre kasserer data uden at flytte estimatet (median/MAD og
-klipniveau identiske). Dertil kommer to fund der underminerer selve fixet: i HI
-er sang↔sang-anchors **fejlfri (30/30)** — ægte, brugbare beviser som et
-uselektivt filter ville destruere; og den transskriber-familie produktionen
-bruger (large-v3: turbo 0/13.749 ♪, groq 0 ♪ i 5 fixtures) markerer slet ikke
-sang med ♪, så en ♪-regel ville være no-op netop dér — mens umarkeret sangtekst
-(julekoralerne nedenfor) smutter igennem enhver ♪-regel. Et negativt resultat
-med tal bag — detaljerne følger. Rådata: `sangtekst.json`.
+**Conclusion: don't build it.** Song-lyric anchors ARE worse than average
+(10.3 % wrong against a base rate of 3.9 %) — but the contribution is vanishingly small
+(13 of 289 wrong anchors, 4.5 %), concentrated in two musical numbers, and all
+filters tried discard data without moving the estimate (median/MAD and
+clip level identical). On top of that come two findings that undermine the fix itself: in HI,
+song↔song anchors are **flawless (30/30)** — genuine, usable evidence that an
+unselective filter would destroy; and the transcriber family production
+uses (large-v3: turbo 0/13,749 ♪, groq 0 ♪ in 5 fixtures) does not mark
+song with ♪ at all, so a ♪ rule would be a no-op right there — while unmarked song lyrics
+(the Christmas carols below) slip through any ♪ rule. A negative result
+with numbers behind it — the details follow. Raw data: `sangtekst.json`.
 
-Målt på de samme 30 facit-egnede afsnit og med samme matchning som opgave E
-(`_match_segments_to_lines`-replik: ±10 s kandidater, ≥0,5 overlap, ≥2 fælles,
-strengt `>` så tidligste linje vinder, én anchor pr. linje, offset 0,
-korrekt = |residual| ≤ 2,5 s) — men på fixture-transskriptionen (lokal
-small.en), fordi den er den **eneste** der markerer sang med ♪/♫. Absolutte
-anchortal er derfor ikke 1:1 med E (7.470 vs. 7.352 anchors, fejlrate 3,9 %
-mod E's 3,4–3,6 %) — sammenligningen der tæller er sang mod ikke-sang og
-filter-deltaet inden for samme transskription. Alt er opdelt på HI/ikke-HI:
-17 HI-afsnit (243 ♪-cues, 2,98 %) mod 13 ikke-HI (17 ♪-cues, 0,24 %).
+Measured on the same 30 ground-truth episodes and with the same matching as task E
+(`_match_segments_to_lines` replica: ±10 s candidates, ≥0.5 overlap, ≥2 shared,
+strictly `>` so the earliest line wins, one anchor per line, offset 0,
+correct = |residual| ≤ 2.5 s) — but on the fixture transcription (local
+small.en), because it is the **only** one that marks song with ♪/♫. Absolute
+anchor numbers are therefore not 1:1 with E (7,470 vs. 7,352 anchors, error rate 3.9 %
+against E's 3.4–3.6 %) — the comparison that counts is song against non-song and
+the filter delta within the same transcription. Everything is split by HI/non-HI:
+17 HI episodes (243 ♪ cues, 2.98 %) against 13 non-HI (17 ♪ cues, 0.24 %).
 
-## 1. Hvor meget sangtekst er der?
+## 1. How much song lyric is there?
 
-- Transskriptionssiden: **304/17.615 segmenter (1,73 %)**, **885/37.015 s
-  (2,39 %)** med ♪/♫. Heraf 31 uden content-tokens (`♪ La la la ♪`-typen) —
-  de kan aldrig anchore. Nuværende `_NONSPEECH_RE` fanger 1 af 304.
-  Til sammenligning: bracket-musik uden ♪ (`[Music]`-typen, allerede filtreret
-  i produktion) står for 123 segmenter.
-- Koncentration: **C_S03E03 alene står for 149 af de 304 sangsegmenter
-  (49 %)** — et musiknummer (seriens tema, The 88's, diegetisk 139–162 s
-  plus genudsendelser). Uden den episode: 155 segmenter (0,91 %).
-- Undertekstsiden: HI bærer modparten (243 ♪-cues), ikke-HI gør næsten ikke
-  (17 cues) — men "næsten" er ikke "aldrig": C_S03E03's `.en.srt` indeholder
-  selv temateksten (kursiv + enkelte ♪-cues).
-- Anchors i dag fra ♪-linje på den ene eller anden side: **126/7.470
-  (1,69 %)** — 41 segmentside (0,55 %), 101 linjeside (1,35 %), 16 begge.
-  Kun 41 af 273 indholdsbærende sangsegmenter (15 %) bliver til anchors.
+- Transcription side: **304/17,615 segments (1.73 %)**, **885/37,015 s
+  (2.39 %)** with ♪/♫. Of them 31 without content tokens (the `♪ La la la ♪` type) —
+  they can never anchor. The current `_NONSPEECH_RE` catches 1 of 304.
+  By comparison: bracket music without ♪ (the `[Music]` type, already filtered
+  in production) accounts for 123 segments.
+- Concentration: **C_S03E03 alone accounts for 149 of the 304 song segments
+  (49 %)** — one musical number (the series theme, The 88's, diegetic 139–162 s
+  plus reruns). Without that episode: 155 segments (0.91 %).
+- Subtitle side: HI carries the counterpart (243 ♪ cues), non-HI almost does not
+  (17 cues) — but "almost" is not "never": C_S03E03's `.en.srt` itself contains the
+  theme lyrics (italic + a few ♪ cues).
+- Anchors today from a ♪ line on one side or the other: **126/7,470
+  (1.69 %)** — 41 segment side (0.55 %), 101 line side (1.35 %), 16 both.
+  Only 41 of 273 content-bearing song segments (15 %) become anchors.
 
-## 2. Er sang-anchors dårligere? (HI/ikke-HI)
+## 2. Are song anchors worse? (HI/non-HI)
 
-| Gruppe | Alle (n, fejl) | HI (n, fejl) | Ikke-HI (n, fejl) |
+| Group | All (n, errors) | HI (n, errors) | Non-HI (n, errors) |
 |---|---|---|---|
-| base | 7.470, 3,9 % | 4.016, 3,3 % | 3.454, 4,5 % |
-| seg ♪ | 41, **9,8 %** | 30, **0,0 %** | 11, **36,4 %** |
-| linje ♪ | 101, **9,9 %** | 96, 9,4 % | 5, 20,0 % |
-| begge ♪ | 16, 6,2 % | 12, 0,0 % | 4, 25,0 % |
-| enten ♪ | 126, **10,3 %** | 114, 7,9 % | 12, 33,3 % |
-| ingen ♪ | 7.344, 3,8 % | 3.902, 3,2 % | 3.442, 4,4 % |
+| base | 7,470, 3.9 % | 4,016, 3.3 % | 3,454, 4.5 % |
+| seg ♪ | 41, **9.8 %** | 30, **0.0 %** | 11, **36.4 %** |
+| line ♪ | 101, **9.9 %** | 96, 9.4 % | 5, 20.0 % |
+| both ♪ | 16, 6.2 % | 12, 0.0 % | 4, 25.0 % |
+| either ♪ | 126, **10.3 %** | 114, 7.9 % | 12, 33.3 % |
+| no ♪ | 7,344, 3.8 % | 3,902, 3.2 % | 3,442, 4.4 % |
 
-Samme mønster i turbo-transskriptionen (E-data, umarkeret sang):
-linje-♪-anchors 100/7.352 (1,36 %) med 6,0 % fejl — HI 94 @ 6,4 %,
-ikke-HI 6 @ 0 %. To uafhængige transskriptioner, samme retning.
+The same pattern in the turbo transcription (E data, unmarked song):
+line-♪ anchors 100/7,352 (1.36 %) with 6.0 % errors — HI 94 @ 6.4 %,
+non-HI 6 @ 0 %. Two independent transcriptions, the same direction.
 
-Mekanismen er kortlagt, ikke blot talt: **alle 4 forkerte ikke-HI
-seg-anchors** er C_S03E03's temasegmenter, hvis tidsstempler small.en
-sætter 3–9 s forkert (−3,1…−9,0 s residual på ægte lyric-match).
-**Alle 9 forkerte HI linje-anchors** er julekoraler i C_S03E10 (+ én
-temalinje i C_S02E18), hvor small.en transskriberer stroferne **uden ♪** som
-almindelig dialog — indholdet matcher den rigtige lyric-linje, men
-segmenttimingen er 2,5–7,2 s skæv. To pointer: (a) hele den målte
-overrisiko sidder i to musiknumre — uden C_S03E03 er ikke-HI seg-siden
-0/7 forkert; (b) en segmentside-♪-regel fanger **nul** af de 9
-koral-fejl, fordi segmenterne ikke er markerede — kun linjesiden ville.
+The mechanism is mapped, not merely counted: **all 4 wrong non-HI
+seg anchors** are C_S03E03's theme segments, whose timestamps small.en
+puts 3–9 s wrong (−3.1…−9.0 s residual on a genuine lyric match).
+**All 9 wrong HI line anchors** are Christmas carols in C_S03E10 (+ one
+theme line in C_S02E18), where small.en transcribes the stanzas **without ♪** as
+ordinary dialogue — the content matches the right lyric line, but the
+segment timing is 2.5–7.2 s off. Two points: (a) the whole measured
+excess risk sits in two musical numbers — without C_S03E03 the non-HI seg side is
+0/7 wrong; (b) a segment-side ♪ rule catches **none** of the 9
+carol errors, because the segments are not marked — only the line side would.
 
-Sang-relaterede fejl er 13/289 (4,5 %) af alle forkerte anchors.
+Song-related errors are 13/289 (4.5 %) of all wrong anchors.
 
-## 3. Det gentagne omkvæd — afkræftet som særskilt fare
+## 3. The repeated chorus — refuted as a distinct danger
 
-Fjern-dobbeltgængere: 399/7.470 (**5,3 %**, E: 5,5 %) med 5,3 % fejlrate
-(E: 8,9 % — anden transskription). Heraf sang: **16/399 (4,0 %), alle i HI,
-nul i ikke-HI**. Residual-fordeling:
+Distant doppelgängers: 399/7,470 (**5.3 %**, E: 5.5 %) with a 5.3 % error rate
+(E: 8.9 % — another transcription). Of them song: **16/399 (4.0 %), all in HI,
+zero in non-HI**. Residual distribution:
 
-- dobbeltgænger+sang (n=16): fejl 6,2 %, |resid| median 0,40 s, p90 2,01 s,
-  max 7,18 s.
-- dobbeltgænger+ikke-sang (n=383): fejl 5,2 %, median 0,43 s, p90 1,52 s,
-  max 8,39 s.
+- doppelgänger+song (n=16): errors 6.2 %, |resid| median 0.40 s, p90 2.01 s,
+  max 7.18 s.
+- doppelgänger+non-song (n=383): errors 5.2 %, median 0.43 s, p90 1.52 s,
+  max 8.39 s.
 
-Ingen systematisk forskel; de store residualer findes i begge grupper, og
-max er større uden for sang. De store sang-residualer der ER observeret
-(C_S03E03 −3…−9 s, koralerne −2,5…−7,2 s) er **fejl-timed ægte match**, ikke
-omkvæd matchet til forkert forekomst — tidligste-linje-ved-lighed-mekanismen
-giver ingen målbar ekstra hale her.
+No systematic difference; the large residuals exist in both groups, and
+the max is larger outside song. The large song residuals that ARE observed
+(C_S03E03 −3…−9 s, the carols −2.5…−7.2 s) are **mis-timed genuine matches**, not
+a chorus matched to the wrong occurrence — the earliest-line-on-a-tie mechanism
+gives no measurable extra tail here.
 
-## 4. Musik OVER tale — kan ikke afgrænses, og der er intet at hente
+## 4. Music OVER speech — cannot be delimited, and there is nothing to gain
 
-- Forslag 1 (VAD-passage med både ♪ og dialog): **14 kandidater på 30
-  afsnit → 8 anchors, 0 forkerte.** Populationen eksisterer næsten ikke,
-  fordi Silero-VAD inkonsekvent fyrer på sang (C_S02E01/SH_S01E05: 0 % af
-  sangtiden i VAD; C_S03E03: 53 %). Kan pr. konstruktion ikke bære et
-  filter — og bisætning til E: sang konfunderer VAD-fravær som
-  baggrundstegn den anden vej.
-- Forslag 2 (naboskab ±15 s om sang, 391 kandidater → 202 anchors):
-  fejlrate **2,0 % mod 3,9 % i grundraten** (HI 2,9 %/3,3 %; ikke-HI
-  **0/65 mod 4,5 %**). Nær-sang-dialog er ikke værre — om noget bedre.
-- Konfidensdip uden manglende undertekst: **findes ikke.** Ordkonfidens
-  (out/-ord) median 0,908 i naboskab mod 0,912 alle; og
-  lav-konfidens→forkert-AUC **kollapser 0,63 → 0,35** inde i naboskabet
-  (HI 0,66 → 0,37; ikke-HI: ingen forkerte i naboskab overhovedet).
-  Selv E's svage signal (AUC ~0,70) forsvinder — inverteret — nær musik.
-  Tre uafhængige nej.
+- Proposal 1 (a VAD passage with both ♪ and dialogue): **14 candidates across 30
+  episodes → 8 anchors, 0 wrong.** The population almost does not exist,
+  because Silero VAD fires inconsistently on song (C_S02E01/SH_S01E05: 0 % of the
+  song time in VAD; C_S03E03: 53 %). By construction it cannot carry a
+  filter — and a side note to E: song confounds VAD absence as a
+  background sign the other way.
+- Proposal 2 (proximity ±15 s around song, 391 candidates → 202 anchors):
+  error rate **2.0 % against 3.9 % in the base rate** (HI 2.9 %/3.3 %; non-HI
+  **0/65 against 4.5 %**). Near-song dialogue is no worse — if anything better.
+- A confidence dip without a missing subtitle: **does not exist.** Word confidence
+  (out/ words) median 0.908 in proximity against 0.912 overall; and the
+  low-confidence→wrong AUC **collapses 0.63 → 0.35** inside the proximity
+  (HI 0.66 → 0.37; non-HI: no wrong ones in proximity at all).
+  Even E's weak signal (AUC ~0.70) disappears — inverted — near music.
+  Three independent noes.
 
-## 5. Hvad ville en ændring koste og give? (samme målestok som E)
+## 5. What would a change cost and give? (the same yardstick as E)
 
-| Variant | Anchors (tabt, heraf forkerte) | Fejlrate | Median / MAD / std | Klip konf. / med\|shift\| |
+| Variant | Anchors (lost, of which wrong) | Error rate | Median / MAD / std | Clips conf. / med\|shift\| |
 |---|---|---|---|---|
-| V0 baseline | 7.470 | 3,87 % | −0,104 / 0,387 / 1,137 | 89/90, 0,194 s |
-| V1 drop alle ♪-segmenter | 7.429 (41 / 4) | 3,84 % | −0,104 / 0,386 / 1,130 | 89/90, 0,195 s |
-| V2 drop ♪-seg kun ikke-HI | 7.459 (11 / 4) | 3,82 % | −0,104 / 0,387 / 1,129 | 89/90, 0,194 s |
-| V3 drop ♪ begge sider | 7.344 (126 / 13) | 3,77 % | −0,102 / 0,385 / 1,126 | 89/90, 0,195 s |
+| V0 baseline | 7,470 | 3.87 % | −0.104 / 0.387 / 1.137 | 89/90, 0.194 s |
+| V1 drop all ♪ segments | 7,429 (41 / 4) | 3.84 % | −0.104 / 0.386 / 1.130 | 89/90, 0.195 s |
+| V2 drop ♪ seg only non-HI | 7,459 (11 / 4) | 3.82 % | −0.104 / 0.387 / 1.129 | 89/90, 0.194 s |
+| V3 drop ♪ both sides | 7,344 (126 / 13) | 3.77 % | −0.102 / 0.385 / 1.126 | 89/90, 0.195 s |
 
-V2 har bedst præcision (4 forkerte af 11 tabte) og bevarer HI's fejlfri
-sang↔sang-beviser — men flytter **intet**: samme median, samme MAD, samme
-89/90 konfidente klip. V3 fanger også koral-fejlene (13 forkerte af 126
-tabte) til samme nul-gevinst. Efter E's målestok er alle tre **tab af
-data**. Byg hverken V1 (ødelægger 30/30 korrekte HI-beviser) eller V3
-(126 anchors for 13 fejl, ingen estimat-gevinst); heller ikke V2 — 0,05
-pointpoint på fejlraten uden klip-effekt er ikke en ændring værd.
+V2 has the best precision (4 wrong of 11 lost) and keeps HI's flawless
+song↔song evidence — but moves **nothing**: the same median, the same MAD, the same
+89/90 confident clips. V3 also catches the carol errors (13 wrong of 126
+lost) for the same zero gain. By E's yardstick all three are **a loss of
+data**. Build neither V1 (destroys 30/30 correct HI evidence) nor V3
+(126 anchors for 13 errors, no estimate gain); nor V2 — 0.05
+percentage points on the error rate without a clip effect is not worth a change.
 
-## Forbehold
+## Caveats
 
-- Kun i-sync filer: samspil med reel sync-fejl ikke målt.
-- ♪-populationen er defineret af small.en's markering; ±10 s-vindue mod
-  produktionens minutbrede klip (fuldvindue-dobbeltgængere er målt separat,
-  §3). Kursiv-uden-♪-lyriklinjer er ikke flagget — linjesidens ♪-tal er en
-  nedre grænse.
-- C_S03E03's 149 segmenter dominerer sangmassen; uden den er ikke-HI
-  seg-siden fejlfri (0/7).
-- Q4's konfidens bruger out/-ordtider lagt over fixture-segmenter (samme
-  lyd, anden segmentering) — retningen (intet dip, kollapset AUC) er robust
-  over for det, absolutte niveauer mindre.
-- Groq-fundet (0 ♪, 0 brackets i 5 fixtures) gælder fixture-udsnittet; om
-  sweep-kørslen markerer anderledes er ikke undersøgt (`sweep/` urørt pr.
-  reglerne).
+- Only in-sync files: the interplay with a real sync error is not measured.
+- The ♪ population is defined by small.en's marking; a ±10 s window against
+  production's minute-wide clips (full-window doppelgängers are measured separately,
+  §3). Italic-without-♪ lyric lines are not flagged — the line side's ♪ figure is a
+  lower bound.
+- C_S03E03's 149 segments dominate the song mass; without it the non-HI
+  seg side is flawless (0/7).
+- Q4's confidence uses out/ word times laid over fixture segments (the same
+  audio, a different segmentation) — the direction (no dip, collapsed AUC) is robust
+  to that, absolute levels less so.
+- The Groq finding (0 ♪, 0 brackets in 5 fixtures) applies to the fixture sample; whether
+  the sweep run marks differently has not been investigated (`sweep/` untouched per
+  the rules).
 
-## Reproduktion
+## Reproduction
 
-Analyse (scratch, ikke del af leverancen): `/tmp/song_analyse.py`
-(per-afsnit JSON) + `/tmp/song_eval.py` (Q1–Q5) + `/tmp/song_json.py`
-(leverance-JSON), kørt med projektets `.venv`-python (pysubs2). Læst:
+Analysis (scratch, not part of the deliverable): `/tmp/song_analyse.py`
+(per-episode JSON) + `/tmp/song_eval.py` (Q1–Q5) + `/tmp/song_json.py`
+(deliverable JSON), run with the project's `.venv` python (pysubs2). Read:
 `verifyarr/subtitles.py` (`tokenize`, `is_nonspeech_annotation`,
-`_match_segments_to_lines`/`_robust_clip_shift` som kontrakt),
-fixtures, media-undertekster, `out/*.vad.tsv` + `out/*.words.json` som
-hjælpetidslinjer, samt `/tmp/bg_all30.json` til turbo-supplementet.
-Intet committet, `out/`/`sweep/`/`wav/` urørt.
+`_match_segments_to_lines`/`_robust_clip_shift` as a contract),
+fixtures, media subtitles, `out/*.vad.tsv` + `out/*.words.json` as
+auxiliary timelines, and `/tmp/bg_all30.json` for the turbo supplement.
+Nothing committed, `out/`/`sweep/`/`wav/` untouched.

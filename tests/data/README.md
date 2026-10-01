@@ -1,68 +1,68 @@
-# Testdata
+# Test data
 
-Alt hvad testene behøver for at køre, uden mediefiler. Rå lyd og video ligger
-ikke her — se "Hvad der ikke er med" nedenfor.
+Everything the tests need to run, without media files. Raw audio and video are not
+here — see "What is not included" below.
 
-## Mapper
+## Folders
 
-| mappe | indhold |
+| folder | content |
 |---|---|
-| `sweep/<model>/<afsnit>.json` | modeltransskriptioner, 14 modelconfigs × 10 afsnit |
-| `reference/` | large-v3-turbo-referencen: `.words.json` (ordtider + konfidens), `.vad.tsv` (tale/stilhed), `.srt`, `.lang.json` |
-| `subtitles/` | de originale undertekstfiler testene korrumperer og måler mod |
-| `rapporter/` | målerapporter: hvilke afsnit der duer som facit, baggrundstale, sangtekst, klipgranularitet |
-| `raw/sweep/<afsnit>.tar.xz` | **fuld** whisper.cpp-JSON, alle modeller for det afsnit: tokens, konfidens pr. token, DTW-tider |
-| `raw/reference.tar.xz` | **fuld** large-v3-turbo-JSON med tokens for alle 10 afsnit |
+| `sweep/<model>/<episode>.json` | model transcriptions, 14 model configs × 10 episodes |
+| `reference/` | the large-v3-turbo reference: `.words.json` (word times + confidence), `.vad.tsv` (speech/silence), `.srt`, `.lang.json` |
+| `subtitles/` | the original subtitle files the tests corrupt and measure against |
+| `rapporter/` | measurement reports: which episodes qualify as ground truth, background speech, song lyrics, clip granularity |
+| `raw/sweep/<episode>.tar.xz` | **full** whisper.cpp JSON, all models for that episode: tokens, confidence per token, DTW times |
+| `raw/reference.tar.xz` | **full** large-v3-turbo JSON with tokens for all 10 episodes |
 
-## De 10 afsnit
-Ni er bekræftet af brugeren **og** måleverificeret som facit-egnede:
+## The 10 episodes
+Nine are confirmed by the user **and** measurement-verified as suitable ground truth:
 C_S03E03, C_S03E08, C_S03E10, SH_S01E01–E06.
 
-C_S03E04 er med som et dokumenteret drift-tilfælde: bekræftet korrekt indhold,
-men −0,048 s/min ægte drift. Den scorer ikke recovery mod sine egne timings (se
-`DRIFT_CASE_SLUGS` i `e2e_matrix.py`) — den måler om driften bliver *opdaget*.
+C_S03E04 is included as a documented drift case: confirmed correct content,
+but −0.048 s/min of genuine drift. It does not score recovery against its own timings (see
+`DRIFT_CASE_SLUGS` in `e2e_matrix.py`) — it measures whether the drift is *detected*.
 
-Udvælgelsen er dokumenteret i `rapporter/afsnit_tillid.md`: 30 af 52 afsnit duer
-som facit, og den maskinelle "gode afsnit"-liste holdt ikke.
+The selection is documented in `rapporter/afsnit_tillid.md`: 30 of 52 episodes qualify
+as ground truth, and the machine "good episodes" list did not hold.
 
-## Format på sweep-filerne
-Whisper.cpp' rå output er skåret ned til det testene bruger — 241 MB blev 7 MB:
+## Format of the sweep files
+Whisper.cpp's raw output is cut down to what the tests use — 241 MB became 7 MB:
 
 ```json
 {"model": "small.en-q5_1", "slug": "C_S03E03", "language": "en",
  "segments": [{"start": 4.99, "end": 6.59, "text": "..."}]}
 ```
 
-Tider er **sekunder** (rå whisper.cpp blander millisekunder i `offsets` og
-centisekunder i `t_dtw` — se `DATAFORMAT.md` i staging-mappen).
+Times are in **seconds** (raw whisper.cpp mixes milliseconds in `offsets` and
+centiseconds in `t_dtw` — see `DATAFORMAT.md` in the staging folder).
 
-Token-niveau data (konfidens pr. token, DTW-tider) er ikke i den normaliserede
-udgave — det er 97 % af fylden og bruges ikke af testene. Men det er **bevaret**
-i `raw/`, komprimeret:
+Token-level data (confidence per token, DTW times) is not in the normalised
+version — it is 97 % of the bulk and is not used by the tests. But it is **preserved**
+in `raw/`, compressed:
 
 ```
-tar -xJf tests/data/raw/sweep/C_S03E03.tar.xz      # 14 modeller, rå JSON
-tar -xJf tests/data/raw/reference.tar.xz           # turbo med tokens
+tar -xJf tests/data/raw/sweep/C_S03E03.tar.xz      # 14 models, raw JSON
+tar -xJf tests/data/raw/reference.tar.xz           # turbo with tokens
 ```
 
-241 MB rå bliver 14,7 MB. Filerne er pakket **pr. afsnit**, fordi de 14 modeller
-transskriberer samme lyd og derfor ligner hinanden — komprimeringen genbruger det
-(16x). Ét stort arkiv med alt gav kun 13x, da xz' ordbog ikke rækker over 241 MB.
-Udpakning er verificeret byte-identisk med kilden.
+241 MB raw becomes 14.7 MB. The files are packed **per episode**, because the 14 models
+transcribe the same audio and therefore resemble each other — the compression reuses that
+(16x). One big archive with everything gave only 13x, since xz's dictionary does not reach across 241 MB.
+Extraction is verified byte-identical to the source.
 
-Anchor-undersøgelserne (baggrundstale, sangtekst) brugte netop token-konfidens og
-DTW-tider — det var dét der gjorde det muligt at afvise ordniveau-anchors med tal.
+The anchor studies (background speech, song lyrics) used exactly token confidence and
+DTW times — that is what made it possible to reject word-level anchors with numbers.
 
-Bemærk: `base.en-greedy-cpu/SH_S01E05` havde en ugyldig UTF-8-byte i whisper.cpp'
-output og er læst med `errors="replace"`. Ét tegn i én segmenttekst.
+Note: `base.en-greedy-cpu/SH_S01E05` had an invalid UTF-8 byte in whisper.cpp's
+output and is read with `errors="replace"`. One character in one segment text.
 
-## Hvad der ikke er med
-- **mediefiler (.mkv)** — 55 GB
-- **wav** — 3,2 GB, 16 kHz mono, ligger i `whisper_gpu_staging/wav/`
-- **whisper-modeller** — 6,4 GB
-- **rå `out/*.json`** — 17 MB for disse 10 afsnit; `.words.json` er destillatet
+## What is not included
+- **media files (.mkv)** — 55 GB
+- **wav** — 3.2 GB, 16 kHz mono, lives in `whisper_gpu_staging/wav/`
+- **Whisper models** — 6.4 GB
+- **raw `out/*.json`** — 17 MB for these 10 episodes; `.words.json` is the distillate
 
-Alt det ligger på Windows-maskinen under
-`C:\Users\knham\Desktop\undertekst auto\`. Testene peger på `wav/` for alass'
-lydreference — findes den ikke, udtrækkes lyd fra videoen i stedet (langsomt,
-men virker).
+All of it lives on the Windows machine under
+`C:\Users\knham\Desktop\undertekst auto\`. The tests point at `wav/` for alass'
+audio reference — if it does not exist, audio is extracted from the video instead (slow,
+but it works).

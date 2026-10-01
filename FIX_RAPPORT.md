@@ -1,20 +1,20 @@
-# FIX_RAPPORT: fund 6.1/6.2 målt færdig
+# FIX_RAPPORT: findings 6.1/6.2 measured to completion
 
-Dato: 2026-09-22. Kode under test: HEAD `2d44f6d` + arbejdstræets
-`verifyarr/pipeline.py`. Model: `tiny.en-greedy-cpu`. Alle tal er målt gennem
-rørledningen (`run_one`), aldrig offline ved siden af.
+Date: 2026-09-22. Code under test: HEAD `2d44f6d` + the working tree's
+`verifyarr/pipeline.py`. Model: `tiny.en-greedy-cpu`. All numbers are measured through the
+pipeline (`run_one`), never offline on the side.
 
-## 1. Dommen
+## 1. The verdict
 
-Rettelsen virker, men den medbragte short-circuit (`if single_block: return
-True`) er **fjernet igen efter ablation**: den bandt 10 nye stille rækker og
-i alt 32 utilsigtede celleændringer, ingen tilsigtede. Uden den ændrer
-rettelsen præcis de 18 tilsigtede celler af 1656 — 6× presync-skrivning (6.1)
-og 12× urørt forkert-indhold (6.2) — og ellers ingenting. Whisper-omkostning
-identisk før/efter (N100 målt, ikke antaget). Ægte filer: 8→2
-forkort-indhold-omskrivninger (ikke 0 — se §5). Suiten er grøn.
+The fix works, but the short-circuit that came with it (`if single_block: return
+True`) was **removed again after ablation**: it bound 10 new silent rows and
+32 unintended cell changes in total, no intended ones. Without it the
+fix changes exactly the 18 intended cells of 1656 — 6× presync write (6.1)
+and 12× untouched wrong content (6.2) — and nothing else. Whisper cost
+identical before/after (N100 measured, not assumed). Genuine files: 8→2
+wrong-content rewrites (not 0 — see §5). The suite is green.
 
-## 2. Krav 1: mutationstest (målt, ikke antaget)
+## 2. Requirement 1: mutation test (measured, not assumed)
 
 ```
 git stash push verifyarr/pipeline.py
@@ -23,147 +23,147 @@ git stash pop
 .venv/bin/python -m pytest tests/test_fix_61_62.py -q   # 2 passed (3.1s)
 ```
 
-På HEAD fejler begge som forudsagt: C_S03E10 uniform_neg melder "already in
-sync" på en 45 s-forkert fil; C_S02E01 wrong_episode skriver `fixed (Δ44.4s)`
-på forkert indhold. Efter rettelsen (også efter short-circuit-fjernelsen,
-genkørt): `fixed (Δ44.8s, presync)`, rec 1.0 henholdsvis `left unchanged
-(alass suggested Δ44.4s; no candidate matched...)` + SUSPECT. Begge tests
-validerer rettelsen — ingen omskrivning nødvendig.
+On HEAD both fail as predicted: C_S03E10 uniform_neg reports "already in
+sync" on a file that is 45 s off; C_S02E01 wrong_episode writes `fixed (Δ44.4s)`
+on wrong content. After the fix (also after the short-circuit removal,
+rerun): `fixed (Δ44.8s, presync)`, rec 1.0 and `left unchanged
+(alass suggested Δ44.4s; no candidate matched...)` + SUSPECT respectively. Both tests
+validate the fix — no rewrite needed.
 
-## 3. Krav 2+3: før/efter-matrice, celle for celle
+## 3. Requirements 2+3: before/after matrix, cell by cell
 
-`matrixdata/fix_before_*.jsonl` kunne IKKE genbruges: den dækker kun 4 af 8
-holdout-afsnit, SH delvist (57–81 af 92 rækker/celle); kun 4 kendte
-Community-afsnit er komplette. Begge arme er derfor kørt forfra, fuldt udsnit:
-18 afsnit × 23 scenarier × 2 modes × 2 audio = 1656 rækker/arm, `--fresh-db
---redo --workers 14`. Før = `/tmp/vbase` (`git archive HEAD`, verificeret
-byte-identisk med `git show HEAD:verifyarr/pipeline.py`); efter =
-arbejdstræet. Begge arme 1656/1656 ok. (`.venv`-kopi unødvendig: launchere
-bruger arbejdstræets venv; kun `verifyarr/`-importen skifter via
+`matrixdata/fix_before_*.jsonl` could NOT be reused: it covers only 4 of 8
+holdout episodes, SH partially (57–81 of 92 rows/cell); only 4 known
+Community episodes are complete. Both arms were therefore rerun from scratch, full sample:
+18 episodes × 23 scenarios × 2 modes × 2 audio = 1656 rows/arm, `--fresh-db
+--redo --workers 14`. Before = `/tmp/vbase` (`git archive HEAD`, verified
+byte-identical to `git show HEAD:verifyarr/pipeline.py`); after =
+the working tree. Both arms 1656/1656 ok. (A `.venv` copy was unnecessary: the launchers
+use the working tree's venv; only the `verifyarr/` import switches via
 `VERIFYARR_UNDER_TEST`.)
 
-Første efter-måling (MED short-circuit): **50 ændrede celler** — 32 for mange.
-Alle er forklaret nedenfor; de er årsagen til fjernelsen i §4.
+First after-measurement (WITH the short-circuit): **50 changed cells** — 32 too many.
+All are explained below; they are the reason for the removal in §4.
 
-Endelig efter-måling (uden, `fix2_final` vs `fix2_before`): **præcis 18
-ændrede celler, 0 uforklarede**:
+Final after-measurement (without it, `fix2_final` vs `fix2_before`): **exactly 18
+changed cells, 0 unexplained**:
 
-| Celler | Skift | Mekanisme |
+| Cells | Change | Mechanism |
 |---|---|---|
-| uniform_neg full, C_S02E01/C_S02E12/C_S03E10 × on/off (6) | stille→rettet | 6.1-hovedgrenen: korrekt presync (+45 s) + forkastet alass-2-blok. Baseline skrives nu som `fixed (Δ.., presync)`, rec 0.000→1.000, i stedet for "already in sync" på diskens forkerte original |
-| wrong_episode, C_S02E01/C_S02E04/C_S02E12 × full/sampled × on/off (12) | fixed→urørt, SUSPECT bevaret | 6.2-grenen: single-blok-deferral, intet indhold matcher → `left unchanged`, filen urørt. Flaggningen (100 %) var der før; kontrakten holder nu |
+| uniform_neg full, C_S02E01/C_S02E12/C_S03E10 × on/off (6) | silent→fixed | the 6.1 main branch: correct presync (+45 s) + rejected alass 2-block. The baseline is now written as `fixed (Δ.., presync)`, rec 0.000→1.000, instead of "already in sync" on the wrong original on disk |
+| wrong_episode, C_S02E01/C_S02E04/C_S02E12 × full/sampled × on/off (12) | fixed→untouched, SUSPECT kept | the 6.2 branch: single-block deferral, no content matches → `left unchanged`, file untouched. The flagging (100 %) was there before; the contract now holds |
 
-Ingen andre klasseskift på nogen af de 18 afsnit. `fix2_final` vs
-`fix2_abl` (ablationskørslen): **0 ændrede celler** — bevis for at
-`presync_desc`-fjernelsen (§7) er adfærdsneutral end-to-end.
+No other class changes on any of the 18 episodes. `fix2_final` vs
+`fix2_abl` (the ablation run): **0 changed cells** — proof that
+the `presync_desc` removal (§7) is behaviour-neutral end to end.
 
-### De 32 celler short-circuiten bandt (årsag til fjernelse)
+### The 32 cells the short-circuit bound (the reason for removal)
 
-Alle er single-blok-deferrals hvor "old" vandt uden ankerdækning:
+All are single-block deferrals where "old" won without anchor coverage:
 
-- **6× rettet→stille** (C_S02E04/C_S02E12 fps_early sampled, C_S02E04
-  uniform_p15 sampled; rec 1.0→0.84/0.0, flag ok): content-scoren er blind for
-  små skift (vindue-overlap), så støjgab > 0.1-marginen lod old vinde outright
-  uden om anker-sammenligningen. Målt på uniform_p15: old 0.8468 vs new ~0.75
-  (grænse 0.7468 — afgjort med ~0.001), mens ankrene stod 0.7 s (new) mod
-  2.2 s (old) over 13 klip hver og aldrig blev konsulteret.
-- **4× advaret→stille** (C_S02E01 jitter × full/sampled × on/off):
-  alass' Δ10.1s-fit på jitter er skrot (rec 0.0 begge arme — forkastelsen er
-  korrekt), men flaget gik tabt: old evalueres ok og eskalerer ikke.
-- **6× rec-værre, stadig flagget** (C_S02E02 piecewise_b/c 0.485/0.18→0.0,
-  C_S03E16 piecewise 0.037→0.0): delvise alass-fixes forkastet.
-- **2× stille→advaret** (C_S03E09 piecewise_c, rec 0.425→0.010, flag
-  ok→SUSPECT): ærlig flagning i stedet for stille delfix — den eneste
-  forbedring linjen bandt, til prisen af recovery-kollaps.
-- **14× neutrale sti-skift** (rec 1.0 begge): presync-/framerate-/anker-veje
-  i stedet for alass-direkte (bl.a. C_S02E12 fps_late via framerate-gren og
-  uniform_m5 via anker-resync efter old-sejr — sikkerhedsnettet virker, anden
-  vej til samme fix).
+- **6× fixed→silent** (C_S02E04/C_S02E12 fps_early sampled, C_S02E04
+  uniform_p15 sampled; rec 1.0→0.84/0.0, flag ok): the content score is blind to
+  small shifts (window overlap), so a noise gap > the 0.1 margin let old win outright,
+  bypassing the anchor comparison. Measured on uniform_p15: old 0.8468 vs new ~0.75
+  (bar 0.7468 — decided by ~0.001), while the anchors stood at 0.7 s (new) against
+  2.2 s (old) over 13 clips each and were never consulted.
+- **4× warned→silent** (C_S02E01 jitter × full/sampled × on/off):
+  alass' Δ10.1s fit on jitter is junk (rec 0.0 in both arms — the rejection is
+  correct), but the flag was lost: old is evaluated ok and does not escalate.
+- **6× rec worse, still flagged** (C_S02E02 piecewise_b/c 0.485/0.18→0.0,
+  C_S03E16 piecewise 0.037→0.0): partial alass fixes rejected.
+- **2× silent→warned** (C_S03E09 piecewise_c, rec 0.425→0.010, flag
+  ok→SUSPECT): honest flagging instead of a silent partial fix — the only
+  improvement the line bound, at the price of a recovery collapse.
+- **14× neutral path changes** (rec 1.0 in both): presync/framerate/anchor routes
+  instead of alass direct (among others C_S02E12 fps_late via the framerate branch and
+  uniform_m5 via anchor resync after an old win — the safety net works, a different
+  route to the same fix).
 
-## 4. Den mistænkte linje (ablation)
+## 4. The suspect line (ablation)
 
-Variant `/tmp/vabl` = rettelsen minus præcis de 3 linjer, fuld 1656-rækkers
-matrice: **18 ændrede celler mod HEAD — kun de tilsigtede** (verdict-skift:
-6 stille→rettet, 12 n/a→n/a). Linjen binder altså 0 tilsigtede og 32
-utilsigtede celler, heraf 10 nye stille. **Fjernet.** Tilbage står én
-kommentarlinje der begrunder fraværet med målingen. `single_block`-feltet og
--variablen er beholdt (notegrene + `apply_pending_sync` bruger dem).
+Variant `/tmp/vabl` = the fix minus exactly the 3 lines, full 1656-row
+matrix: **18 changed cells against HEAD — only the intended ones** (verdict changes:
+6 silent→fixed, 12 n/a→n/a). So the line binds 0 intended and 32
+unintended cells, 10 of them new silent ones. **Removed.** One comment line
+remains, justifying the absence with the measurement. The `single_block` field and
+variable are kept (note branches + `apply_pending_sync` use them).
 
-Kendt tradeoff (analytisk, ikke målt — genuine blev ikke kørt med linjen):
-uden linjen kan old kun vinde single-blok ved intet indholdsmatch eller
-fravær af ankre; det koster C_S02E19-urørt på ægte filer (se §5). Med linjen
-var den urørt, men prisen var 10 stille matrixrækker. Stille er den værste
-klasse — fjernelsen står.
+Known tradeoff (analytical, not measured — genuine was not run with the line):
+without the line, old can only win a single block through no content match or
+absence of anchors; that costs C_S02E19 untouched on genuine files (see §5). With the line
+it was untouched, but the price was 10 silent matrix rows. Silent is the worst
+class — the removal stands.
 
-## 5. Krav 4: ægte filer
+## 5. Requirement 4: genuine files
 
-`.venv/bin/python /home/hammer/overfit/genuine.py` (104 rækker, arbejdstræets
-kode) mod `radata/genuine.jsonl`:
+`.venv/bin/python /home/hammer/overfit/genuine.py` (104 rows, the working tree's
+code) against `radata/genuine.jsonl`:
 
-| Klasse | Før (omskrevet / SUSPECT) | Efter |
+| Class | Before (rewritten / SUSPECT) | After |
 |---|---|---|
-| forkert-indhold (18) | 8 / 18 | **2** / 18 |
-| facit-egnet (30×2) | 1 / 0 | 1 / 0 (samme SH_S01E04-full-FP, **0 nye**) |
-| rigtigt-indhold-ude-af-sync (26) | 17 / 9 | 17 / 9 (identisk) |
+| wrong content (18) | 8 / 18 | **2** / 18 |
+| fit as ground truth (30×2) | 1 / 0 | 1 / 0 (the same SH_S01E04-full FP, **0 new**) |
+| right content out of sync (26) | 17 / 9 | 17 / 9 (identical) |
 
-6 rækker reddet (C_S02E14/C_S02E16 Δ1.1s, C_S02E17 Δ49.6s — alle nu `left
-unchanged` + SUSPECT). Forventningen "8→0" holdt ikke: **C_S02E19 full+sampled
-omskrives stadig (Δ39.6s), begge SUSPECT-flagget.** Mekanisme: old scorer
-højest på indhold (full 0.60 vs 0.48; sampled 0.68 vs 0.30-SUSPECT) men
-afvises uden ankerdækning (tomme ranges gør `_confirmed_in_every_block`
-uopfyldelig), så new skrives; efterfølgende anker-eskalation flagger.
-Detektion holder, urørt-kontrakten bryder fortsat her — ærligt negativt
-resultat, ingen regression (rækken var omskrevet før også). Output gemt som
-`tests/fix2_genuine_after.jsonl` (scriptets egen kopi ligger i /tmp og kan
-forsvinde).
+6 rows rescued (C_S02E14/C_S02E16 Δ1.1s, C_S02E17 Δ49.6s — all now `left
+unchanged` + SUSPECT). The expectation "8→0" did not hold: **C_S02E19 full+sampled
+are still rewritten (Δ39.6s), both flagged SUSPECT.** Mechanism: old scores
+highest on content (full 0.60 vs 0.48; sampled 0.68 vs 0.30-SUSPECT) but is
+rejected without anchor coverage (empty ranges make `_confirmed_in_every_block`
+unsatisfiable), so new is written; the subsequent anchor escalation flags it.
+Detection holds, the untouched contract still breaks here — an honest negative
+result, no regression (the row was rewritten before too). Output saved as
+`tests/fix2_genuine_after.jsonl` (the script's own copy lives in /tmp and may
+disappear).
 
-## 6. Krav 5: Whisper-omkostning (N100 målt)
+## 6. Requirement 5: Whisper cost (N100 measured)
 
-Aggregeret over hele matricen, før vs efter (final):
+Aggregated over the whole matrix, before vs after (final):
 
-- `fresh_audio_s`: 400049.1 s begge arme — **0 nye Whisper-kald**
-- `cached_audio_s`: 3393278.2 s begge arme — ikke engang cache-genlæsning flyttede sig
-- Celler med ændret `whisper_cost`: **0 af 1656**
+- `fresh_audio_s`: 400049.1 s in both arms — **0 new Whisper calls**
+- `cached_audio_s`: 3393278.2 s in both arms — not even cache rereads moved
+- Cells with a changed `whisper_cost`: **0 of 1656**
 
-"Tjekket kører i forvejen" er nu en måling: single-blok-deferral scorer 2
-kandidater på allerede-betalte samples og koster præcis 0.
+"The check already runs" is now a measurement: single-block deferral scores 2
+candidates on already-paid samples and costs exactly 0.
 
-## 7. Tvivlspunkterne (HANDOFF §4, alle afgjort)
+## 7. The points of doubt (HANDOFF §4, all settled)
 
-1. `max_shift_new`-binding: bundet via `.get()` i funktionshovedet (l.978) før
-   al brug; hele suiten + 3×1656 matrixrækker eksekveret uden fejl. Lukket.
-2. `_synthetic("old")` efter presync-skriv: beskriver disken. Bevis: grenen
-   nås kun med winner="old" ∈ content_ok, så `scored["old"]` er baselinens
-   egen evaluering, og baseline er netop det der skrives. Lukket.
-3. Below-threshold-proxyen: **står som approximation** — 0 matrixceller tog
-   `had_presync`-grenen (målt via note-signatur), så den er udækket af
-   matricen; fejlen er øvre-begrænset af tærsklen (0.5 s). Ærligt åbent.
-4. `sync_pair`-early-return flytter correctness-sampling ved presync: målt
-   neutral — ingen diff-celle kan tilskrives den (alle presync-rækker uden for
-   de 18 er celle-identiske). Lukket.
-5. Short-circuiten: fjernet efter ablation (§4). Lukket.
-6. Nye statusstrenge: alle forbrugere bruger `startswith("fixed")`
-   (`db.py`, `jobs.py`, `reports.py`, frontend `StatusPill.tsx` → pill-ok);
-   "left unchanged"-varianten falder i eksisterende muted-klasse som før.
-   Ingen strikte parsere. Endelige rækker indeholder aldrig
-   "[pending verification]" (deferral opløses altid før persist). Lukket.
-7. Tomme `blocks_time_ranges`: tvinger indholdsgrenen pr. konstruktion
-   (`_confirmed_in_every_block` returnerer False på tomme ranges →
-   content-gren). Vist end-to-end: wrong_episode-noten scorer begge
-   kandidater (new 0.06, old 0.07). Lukket.
-8. `presync_desc`: **fjernet** (død værdi — noten bar allerede beskrivelsen
-   via `presync_note`). Neutralitet bevist: final vs ablation 0 celler. Lukket.
+1. `max_shift_new` binding: bound via `.get()` in the function head (l.978) before
+   any use; the whole suite + 3×1656 matrix rows executed without error. Closed.
+2. `_synthetic("old")` after a presync write: describes the disk. Proof: the branch is
+   reached only with winner="old" ∈ content_ok, so `scored["old"]` is the baseline's
+   own evaluation, and the baseline is exactly what is written. Closed.
+3. The below-threshold proxy: **stands as an approximation** — 0 matrix cells took the
+   `had_presync` branch (measured via the note signature), so it is uncovered by the
+   matrix; the error is upper-bounded by the threshold (0.5 s). Honestly open.
+4. The `sync_pair` early return moves correctness sampling on presync: measured
+   neutral — no diff cell can be attributed to it (all presync rows outside
+   the 18 are cell-identical). Closed.
+5. The short-circuit: removed after ablation (§4). Closed.
+6. New status strings: all consumers use `startswith("fixed")`
+   (`db.py`, `jobs.py`, `reports.py`, frontend `StatusPill.tsx` → pill ok);
+   the "left unchanged" variant falls into the existing muted class as before.
+   No strict parsers. Final rows never contain
+   "[pending verification]" (deferral always resolves before persist). Closed.
+7. Empty `blocks_time_ranges`: forces the content branch by construction
+   (`_confirmed_in_every_block` returns False on empty ranges →
+   content branch). Shown end to end: the wrong_episode note scores both
+   candidates (new 0.06, old 0.07). Closed.
+8. `presync_desc`: **removed** (a dead value — the note already carried the description
+   via `presync_note`). Neutrality proven: final vs ablation 0 cells. Closed.
 
-## 8. Artefakter og status
+## 8. Artifacts and status
 
-- Endelig diff: `verifyarr/pipeline.py` (rettelse minus short-circuit minus
-  `presync_desc`), `tests/test_fix_61_62.py` (urørt, begge består).
-- Rådata (utracket, i repoet): `tests/fix2_before*.jsonl`,
+- Final diff: `verifyarr/pipeline.py` (the fix minus the short-circuit minus
+  `presync_desc`), `tests/test_fix_61_62.py` (untouched, both pass).
+- Raw data (untracked, in the repo): `tests/fix2_before*.jsonl`,
   `tests/fix2_final*.jsonl`, `tests/fix2_abl*.jsonl`,
-  `tests/fix2_genuine_after.jsonl`. `/tmp/vbase` (rent HEAD) og `/tmp/vabl`
-  (ablation) eksisterer stadig, men /tmp kan forsvinde — jsonl-filerne er
-  beviset.
+  `tests/fix2_genuine_after.jsonl`. `/tmp/vbase` (clean HEAD) and `/tmp/vabl`
+  (ablation) still exist, but /tmp may disappear — the jsonl files are
+  the proof.
 - Suite: **212 passed, 44 subtests, 0 skipped** (4:25 min).
-- **Ikke committet** — klar til Claudes gennemgang.
-- Hvad der ikke lykkedes: genuine 8→2 i stedet for 8→0 (C_S02E19, begge
-  flagget); below-threshold-proxyen er umålt på matrixdata (0 celler).
+- **Not committed** — ready for Claude's review.
+- What did not succeed: genuine 8→2 instead of 8→0 (C_S02E19, both
+  flagged); the below-threshold proxy is unmeasured on matrix data (0 cells).
