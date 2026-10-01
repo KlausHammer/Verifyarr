@@ -57,20 +57,9 @@ All thresholds are calibrated on `tiny.en`; other models transcribe differently.
 | Injected-error matrix | 11 approved episodes (6 *Slow Horses* + 5 other series) × 23 error scenarios × 15 model setups × sampled/full = **7,590 runs** | 0 errors. Production setup: 239 of 242. Every miss is a +0.3 s shift (just above the 0.25 s decision bar) or per-line jitter (nothing to fix) |
 | Healthy files | the same 11 episodes with no error | 11 of 11 left untouched, no false alarms |
 | Real library, read-only | 20 random episodes, two rounds, library mounted read-only, dry run | found and fixed two real bugs (wrong audio track on multi-language files, a song counted as missing lines); the rest ok or correctly flagged |
-| Real flawed episodes | 5 episodes with known problems, judged by a *different* Whisper model (small.en), table below | 4 fixed or correctly left alone, 1 wrong subtitle flagged |
+| Real flawed episodes | 5 episodes with known problems, judged by a *different* Whisper model (small.en), see below | 4 fixed or correctly left alone, 1 wrong subtitle flagged |
 
-**Five real flawed episodes: share of lines more than 2 s from the audio**
-
-| Episode | Problem | Before | alass alone | Verifyarr |
-|---|---|---|---|---|
-| Community S03E20 | two blocks, −25.7 s and −19.4 s | 62 % | 62 % (sees nothing) | **6 %** |
-| Brooklyn Nine-Nine S01E02 | drift +0.28 % | 62 % | 90 % (writes −16 s) | **8 %** |
-| S.W.A.T. S02E12 | already in sync | 6 % | 60 % (splits into 6 blocks, up to 209 s) | **4 %** (not damaged) |
-| Taskmaster S06E02 | constant −4.0 s | 98 % | 98 % (writes +30 to +54 s) | **6 %** |
-| My Name Is Earl S03E13 | wrong subtitle | – | – | flagged, left untouched |
-
-Taskmaster is also the worst failure found: a rate "rescue" built on alass' own clamped output once moved
-the first line from 7 s to 82 s. It is fixed and is now a regression test (`tests/test_real_cases.py`).
+**alass cannot tell on its own whether a subtitle is right.** On four real episodes it fixed none of the problems and caused one: it left Community S03E20 at 62 % of lines more than 2 s off (it sees nothing), made Brooklyn Nine-Nine S01E02 worse (62 % → 90 %), broke the already-correct S.W.A.T. S02E12 (6 % → 60 %), and did nothing for Taskmaster S06E02 (98 % → 98 %). With Verifyarr the same episodes end at 6 %, 8 %, 4 % and 6 %, the correct file untouched, and a fifth episode with a wrong subtitle (My Name Is Earl S03E13) flagged and left alone.
 
 ### Known limits
 
