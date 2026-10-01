@@ -54,13 +54,10 @@ All thresholds are calibrated on `tiny.en`; other models transcribe differently.
 
 | Test | What was run | Result |
 |---|---|---|
-| Unit and integration tests | `pytest`, 463 tests, run by GitHub Actions on every push and pull request (badge above): backend tests, frontend type check + build, Docker image build | all pass: 393 run on GitHub, 70 run the real pipeline on real episodes. Their media and subtitles are copyrighted, so they are not in the repo: they skip on GitHub and run against your own data via `VERIFYARR_TEST_DATA` (see [tests/README.md](tests/README.md)) |
 | Injected-error matrix | 11 approved episodes (6 *Slow Horses* + 5 other series) × 23 error scenarios × 15 model setups × sampled/full = **7,590 runs** | 0 errors. Production setup: 239 of 242. Every miss is a +0.3 s shift (just above the 0.25 s decision bar) or per-line jitter (nothing to fix) |
 | Healthy files | the same 11 episodes with no error | 11 of 11 left untouched, no false alarms |
 | Real library, read-only | 20 random episodes, two rounds, library mounted read-only, dry run | found and fixed two real bugs (wrong audio track on multi-language files, a song counted as missing lines); the rest ok or correctly flagged |
 | Real flawed episodes | 5 episodes with known problems, judged by a *different* Whisper model (small.en), table below | 4 fixed or correctly left alone, 1 wrong subtitle flagged |
-| Docker | clean build, health check, `PUID`/`PGID`, timezone, file ownership | pass |
-| Frontend ↔ backend | every API call, settings field, database column and reason code compared | consistent |
 
 **Five real flawed episodes: share of lines more than 2 s from the audio**
 
