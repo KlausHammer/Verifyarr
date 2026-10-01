@@ -64,22 +64,8 @@ Forgot the admin password? `docker exec -it verifyarr python3 verifyarr.py reset
 ## Connecting it to Bazarr
 
 Enter Bazarr's URL and API key under Settings → Bazarr. That is all that is needed. Verifyarr then
-watches Bazarr's "wanted" lists and a scheduled sweep (Settings → Scheduling) for new downloads, checks
-them, and uses Bazarr's API to blacklist a bad subtitle and fetch another.
-
-**Post-processing is optional.** It only makes Verifyarr check a subtitle the moment Bazarr downloads it,
-instead of on the next poll or sweep. To use it: Bazarr → Settings → General → Post-processing →
-**Use post processing**, command for series:
-
-```
-docker exec verifyarr python3 verifyarr.py single \
-  --video "{{episode}}" --subtitle "{{subtitles}}" --lang "{{subtitles_language_code2}}" \
-  --provider "{{provider}}" --subs-id "{{subtitle_id}}" \
-  --series-id "{{series_id}}" --episode-id "{{episode_id}}"
-```
-
-(For movies, swap in Bazarr's movie placeholders — `{{movie}}`, `{{radarr_id}}`, etc. — check
-Bazarr's own placeholder list.) It needs the Bazarr container to be able to `docker exec` into this one.
+polls Bazarr's "wanted" lists (every 3 minutes by default) and runs a scheduled sweep (Settings → Scheduling),
+checks new downloads, and uses Bazarr's API to blacklist a bad subtitle and fetch another.
 
 
 ## Action on a suspect file

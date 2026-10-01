@@ -290,7 +290,7 @@ class Config:
     sweep_cron: str = "0 4 * * 0"
     run_on_start: bool = False
     poll_new_media_enabled: bool = True
-    poll_new_media_interval_minutes: int = 10
+    poll_new_media_interval_minutes: int = 3
     # Separate from poll_new_media_* above (that one is Bazarr's wanted-lists poll, not a
     # filesystem check) -- a periodic, discovery-only refresh of the Library page's cache (no
     # sync/correctness/API calls, just the same directory walk a sweep already does at the start
@@ -764,7 +764,7 @@ SETTING_DEFS: dict = {
     # remediate need, and this is a strictly better "is it ready" signal than anything Sonarr/
     # Radarr's own API gave us).
     "scheduling.poll_new_media_enabled":           ("scheduling", "bool", True),
-    "scheduling.poll_new_media_interval_minutes":  ("scheduling", "int", 10),
+    "scheduling.poll_new_media_interval_minutes":  ("scheduling", "int", 3),
     "scheduling.poll_library_enabled":             ("scheduling", "bool", True),
     "scheduling.poll_library_interval_minutes":    ("scheduling", "int", 720),  # 12 hours
 }
