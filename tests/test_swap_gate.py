@@ -1,11 +1,11 @@
-"""Swap-gate: mange byttede linjer flagges, faa rapporteres.
+"""Swap gate: many swapped lines are flagged, a few are only reported.
 
-Timing-uafhaengig scan (tekstmatch inden for +-90 s + sekvensdom) paa det
-fulde transskript. Ved rate >= 0,10 og >= 5 byttede af >= 10 afgjorte:
-SUSPECT + untouched (hent ny), foer en rettelse skrives. Fa swaps (n=6)
-og rene filer: som i dag (rapporteret, ikke flagget).
+Timing-independent scan (text match within +-90 s + sequence dominance) on the
+full transcript. At a rate >= 0.10 and >= 5 swapped out of >= 10 decided:
+SUSPECT + untouched (fetch a new one), before any fix is written. A few swaps (n=6)
+and clean files: as today (reported, not flagged).
 
-Needs the staging tree (/mnt/c/...); skipped elsewhere.
+Needs the staging data (VERIFYARR_TEST_DATA); skipped elsewhere.
 """
 from __future__ import annotations
 
@@ -30,7 +30,7 @@ _needs_staging = unittest.skipUnless(STAGING_OK, "needs whisper_gpu_staging swee
 
 
 def _corrupt_many_swaps(subs, frac=0.25):
-    """25 % af to-linjers cues byttet (cap-signal foerst, resten frie)."""
+    """25 % of the two-line cues swapped (cap signal first, the rest free)."""
     from verifyarr.line_order import (_split_two_lines, _cap_signal,
                                       heuristic_candidates, all_two_line_events)
     out = copy.deepcopy(subs)
@@ -75,7 +75,7 @@ def _run_row(slug, corrupted, mode="full", model=MODEL, segments=None, lang="en"
 @_needs_staging
 class SwapGateTests(unittest.TestCase):
     def test_many_swaps_full_flags_and_leaves_untouched(self):
-        """25 % byttede linjer: SUSPECT + urort fil, foer rettelse."""
+        """25 % swapped lines: SUSPECT + untouched file, before any fix."""
         fx = M.fixture("SH_S01E01")
         subs = M.subs_for("SH_S01E01", fx)
         corrupted, _ = _corrupt_many_swaps(subs, 0.25)
@@ -88,7 +88,7 @@ class SwapGateTests(unittest.TestCase):
                         f"rewrote a many-swap file: {sync}")
 
     def test_many_swaps_sampled_flags(self):
-        """Sampled koaber fuldt transskript og flagger mange swaps."""
+        """Sampled buys the full transcript and flags many swaps."""
         fx = M.fixture("SH_S01E01")
         subs = M.subs_for("SH_S01E01", fx)
         corrupted, _ = _corrupt_many_swaps(subs, 0.25)
@@ -98,7 +98,7 @@ class SwapGateTests(unittest.TestCase):
         self.assertIn("Many swapped lines", row.get("note") or "")
 
     def test_few_swaps_full_not_flagged(self):
-        """n=6 swaps: rapporteret som i dag, ikke 'hent ny'."""
+        """n=6 swaps: reported as today, not 'fetch new'."""
         fx = M.fixture("SH_S01E01")
         subs = M.subs_for("SH_S01E01", fx)
         corrupted, _, _ = M.corrupt_swap(
@@ -109,7 +109,7 @@ class SwapGateTests(unittest.TestCase):
         self.assertNotIn("Many swapped lines", row.get("note") or "")
 
     def test_clean_full_not_flagged(self):
-        """Ren fil: ingen swap-flag."""
+        """Clean file: no swap flag."""
         fx = M.fixture("SH_S01E01")
         subs = M.subs_for("SH_S01E01", fx)
         row = _run_row("SH_S01E01", copy.deepcopy(subs), mode="full")
@@ -118,7 +118,7 @@ class SwapGateTests(unittest.TestCase):
         self.assertNotIn("Many swapped lines", row.get("note") or "")
 
     def test_clean_sampled_not_flagged(self):
-        """Ren fil sampled: ingen swap-flag."""
+        """Clean file sampled: no swap flag."""
         fx = M.fixture("SH_S01E01")
         subs = M.subs_for("SH_S01E01", fx)
         row = _run_row("SH_S01E01", copy.deepcopy(subs), mode="sampled")

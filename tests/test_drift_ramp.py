@@ -1,15 +1,15 @@
-"""Rampe-redning: efter eskalering skelnes RAMPE (drift) fra TRIN (blokke).
+"""Ramp rescue: after escalation, a RAMP (drift) is told apart from a STEP (blocks).
 
-Naar alass møder en driftende fil uden presync, laver den en blok-trappe
-(4-8 blokke), og resolutionen beholder trappen: den passer lokalt bedre end
-et enkelt offset baade paa ankre og indhold. Men trappen er forkert form --
-paa kandidat 'new's fulde pulje ligger rampen stadig som en ren linje
-(tilt -65s, rho -1.00, keep 0.97 paa SH_S01E01 drift). Saa naar den fulde
-pulje viser en ren linje, beholdes 'new', og den eksisterende stretch-fix
-retter raten. TRIN-puljer (blokfejl) gaar den gamle vej uændret.
+When alass meets a drifting file without presync, it builds a block staircase
+(4-8 blocks), and the resolution keeps the staircase: it fits locally better than
+a single offset on both anchors and content. But the staircase is the wrong shape --
+on candidate 'new''s full pool the ramp still lies as a clean line
+(tilt -65 s, rho -1.00, keep 0.97 on SH_S01E01 drift). So when the full
+pool shows a clean line, 'new' is kept and the existing stretch fix
+corrects the rate. STEP pools (block errors) take the old path unchanged.
 
-Rørledningstestene kræver staging-træet (/mnt/c/...) som matricen;
-enhedstestene mocker kun evidenslaget, ikke beslutningen.
+The pipeline tests need the staging data (VERIFYARR_TEST_DATA) like the matrix;
+the unit tests mock only the evidence layer, not the decision.
 """
 from __future__ import annotations
 
@@ -66,7 +66,7 @@ def _run(slug, scenario, mode="sampled", audio="on"):
 @_needs_staging
 class DriftRampPipelineTests(unittest.TestCase):
     def test_long_episode_drift_sampled(self):
-        """SH_S01E01 drift sampled: presync ser kun 22/28 punkter (keep 0.86)."""
+        """SH_S01E01 drift sampled: presync sees only 22/28 points (keep 0.86)."""
         row, rec = _run("SH_S01E01", "drift")
         self.assertIn("stretch", row.get("sync_status") or "",
                       f"no rate fix applied: {row.get('sync_status')}")
@@ -82,7 +82,7 @@ class DriftRampPipelineTests(unittest.TestCase):
                                 f"still broken: rec={rec.get('frac_le_1_0s')}")
 
     def test_drift_swap_sampled(self):
-        """SH_S01E03 drift_swap sampled: swap + drift, rampen skal stadig ses."""
+        """SH_S01E03 drift_swap sampled: swap + drift, the ramp must still be seen."""
         row, rec = _run("SH_S01E03", "drift_swap")
         # The screen's presync may take the rate before alass (enough timing clips).
         rate_fixed = ("stretch" in (row.get("sync_status") or "")
@@ -98,7 +98,7 @@ class DriftRampPipelineTests(unittest.TestCase):
                                 f"still broken: rec={rec.get('frac_le_1_0s')}")
 
     def test_long_episode_drift_suspect_content(self):
-        """SH_S01E06 drift sampled: rampen er ren, men new's indhold dumper."""
+        """SH_S01E06 drift sampled: the ramp is clean, but new's content fails."""
         row, rec = _run("SH_S01E06", "drift")
         self.assertIn("stretch", row.get("sync_status") or "",
                       f"no rate fix applied: {row.get('sync_status')}")
@@ -106,7 +106,7 @@ class DriftRampPipelineTests(unittest.TestCase):
                                 f"still broken: rec={rec.get('frac_le_1_0s')}")
 
     def test_drift_under_a_block_staircase_gets_one_rate(self):
-        """SH_S01E05 drift_rand5: alass' 5 blokke laeser flade, men det er en rampe."""
+        """SH_S01E05 drift_rand5: alass' 5 blocks read flat, but it is a ramp."""
         row, rec = _run("SH_S01E05", "drift_rand5", audio="off")
         self.assertIn("rate stretch", row.get("sync_status") or "",
                       f"no rate fix applied: {row.get('sync_status')}")
@@ -115,7 +115,7 @@ class DriftRampPipelineTests(unittest.TestCase):
                                 f"still stepped: rec={rec.get('frac_le_0_5s')}")
 
     def test_step_file_still_keeps_blocks(self):
-        """SH_S01E02 piecewise sampled: TRIN maa ikke ligne en rampe."""
+        """SH_S01E02 piecewise sampled: a STEP must not look like a ramp."""
         row, rec = _run("SH_S01E02", "piecewise")
         self.assertIn("sync block(s)", row.get("sync_status") or "",
                       f"block fit lost: {row.get('sync_status')}")
@@ -123,7 +123,7 @@ class DriftRampPipelineTests(unittest.TestCase):
                                 f"block repair broken: rec={rec.get('frac_le_1_0s')}")
 
     def test_cut_file_still_keeps_blocks(self):
-        """SH_S01E04 cut_version sampled: 2-blok-formen er den farlige nabo."""
+        """SH_S01E04 cut_version sampled: the 2-block shape is the dangerous neighbour."""
         row, rec = _run("SH_S01E04", "cut_version")
         self.assertIn("sync block(s)", row.get("sync_status") or "",
                       f"block fit lost: {row.get('sync_status')}")
@@ -132,7 +132,7 @@ class DriftRampPipelineTests(unittest.TestCase):
                         f"went silent: rec={rec.get('frac_le_1_0s')}")
 
     def test_presync_fixed_file_not_restretched(self):
-        """SH_S01E01 uniform_neg full: rent skift rettes uden rescue."""
+        """SH_S01E01 uniform_neg full: a pure shift is fixed without rescue."""
         row, rec = _run("SH_S01E01", "uniform_neg", mode="full")
         self.assertNotIn("Ramp rescue", row.get("note") or "")
         self.assertNotIn("stretch", row.get("sync_status") or "",
@@ -141,7 +141,7 @@ class DriftRampPipelineTests(unittest.TestCase):
                                 f"perfect fix smeared: rec={rec.get('frac_le_1_0s')}")
 
     def test_lucky_baseline_cut_not_rescued(self):
-        """SH_S01E02 cut_version sampled: falsk rampe maa ikke udløse rescue."""
+        """SH_S01E02 cut_version sampled: a false ramp must not trigger rescue."""
         row, rec = _run("SH_S01E02", "cut_version")
         self.assertNotIn("Ramp rescue", row.get("note") or "")
         self.assertNotIn("stretch", row.get("sync_status") or "",
@@ -159,14 +159,14 @@ def _subs_span(seconds=3000.0, n=10):
 
 
 def _ramp_pool(rate=0.02, span=3000.0, n=200, noise=0.2, seed=7):
-    """(audio, subtitle)-punkter for en fil der er rate-forskudt: ren linje."""
+    """(audio, subtitle) points for a rate-shifted file: a clean line."""
     rng = random.Random(seed)
     return [(a, a * (1 + rate) + rng.gauss(0, noise))
             for i in range(n) for a in [span * i / n]]
 
 
 def _step_pool(seed=7):
-    """(audio, subtitle)-punkter for 6 blokke: trin, ingen linje."""
+    """(audio, subtitle) points for 6 blocks: steps, no line."""
     rng = random.Random(seed)
     offs = [5.0, -8.0, 12.0, -6.0, 9.0, -11.0]
     pts = []
@@ -178,7 +178,7 @@ def _step_pool(seed=7):
 
 
 class RampDecisionUnitTests(unittest.TestCase):
-    """_resolve_ambiguous_sync med mocket evidens: beslutningen øves, ikke data."""
+    """_resolve_ambiguous_sync with mocked evidence: the decision is exercised, not the data."""
 
     REGIONS = [223.8, 949.7, 1257.4, 1719.5, 2016.1, 2420.3, 2805.3, 3025.8]
     NEW_RES = [14.9, -0.4, -7.5, -3.7, 8.0, 6.1, -5.9, 12.0]
@@ -231,7 +231,7 @@ class RampDecisionUnitTests(unittest.TestCase):
         winner, row, calls = self._resolve(_ramp_pool())
         self.assertEqual(winner, "new")
         self.assertIn("Ramp rescue", row["note"])
-        # Indholds-scoring af rivalerne springes over: beslutningen er formen.
+        # Content scoring of the rivals is skipped: the decision is the shape.
         self.assertFalse([c for c in calls if c[1] is True],
                          f"paid content scoring despite ramp: {calls}")
 
@@ -246,7 +246,7 @@ class RampDecisionUnitTests(unittest.TestCase):
         self.assertNotIn("Ramp rescue", row["note"])
 
     def test_overwhelming_linearity_rescues(self):
-        """Keep 0.87 under baren, men rho ~1 og gain stor: second path."""
+        """Keep 0.87 under the bar, but rho ~1 and a large gain: second path."""
         from verifyarr.subtitles import stretch_probe
         pool = _ramp_pool_with_mismatches()
         probe = stretch_probe([(a, a - s) for a, s in pool])
@@ -256,7 +256,7 @@ class RampDecisionUnitTests(unittest.TestCase):
         self.assertIn("Ramp rescue", row["note"])
 
     def test_verified_baseline_suppresses_rescue(self):
-        """Ren rampe, men old verificerer 0,2s: sammenligningen finder old."""
+        """A clean ramp, but old verifies at 0.2 s: the comparison picks old."""
         scores = {"new": (0.44, "ok"), "blocks": (0.44, "ok"), "old": (0.93, "ok")}
         with mock.patch.object(RampDecisionUnitTests, "OLD_RES",
                                [0.2, -0.3, 0.1, 0.4, -0.2, 0.3, -0.1, 0.2]):
@@ -265,7 +265,7 @@ class RampDecisionUnitTests(unittest.TestCase):
         self.assertNotIn("Ramp rescue", row["note"])
 
     def test_ramp_via_old_content(self):
-        """New SUSPECT + old ok: rampen sprænger new's vinduer; teksten er god."""
+        """New SUSPECT + old ok: the ramp blows up new's windows; the text is good."""
         mixed = {"new": (0.24, "SUSPECT"), "blocks": (0.72, "ok"), "old": (0.59, "ok")}
         winner, row, calls = self._resolve(_ramp_pool(), flag="SUSPECT", scores=mixed)
         self.assertEqual(winner, "new")
@@ -280,12 +280,12 @@ class RampDecisionUnitTests(unittest.TestCase):
         self.assertEqual(winner, "old")
         self.assertIn("no candidate matched", row["sync_status"])
         self.assertNotIn("Ramp rescue", row["note"])
-        # Old blev scoret én gang (redningsforsøget) og genbrugt, ikke scoret om.
+        # Old was scored once (the rescue attempt) and reused, not scored again.
         self.assertEqual(len([c for c in calls if c == ("old", True)]), 1)
 
 
 def _ramp_pool_with_mismatches(rate=0.0636, span=1300.0, n=200, n_wild=30, seed=9):
-    """Rampe + strø-mismatches: keep ~0.87, men rho ~1 og gain stor."""
+    """Ramp + scattered mismatches: keep ~0.87, but rho ~1 and a large gain."""
     rng = random.Random(seed)
     pts = [(a, a * (1 + rate) + rng.gauss(0, 0.3))
            for i in range(n) for a in [span * i / n]]
@@ -296,13 +296,13 @@ def _ramp_pool_with_mismatches(rate=0.0636, span=1300.0, n=200, n_wild=30, seed=
 
 
 class QuartileAbstentionUnitTests(unittest.TestCase):
-    """Tomme kvartiler stemmer ikke: fravær af data er ikke modbevis."""
+    """Empty quartiles do not vote: absence of data is not counter-evidence."""
 
     def test_lone_mismatch_in_empty_quarter_abstains(self):
         from verifyarr.subtitles import max_quartile_residual_after
         rng = random.Random(7)
-        # Delvis pulje som SH_S01E06 drift: sene punkter paa linjen, ét vildt
-        # mismatch tidligt hvor den sande linje laa uden for ankervinduet.
+        # Partial pool like SH_S01E06 drift: late points on the line, one wild
+        # mismatch early where the true line lay outside the anchor window.
         pool = [(a, a * 1.0636 - 181.0 + rng.gauss(0, 0.3))
                 for i in range(58) for a in [1900.0 + i * 22.0]]
         pool.append((20.0, 0.3))  # mismatch, residual -160s

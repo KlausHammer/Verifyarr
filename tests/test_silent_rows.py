@@ -1,12 +1,12 @@
-"""Stille gennemloeb: filer der hverken blev rettet eller advaret om.
+"""Silent pass-throughs: files that were neither fixed nor warned about.
 
-Hver test koerer den rigtige roerledning (M.run_one, frisk DB) mod matrix-
-fixtures med matrix-seedet korruption, saa en doed sti fejler hoejlydt.
-Raekkerne er valgt fordi de er stabile paa frisk DB (verificeret), ikke kun
-i matricens akkumulerede shard-tilstand -- SH_S01E06 sampled er bevidst
-udeladt: den er cache-afhaengig (18 raa ankre frisk, 46 primet).
+Each test runs the real pipeline (M.run_one, fresh DB) against matrix
+fixtures with matrix-seeded corruption, so a dead path fails loudly.
+The rows were chosen because they are stable on a fresh DB (verified), not only
+in the matrix's accumulated shard state -- SH_S01E06 sampled is deliberately
+left out: it depends on the cache (18 raw anchors fresh, 46 primed).
 
-Needs the staging tree (/mnt/c/...) like the matrix; skipped elsewhere.
+Needs the staging data (VERIFYARR_TEST_DATA) like the matrix; skipped elsewhere.
 """
 from __future__ import annotations
 
@@ -70,8 +70,8 @@ def _runs(slug, scenario, mode="sampled", audio="on", jitter_lo_hi=None, repeat=
 @_needs_staging
 class SilentBlockTests(unittest.TestCase):
     def test_resync_remainder_warns(self):
-        """SH_S01E06 piecewise_c full: resync fikser naesten men ikke helt --
-        resten skal advare, ikke glide stille igennem. Forbedringen beholdes."""
+        """SH_S01E06 piecewise_c full: resync almost fixes it, but not quite --
+        the remainder must warn, not slip through silently. The improvement is kept."""
         row, rec = _run("SH_S01E06", "piecewise_c", mode="full")
         self.assertEqual(row.get("correctness_flag"), "SUSPECT",
                          f"silent again (note: {(row.get('note') or '')[:300]})")
@@ -81,16 +81,16 @@ class SilentBlockTests(unittest.TestCase):
         self.assertGreater(rec.get("frac_le_1_0s"), 0.85)
 
     def test_good_resync_keeps_its_fix_but_says_it_is_unverified(self):
-        """SH_S01E01 full: resync naar 0.964 -- den rettelse skal BLIVE paa disken.
+        """SH_S01E01 full: resync reaches 0.964 -- that fix must STAY on disk.
 
-        Verdicten advarer alligevel, og det er et bevidst policy-skifte: blokfejl
-        skal kun DETEKTERES (brugeren henter bare en ny undertekst), og en
-        halvfaerdig reparation kan ikke skelnes fra en hel paa den korrigerede fil
-        -- 0 af 22 halvt reparerede raekker stepper stadig ved de samplede punkter.
-        Prisen for at fange de 18 er at 12 velfungerende blok-rettelser ogsaa
-        advarer. En advarsel paa en rettet fil er stoej; en tavs halvrettet fil er
-        farlig. Raske filer er uberoerte: 0 flagaendringer paa clean/p03/dropdup/
-        missing_middle over 1656 raekker.
+        The verdict warns anyway, and that is a deliberate policy shift: block errors
+        only have to be DETECTED (the user just fetches a new subtitle), and a
+        half-finished repair cannot be told apart from a whole one on the corrected file
+        -- 0 of 22 half-repaired rows still step at the sampled points.
+        The price of catching those 18 is that 12 well-working block fixes also
+        warn. A warning on a fixed file is noise; a silent half-fixed file is
+        dangerous. Healthy files are untouched: 0 flag changes on clean/p03/dropdup/
+        missing_middle over 1656 rows.
         """
         row, rec = _run("SH_S01E01", "piecewise", mode="full")
         self.assertGreaterEqual(rec.get("frac_le_1_0s"), 0.90,
@@ -105,9 +105,9 @@ class SilentBlockTests(unittest.TestCase):
                         or "NOT verified across the whole episode" in note, note[-200:])
 
     def test_block_repair_edges_warn_full(self):
-        """SH_S01E01 block_rand0 full: alass' 2-blok-fit flyttede ogsaa de 13
-        korrekte linjer foer blokken 19,6 s. Kanterne kan ikke verificeres --
-        advar, behold rettelsen."""
+        """SH_S01E01 block_rand0 full: alass' 2-block fit also moved the 13
+        correct lines before the block by 19.6 s. The edges cannot be verified --
+        warn, keep the fix."""
         row, rec = _run("SH_S01E01", "block_rand0", mode="full")
         self.assertIn("sync block(s)", row.get("sync_status") or "")
         self.assertEqual(row.get("correctness_flag"), "SUSPECT",
@@ -115,28 +115,28 @@ class SilentBlockTests(unittest.TestCase):
         self.assertGreater(rec.get("frac_le_1_0s"), 0.9)
 
     def test_block_repair_edges_warn_sampled(self):
-        """SH_S01E04 block_rand2 sampled: 3 sync-blokke, 6 linjer tilbage."""
+        """SH_S01E04 block_rand2 sampled: 3 sync blocks, 6 lines left."""
         row, rec = _run("SH_S01E04", "block_rand2", mode="sampled")
         self.assertIn("sync block(s)", row.get("sync_status") or "")
         self.assertEqual(row.get("correctness_flag"), "SUSPECT")
 
     def test_rerun_on_cache_keeps_missing_middle(self):
-        """Samme fil to gange paa samme DB: cache-hit maa ikke tabe arm 2-tjek."""
+        """The same file twice on the same DB: a cache hit must not lose the arm 2 check."""
         rows = _runs("SH_S01E01", "missing_middle", mode="full", audio="off", repeat=2)
         self.assertEqual([r.get("correctness_flag") for r, _ in rows], ["SUSPECT", "SUSPECT"])
 
     def test_escalated_block_file_is_judged_on_the_full_transcript(self):
-        """C_S02E12 sampled piecewise_b: alass' 3-blok-fit eskalerer, men resync og
-        recheck faldt tilbage til 16 samplede klip, og den halvt reparerede fil
-        gik stille igennem (0.440, ok). Dommen skal tages paa det koebte transskript."""
+        """C_S02E12 sampled piecewise_b: alass' 3-block fit escalates, but resync and
+        recheck fell back to 16 sampled clips, and the half-repaired file
+        went through silently (0.440, ok). The verdict must be taken on the purchased transcript."""
         row, rec = _run("C_S02E12", "piecewise_b", mode="sampled")
         self.assertLess(rec.get("frac_le_1_0s"), 0.90)
         self.assertEqual(row.get("correctness_flag"), "SUSPECT",
                          f"silent again (note: {(row.get('note') or '')[:300]})")
 
     def test_lone_huge_anchor_without_block_fit_escalates(self):
-        """C_S03E09 sampled piecewise_c: alass saa een offset, men eet anker stod
-        +20s ude. Uden flerbloksfit eskalerede den aldrig og gik stille (0.425)."""
+        """C_S03E09 sampled piecewise_c: alass saw one offset, but one anchor was
+        +20 s off. Without a multi-block fit it never escalated and went through silently (0.425)."""
         row, rec = _run("C_S03E09", "piecewise_c", mode="sampled")
         # Escalated, the anchor resync can now fix it (0.903); either outcome is fine.
         self.assertTrue(rec.get("frac_le_1_0s") >= 0.90
@@ -154,10 +154,10 @@ class SilentBlockTests(unittest.TestCase):
                         f"silent again (note: {(row.get('note') or '')[:300]})")
 
     def test_lone_huge_anchor_warns(self):
-        """SH_S01E01 sampled: alass' 4-blok-fit er 25s galt i een blok, men
-        sparsom sampling giver kun EET vidne -- min_samples undertrykker det,
-        saa filen gik stille igennem (0.855). Nu eskalerer den, og resyncen paa
-        det fulde transskript retter den (0.964). Stille er det eneste forbudte."""
+        """SH_S01E01 sampled: alass' 4-block fit is 25 s wrong in one block, but
+        sparse sampling gives only ONE witness -- min_samples suppresses it,
+        so the file went through silently (0.855). Now it escalates, and the resync on
+        the full transcript fixes it (0.964). Silent is the one forbidden outcome."""
         row, rec = _run("SH_S01E01", "piecewise", mode="sampled")
         self.assertTrue(rec.get("frac_le_1_0s") >= 0.90
                         or row.get("correctness_flag") == "SUSPECT",
@@ -223,18 +223,18 @@ class MissingMiddleTests(unittest.TestCase):
 @_needs_staging
 class StretchNoteTests(unittest.TestCase):
     def test_presync_note_survives_deferral(self):
-        """SH_S01E06 full drift: presync fyrer, men alass gaar multiblok og
-        defer-stien tabte presync-teksten -- noten loej alass-only. Rettelsen
-        skal tilskrives, og sen cue skal vaere inden for 1s."""
+        """SH_S01E06 full drift: presync fires, but alass goes multi-block and
+        the defer path lost the presync text -- the note lied "alass only". The fix
+        must be credited, and late cues must be within 1 s."""
         row, rec = _run("SH_S01E06", "drift", mode="full")
         self.assertIn("Pre-sync before alass: rate", row.get("note") or "",
                       f"presync fired invisibly (note: {(row.get('note') or '')[:300]})")
         self.assertGreaterEqual(rec.get("frac_le_1_0s"), 0.90)
 
     def test_sampled_stretch_presyncs(self):
-        """SH_S01E02 sampled drift: keep-porten blokerede (0.879) foer
-        count-trimmen -- laaser at sampled-str straekning fyrer gennem
-        roerledningen, ikke kun i enhedstests."""
+        """SH_S01E02 sampled drift: the keep gate blocked (0.879) before
+        the count trim -- locks in that a sampled stretch fires through
+        the pipeline, not only in unit tests."""
         row, rec = _run("SH_S01E02", "drift", mode="sampled")
         self.assertIn("Pre-sync before alass: rate", row.get("note") or "",
                       f"presync never fired (note: {(row.get('note') or '')[:300]})")

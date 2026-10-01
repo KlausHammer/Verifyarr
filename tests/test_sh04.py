@@ -1,13 +1,13 @@
-"""SH_S01E04 full maa ikke roeres: taet evidence kraever 3 vidner.
+"""SH_S01E04 full must not be touched: dense evidence needs 3 witnesses.
 
-Brugeren har SET 22:47-23:47: underteksten er korrekt, men full-mode
-omskrev filen paa praecis 2 daarlige ankre af ~51 (4 %). Sampled-barren
-(2) er kalibreret paa ~5-16 klip; paa taet full-evidence gaelder 3.
-C_S03E11 (aegte blok, 15+ vidner) skal stadig fanges.
+The user LOOKED at 22:47-23:47: the subtitle is correct, but full mode
+rewrote the file on exactly 2 bad anchors out of ~51 (4 %). The sampled bar
+(2) is calibrated on ~5-16 clips; on dense full evidence 3 applies.
+C_S03E11 (a genuine block, 15+ witnesses) must still be caught.
 
-Koerer den rigtige roerledning (M.run_one, frisk DB) paa de AEGTE
-undertekster + transskripter som genuine.py. Needs the staging tree
-(/mnt/c/...); skipped elsewhere.
+Runs the real pipeline (M.run_one, fresh DB) on the GENUINE
+subtitles + transcripts like genuine.py. Needs the staging data
+(VERIFYARR_TEST_DATA); skipped elsewhere.
 """
 from __future__ import annotations
 
@@ -28,7 +28,7 @@ _needs_staging = unittest.skipUnless(STAGING_OK, "needs whisper_gpu_staging out/
 
 
 def _run_genuine(slug, mode="full"):
-    """Aegte undertekst + aegte transskript gennem roerledningen, frisk DB."""
+    """Genuine subtitle + genuine transcript through the pipeline, fresh DB."""
     fx = M.fixture(slug)
     subs = M.subs_for(slug, fx)
     video = M.media_dir(slug) / fx["video_name"]
@@ -55,7 +55,7 @@ def _run_genuine(slug, mode="full"):
 @_needs_staging
 class Sh04FullTests(unittest.TestCase):
     def test_sh_s01e04_full_untouched_and_unflagged(self):
-        """Bekraeftet falsk positiv: korrekt fil omskrevet paa 2/51 ankre."""
+        """Confirmed false positive: a correct file rewritten on 2/51 anchors."""
         row = _run_genuine("SH_S01E04", "full")
         sync = row.get("sync_status") or ""
         self.assertNotIn("anchor region(s)", sync,
@@ -67,7 +67,7 @@ class Sh04FullTests(unittest.TestCase):
                          f"false flag (note: {(row.get('note') or '')[:300]})")
 
     def test_true_block_still_caught_full(self):
-        """C_S03E11: aegte blok med ren skaerm skal stadig fanges i full."""
+        """C_S03E11: a genuine block with a clean screen must still be caught in full."""
         row = _run_genuine("C_S03E11", "full")
         self.assertIn("anchor region(s)", row.get("sync_status") or "",
                       "overcorrection: the true block repair is gone")

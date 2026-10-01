@@ -203,8 +203,8 @@ def pick_dialogue_dense_time(subs: "pysubs2.SSAFile", region_start: float, regio
     return best_start
 
 
-# Anchor matching (see _match_segments_to_lines/_robust_clip_shift below, and the "Whisper ankre
-# til sync-validering" plan): a Whisper segment only becomes a trusted "this timestamp is
+# Anchor matching (see _match_segments_to_lines/_robust_clip_shift below, and the "Whisper anchors
+# for sync validation" plan): a Whisper segment only becomes a trusted "this timestamp is
 # confirmed correct" anchor if it clears BOTH of these against one specific subtitle line --
 # fraction of the LINE's own tokens found in the segment (same overlap() shape line_order.
 # _judge_order already uses), and a minimum absolute count so one shared 4+ letter word alone

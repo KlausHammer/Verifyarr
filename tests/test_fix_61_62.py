@@ -1,20 +1,19 @@
-"""Fund 6.1 + 6.2: disk-sandhed ved presync-old-sejr og single-blok-verifikation.
+"""Findings 6.1 + 6.2: what ends up on disk when the presync baseline wins, and single-block verification.
 
-Koerer den rigtige roerledning (M.run_one, frisk DB) som test_silent_rows,
-saa en doed sti fejler hoejlydt. Begge tests fejler paa HEAD foer rettelsen
-og bestaar efter.
+Runs the real pipeline (M.run_one, fresh DB) like test_silent_rows, so a dead
+path fails loudly. Both tests failed on HEAD before the fix and pass after it.
 
-6.1: uniform_neg full med presync + alass-multiblok hvor verifikationen
-vaelger "old" (baseline). Foer: disken beholder originalen (-45s), mens
-rapporten siger "already in sync", flag ok. Efter: baseline skrives og
-rapporteres som fixed.
+6.1: uniform_neg full with presync + alass multi-block where verification
+picks "old" (the baseline). Before: the disk keeps the original (-45 s) while
+the report says "already in sync", flag ok. After: the baseline is written and
+reported as fixed.
 
-6.2: wrong_episode single-blok (alass finder eet blok-fit paa forkert
-indhold). Foer: fittet skrives direkte, SUSPECT kommer for sent. Efter:
-skrivningen holdes tilbage til indholdstjekket har talt, filen forbliver
-uroert.
+6.2: wrong_episode single block (alass finds one block fit on wrong
+content). Before: the fit is written directly, SUSPECT comes too late. After:
+the write is held back until the content check has spoken, the file stays
+untouched.
 
-Needs the staging tree (/mnt/c/...) like the matrix; skipped elsewhere.
+Needs the staging data (VERIFYARR_TEST_DATA) like the matrix; skipped elsewhere.
 """
 from __future__ import annotations
 
@@ -68,24 +67,24 @@ def _run(slug, scenario, mode="full", audio="on"):
 @_needs_staging
 class PresyncBaselineTests(unittest.TestCase):
     def test_presync_winner_is_written_not_reported_in_sync(self):
-        """SH_S01E01 uniform_neg full: baseline-sejr skal paa disken som fixed,
-        ikke "already in sync" paa en 45s-forkert fil."""
+        """SH_S01E01 uniform_neg full: a baseline win must land on disk as fixed,
+        not "already in sync" on a file that is 45 s off."""
         row, rec = _run("SH_S01E01", "uniform_neg", mode="full")
         self.assertTrue((row.get("sync_status") or "").startswith("fixed"),
-                         f"presync forkastet uden skrivning: {row.get('sync_status')} "
+                         f"presync discarded without writing: {row.get('sync_status')} "
                          f"(note: {(row.get('note') or '')[:300]})")
         self.assertEqual(row.get("correctness_flag"), "ok",
                          f"flag: {(row.get('note') or '')[:300]}")
         self.assertGreaterEqual(rec.get("frac_le_1_0s"), 0.90,
-                                f"disken stadig forkert: rec={rec.get('frac_le_1_0s')}")
+                                f"disk still wrong: rec={rec.get('frac_le_1_0s')}")
 
 
 @_needs_staging
 class SingleBlockContentTests(unittest.TestCase):
     def test_single_block_wrong_content_stays_untouched(self):
-        """C_S02E01 wrong_episode full: alass single-blok-fit paa forkert
-        indhold skal holdes tilbage til indholdstjekket har talt. SUSPECT +
-        uroert, ikke fixed."""
+        """C_S02E01 wrong_episode full: an alass single-block fit on wrong
+        content must be held back until the content check has spoken. SUSPECT +
+        untouched, not fixed."""
         row, _rec = _run("C_S02E01", "wrong_episode", mode="full")
         self.assertEqual(row.get("correctness_flag"), "SUSPECT",
                          f"flag: {(row.get('note') or '')[:300]}")

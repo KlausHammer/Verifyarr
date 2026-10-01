@@ -1,13 +1,13 @@
-"""Fund 1: klip-cachen (video_transcript_cache) skal baere STT provider/model i sin noegle.
+"""Finding 1: the clip cache (video_transcript_cache) must carry the STT provider/model in its key.
 
-Et klip transskriberet under model A maa aldrig serveres som om det var model B's --
-heller ikke via segments_json-ankrene i evaluate_against_cached_transcripts. Samtidig
-maa et model-mismatch aldrig slette: en bruger der skifter frem og tilbage mellem to
-modeller skal ikke betale en re-transskribering pr. skift (samme raekker, begge
-modeller side om side). Raekker gemt foer kolonnerne fandtes (NULL) accepteres som de
-er, indtil de aelder ud -- samme NULL-konvention som video_mtime/video_size.
+A clip transcribed under model A must never be served as if it were model B's --
+not even through the segments_json anchors in evaluate_against_cached_transcripts. At
+the same time a model mismatch must never delete: a user who switches back and forth
+between two models should not pay a re-transcription per switch (same rows, both
+models side by side). Rows stored before the columns existed (NULL) are accepted as
+they are until they age out -- the same NULL convention as video_mtime/video_size.
 
-Ingen staging-noedvendighed: rene DB-tests, ingen alass/Whisper.
+No staging data needed: pure DB tests, no alass/Whisper.
 """
 from __future__ import annotations
 
@@ -18,9 +18,8 @@ from pathlib import Path
 
 from verifyarr import db
 
-# DDL'en fra foer rettelsen (HEAD:verifyarr/db.py), frosset ordret -- migrations-
-# testen bygger en "bruger med et aar i cachen"-DB med den og lader connect()
-# migrere den.
+# The DDL from before the fix (HEAD:verifyarr/db.py), frozen verbatim -- the migration
+# test builds a "user with a year of cache" DB with it and lets connect() migrate it.
 OLD_CLIP_CACHE_DDL = """
 CREATE TABLE video_transcript_cache (
     video_path    TEXT NOT NULL,
@@ -57,17 +56,17 @@ class ModelKeyTests(unittest.TestCase):
                                      stt_provider=A[0], stt_model=A[1])
             self.assertIsNone(
                 db.get_cached_transcript(conn, video, 3, stt_provider=B[0], stt_model=B[1]),
-                "model B fik serveret model A's klip")
+                "model B was served model A's clip")
             self.assertEqual(
                 db.get_cached_transcripts_for_video(conn, video, stt_provider=B[0],
                                                     stt_model=B[1]), [],
-                "model B's evidence-set indeholder model A's klip")
+                "model B's evidence set contains model A's clip")
             self.assertIsNone(
                 db.find_cached_transcript_between(conn, video, 100.0, 200.0,
                                                   stt_provider=B[0], stt_model=B[1]),
-                "positionelt opslag under B fandt A's klip")
+                "positional lookup under B found A's clip")
             hit = db.get_cached_transcript(conn, video, 3, stt_provider=A[0], stt_model=A[1])
-            self.assertIsNotNone(hit, "model A's eget klip ramt ikke laengere")
+            self.assertIsNotNone(hit, "model A's own clip is no longer hit")
             self.assertEqual(hit["transcript"], "dialogue A")
         finally:
             conn.close()
@@ -82,7 +81,7 @@ class ModelKeyTests(unittest.TestCase):
             n = conn.execute("SELECT COUNT(*) FROM video_transcript_cache").fetchone()[0]
             self.assertEqual(n, 1, "laesning under fremmed model slettede raekken")
             hit = db.get_cached_transcript(conn, video, 0, stt_provider=A[0], stt_model=A[1])
-            self.assertIsNotNone(hit, "A's raekke vaek efter B's miss")
+            self.assertIsNotNone(hit, "A's row gone after B's miss")
         finally:
             conn.close()
 
@@ -95,7 +94,7 @@ class ModelKeyTests(unittest.TestCase):
                                      stt_provider=B[0], stt_model=B[1])
             a = db.get_cached_transcript(conn, video, 1, stt_provider=A[0], stt_model=A[1])
             b = db.get_cached_transcript(conn, video, 1, stt_provider=B[0], stt_model=B[1])
-            self.assertEqual(a["transcript"], "from A", "B's skrivning aad A's raekke")
+            self.assertEqual(a["transcript"], "from A", "B's write ate A's row")
             self.assertEqual(b["transcript"], "from B")
         finally:
             conn.close()
@@ -111,7 +110,7 @@ class ModelKeyTests(unittest.TestCase):
             for prov, mod in (A, B):
                 hit = db.get_cached_transcript(conn, video, 2, stt_provider=prov,
                                                stt_model=mod)
-                self.assertIsNotNone(hit, f"NULL-raekke ikke accepteret under {mod}")
+                self.assertIsNotNone(hit, f"NULL row not accepted under {mod}")
         finally:
             conn.close()
 
@@ -121,11 +120,11 @@ class ModelKeyTests(unittest.TestCase):
             for prov, mod in (A, B):
                 db.save_transcript_cache(conn, video, 0, 10.0, "en", f"from {mod}",
                                          stt_provider=prov, stt_model=mod)
-            video.write_bytes(b"y" * 2048)  # andet release, samme sti
+            video.write_bytes(b"y" * 2048)  # another release, same path
             self.assertEqual(db.get_cached_transcripts_for_video(conn, video, stt_provider=A[0],
                                                                  stt_model=A[1]), [])
             n = conn.execute("SELECT COUNT(*) FROM video_transcript_cache").fetchone()[0]
-            self.assertEqual(n, 0, "udskiftet video efterlod klip-raekker")
+            self.assertEqual(n, 0, "replaced video left clip rows behind")
         finally:
             conn.close()
 
@@ -152,7 +151,7 @@ class MigrationTests(unittest.TestCase):
         raw.commit()
         raw.close()
 
-        conn = db.connect(db_path)  # migrerer ved aabning
+        conn = db.connect(db_path)  # migrates on open
         try:
             cols = {r[1] for r in conn.execute("PRAGMA table_info(video_transcript_cache)")}
             self.assertIn("stt_provider", cols)
@@ -164,14 +163,14 @@ class MigrationTests(unittest.TestCase):
                              [(0, "year-old clip"), (1, "older clip")],
                              "migreringen smed brugerdata vaek")
             hit = db.get_cached_transcript(conn, video, 0, stt_provider=A[0], stt_model=A[1])
-            self.assertIsNotNone(hit, "migreret raekke ikke laesbar via ny API")
+            self.assertIsNotNone(hit, "migrated row not readable via the new API")
             self.assertEqual(hit["transcript"], "year-old clip")
-            # Nye skrivninger ved siden af de migrerede NULL-raekker.
+            # New writes next to the migrated NULL rows.
             db.save_transcript_cache(conn, video, 0, 5.0, "en", "fresh A",
                                      stt_provider=A[0], stt_model=A[1])
             hit = db.get_cached_transcript(conn, video, 0, stt_provider=A[0], stt_model=A[1])
             self.assertEqual(hit["transcript"], "fresh A",
-                             "NULL-raekke skyggede for den nye noeglede raekke")
+                             "NULL row shadowed the new keyed row")
         finally:
             conn.close()
 

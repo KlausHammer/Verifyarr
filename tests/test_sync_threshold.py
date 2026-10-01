@@ -1,10 +1,10 @@
-"""Fund 3: taersklen er brugerens ene regel, kodet to steder -- de skal foelges ad.
+"""Finding 3: the threshold is the user's one rule, coded in two places -- they must move together.
 
-pipeline.SCREEN_TOLERANCE_S (screen: offset/spredning/drift) og
-sync.min_change_seconds-defaulten (skriv: intet under taersklen skrives) er samme
-beslutning. Testen her pinder vaerdien OG at de to steder er enige, saa en fremtidig
-ensidig aendring fejler hoejlydt i stedet for at splitte adfaerden. Seloev maales
-gennem matricen (arm 1/2, clean-cellen, genuine.py) -- se CACHE_RAPPORT.md.
+pipeline.SCREEN_TOLERANCE_S (screen: offset/spread/drift) and the
+sync.min_change_seconds default (write: nothing under the threshold is written) are the same
+decision. This test pins the value AND that the two places agree, so a future
+one-sided change fails loudly instead of splitting the behaviour. The effect itself is measured
+through the matrix (arm 1/2, the clean cell, genuine.py) -- see CACHE_RAPPORT.md.
 """
 from __future__ import annotations
 
@@ -20,9 +20,9 @@ class ThresholdBoundaryTests(unittest.TestCase):
     def test_screen_and_write_gate_agree(self):
         default = SETTING_DEFS["sync.min_change_seconds"][2]
         self.assertEqual(default, pipeline.SCREEN_TOLERANCE_S,
-                         "taersklen kodet to steder -- de er drevet fra hinanden")
+                         "threshold coded in two places -- they have drifted apart")
         self.assertEqual(pipeline.SCREEN_TOLERANCE_S, DECIDED_SECONDS,
-                         "brugerens beslutning er 0,25 s")
+                         "the user's decision is 0.25 s")
 
 
 if __name__ == "__main__":

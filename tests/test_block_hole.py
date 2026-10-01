@@ -1,7 +1,7 @@
-"""Huller, afkortning og blokke i realistiske størrelser (kun detektion).
+"""Holes, truncation and blocks at realistic sizes (detection only).
 
-Randomiserede scenarier (seedet) + detektorer: ♪-filter og lavere barre for
-huller, hoved/hale-tjek for afkortning, klynge-detektor for blokke.
+Seeded random scenarios + detectors: the ♪ filter and a lower bar for holes,
+head/tail checks for truncation, a cluster detector for blocks.
 """
 from __future__ import annotations
 

@@ -25,8 +25,8 @@ frontend/.vite/
 .vscode/
 .idea/
 
-# Testmatricens arbejdsfiler — korrumperede undertekstkopier, shard-logs og
-# shard-resultater. Kun de merged resultater og tests/data/ hører i repoet.
+# The test matrix's working files: corrupted subtitle copies, shard logs and
+# shard results. Only the merged results and tests/data/ belong in the repo.
 tests/e2e_work_*/
 tests/e2e_work_*.log
 tests/e2e_matrix_[0-9]*.jsonl

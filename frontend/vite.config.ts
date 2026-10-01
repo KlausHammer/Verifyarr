@@ -5,9 +5,9 @@ import { defineConfig } from 'vite'
 export default defineConfig({
   plugins: [react()],
   server: {
-    // Under 'npm run dev' proxies API-kald til den lokalt kørende Python-backend (uvicorn på
-    // :8787, se verifyarr/web/__main__.py) — samme adfærd som i produktion, hvor FastAPI selv
-    // server det byggede dist/ (se app.py).
+    // Under 'npm run dev', API calls are proxied to the locally running Python backend (uvicorn on
+    // :8787, see verifyarr/web/__main__.py) -- the same behaviour as in production, where FastAPI itself
+    // serves the built dist/ (see app.py).
     proxy: {
       '/api': { target: 'http://127.0.0.1:8787', changeOrigin: true },
     },

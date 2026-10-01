@@ -1,9 +1,9 @@
-"""Ankre der modbeviser en kandidat: originalen beholdes, intet skrives.
+"""Anchors that disprove a candidate: the original is kept, nothing is written.
 
-_resolve_ambiguous_sync med mocket evidens (som RampDecisionUnitTests):
-timing alene afgiver, intet Whisper. Single-blok tages som een blok
-[0, inf); en vinder med >= 3 ankre > 2,5 s ude nedstemmes naar old er
-klart bedre paa de faelles klip.
+_resolve_ambiguous_sync with mocked evidence (like RampDecisionUnitTests):
+timing alone decides, no Whisper. A single block is taken as one block
+[0, inf); a winner with >= 3 anchors > 2.5 s off is voted down when old is
+clearly better on the shared clips.
 """
 from __future__ import annotations
 
@@ -34,7 +34,7 @@ REGIONS = [223.8, 949.7, 1257.4, 1719.5, 2016.1, 2420.3, 2805.3, 3025.8]
 
 
 def _resolve(new_res, old_res, blocks_res=None, single_block=False):
-    """Kald _resolve_ambiguous_sync med givne residualer pr. klip."""
+    """Calls _resolve_ambiguous_sync with the given residuals per clip."""
     new_subs, old_subs = _subs_span(), _subs_span()
     blocks_subs = _subs_span() if blocks_res is not None else None
     by_id = {id(new_subs): "new", id(old_subs): "old"}
@@ -82,7 +82,7 @@ def _resolve(new_res, old_res, blocks_res=None, single_block=False):
 
 class OldWinsTests(unittest.TestCase):
     def test_single_block_old_wins_when_clearly_better(self):
-        """Single-blok: new 8,5 s ude, old 0,7 s -- old beholdes."""
+        """Single block: new 8.5 s off, old 0.7 s -- old is kept."""
         new = [8.5, 8.2, 8.8, 8.1, 8.6, 8.4, 8.3, 8.7]
         old = [0.7, 0.6, 0.8, 0.5, 0.7, 0.6, 0.8, 0.7]
         winner, row, _disk = _resolve(new, old, single_block=True)
@@ -90,7 +90,7 @@ class OldWinsTests(unittest.TestCase):
         self.assertIn("already in sync", row["sync_status"])
 
     def test_single_block_good_fit_still_wins(self):
-        """Single-blok: new 0,3 s, old 45 s -- new skrives som foer."""
+        """Single block: new 0.3 s, old 45 s -- new is written as before."""
         new = [0.3, 0.2, 0.4, 0.3, 0.2, 0.4, 0.3, 0.2]
         old = [45.0, 45.1, 44.9, 45.2, 45.0, 44.8, 45.1, 45.0]
         winner, row, _disk = _resolve(new, old, single_block=True)
@@ -98,10 +98,10 @@ class OldWinsTests(unittest.TestCase):
         self.assertTrue(row["sync_status"].startswith("fixed"))
 
     def test_bad_multiblock_winner_is_vetoed(self):
-        """New/blocks >= 3 klip > 2,5 s, old klar bedre -- old beholdes.
+        """New/blocks >= 3 clips > 2.5 s off, old clearly better -- old is kept.
 
-        Old staar 5 s skidt i foerste blok (ikke 'fair' sejr), men new staar
-        8,5 s skidt overalt: fittet er modbevist, veto redder originalen."""
+        Old is 5 s off in the first block (not a 'fair' win), but new is
+        8.5 s off everywhere: the fit is disproven, the veto saves the original."""
         new = [8.5, 8.2, 8.8, 8.1, 8.6, 8.4, 8.3, 8.7]
         blocks = [12.3, 12.0, 12.5, 12.1, 12.4, 12.2, 12.6, 12.0]
         old = [5.0, 0.1, 0.3, 0.2, 0.1, 0.3, 0.2, 0.1]
@@ -111,7 +111,7 @@ class OldWinsTests(unittest.TestCase):
                         "veto must mark the row so the caller flags SUSPECT")
 
     def test_good_winner_is_not_vetoed(self):
-        """New ren (0,4 s), old daarlig (25 s) -- new skrives, ingen veto."""
+        """New clean (0.4 s), old bad (25 s) -- new is written, no veto."""
         new = [0.4, 0.3, 0.5, 0.4, 0.3, 0.5, 0.4, 0.3]
         blocks = [0.5, 0.4, 0.6, 0.5, 0.4, 0.6, 0.5, 0.4]
         old = [25.0, 25.1, 24.9, 25.2, 25.0, 24.8, 25.1, 25.0]

@@ -860,8 +860,8 @@ def list_app_log_lines(conn: sqlite3.Connection, after_id: int = 0, limit: int =
 # --- stats ---------------------------------------------------------------------------------------
 
 def match_rate_series(conn: sqlite3.Connection, group_by: str = "day", days: int = 90):
-    """Match-rate over tid til Stats-siden — andel 'ok' blandt afsluttede korrekthedstjek,
-    grupperet pr. dag eller uge."""
+    """Match rate over time for the Stats page: the share of 'ok' among finished correctness
+    checks, grouped by day or week."""
     fmt = "%Y-%m-%d" if group_by == "day" else "%Y-W%W"
     rows = conn.execute(f"""
         SELECT strftime('{fmt}', checked_at) AS period,

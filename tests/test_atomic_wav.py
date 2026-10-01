@@ -1,13 +1,13 @@
-"""Fund 2: extract_audio_wav skal skrive atomart og afvise en afkortet WAV.
+"""Finding 2: extract_audio_wav must write atomically and reject a truncated WAV.
 
-ffmpeg skriver i dag direkte til out_path med -y: ved timeout/OSError returnerer vi
-False men lader den delvise fil ligge, og ved exit 0 tjekker vi kun at filen findes
-og er ikke-tom -- en afkortet WAV (fuld disk) bestaar den test. Rettelsen skriver
-til tmp + os.replace og validerer WAV-strukturen bagefter.
+ffmpeg used to write straight to out_path with -y: on timeout/OSError we returned
+False but left the partial file behind, and on exit 0 we only checked that the file
+existed and was non-empty -- a truncated WAV (full disk) passed that test. The fix
+writes to a tmp file + os.replace and validates the WAV structure afterwards.
 
-subprocess er mock'et: fake'en skriver det ffmpeg ville have skrevet (delvist, helt
-eller afkortet) til kommandoens sidste argument -- paa gammel kode er det out_path
-selv, paa ny kode tmp-filen. Ingen ffmpeg-noedvendighed.
+subprocess is mocked: the fake writes what ffmpeg would have written (partial, whole
+or truncated) to the command's last argument -- out_path on the old code, the tmp
+file on the new code. No ffmpeg needed.
 """
 from __future__ import annotations
 
@@ -23,7 +23,7 @@ from verifyarr import sync_engine
 
 
 def wav_bytes(n_frames=1600, rate=16000):
-    """Minimal gyldig 16kHz mono 16-bit PCM WAV, samme form som ffmpeg skriver."""
+    """Minimal gyldig 16kHz mono 16-bit PCM WAV, same shape as ffmpeg writes."""
     data = b"\x00\x00" * n_frames
     fmt = struct.pack("<HHIIHH", 1, 1, rate, rate * 2, 2, 16)
     riff_size = 4 + 8 + 16 + 8 + len(data)
@@ -75,7 +75,7 @@ class AtomicExtractTests(unittest.TestCase):
             with mock.patch.object(sync_engine.subprocess, "run",
                                    _fake_run(b"RIFF-partial", returncode=1)):
                 self.assertFalse(sync_engine.extract_audio_wav(video, out))
-            self.assertFalse(out.exists(), "delvis fil efterladt ved exit != 0")
+            self.assertFalse(out.exists(), "partial file left behind on exit != 0")
             self.assertEqual(list(Path(td).glob("*.part")), [])
 
     def test_timeout_leaves_no_partial_file(self):
@@ -85,7 +85,7 @@ class AtomicExtractTests(unittest.TestCase):
                                    _fake_run(b"RIFF-partial",
                                              exc=subprocess.TimeoutExpired("ffmpeg", 1))):
                 self.assertFalse(sync_engine.extract_audio_wav(video, out))
-            self.assertFalse(out.exists(), "delvis fil efterladt ved timeout")
+            self.assertFalse(out.exists(), "partial file left behind on timeout")
             self.assertEqual(list(Path(td).glob("*.part")), [])
 
     def test_zero_exit_truncated_wav_rejected(self):
@@ -94,8 +94,8 @@ class AtomicExtractTests(unittest.TestCase):
             with mock.patch.object(sync_engine.subprocess, "run",
                                    _fake_run(wav_bytes()[:100], returncode=0)):
                 self.assertFalse(sync_engine.extract_audio_wav(video, out),
-                                 "afkortet WAV accepteret ved exit 0")
-            self.assertFalse(out.exists(), "afkortet WAV efterladt som gyldigt output")
+                                 "truncated WAV accepted on exit 0")
+            self.assertFalse(out.exists(), "truncated WAV left behind as valid output")
 
     def test_success_writes_valid_file_and_cleans_tmp(self):
         with tempfile.TemporaryDirectory() as td:

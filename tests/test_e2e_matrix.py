@@ -526,8 +526,8 @@ class AudioCacheTests(unittest.TestCase):
                 M.WAV_DIR = old
 
     def test_invalid_wav_falls_back_to_empty_cache(self):
-        # En afkortet WAV paa disken maa ikke seedes som gyldig lyd -- samme
-        # validering som extract_audio_wav bruger paa sin egen output.
+        # A truncated WAV on disk must not be seeded as valid audio -- the same
+        # validation extract_audio_wav applies to its own output.
         import tempfile
         with tempfile.TemporaryDirectory() as td:
             (Path(td) / "C_S03E03.wav").write_bytes(b"fake-wav")
