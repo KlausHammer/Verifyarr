@@ -36,31 +36,36 @@ def _run(before_share, after_share, status="fixed (Δ5.0s)"):
         written.save(str(path))
         row = {"sync_status": status, "note": "", "correctness_flag": "ok"}
         with mock.patch.object(P, "_dense_pool", side_effect=_pool_for({1.0: before_share, 2.0: after_share})):
-            flagged = P._undo_rewrite_that_made_it_worse(None, Path("v.mkv"), path, CFG, row, original)
-        return row, flagged, pysubs2.load(str(path))[0].start
+            P._undo_rewrite_that_made_it_worse(None, Path("v.mkv"), path, CFG, row, original)
+        return row, pysubs2.load(str(path))[0].start
 
 
 class UndoWorseRewriteTests(unittest.TestCase):
-    def test_good_original_ruined_is_restored_quietly(self):
-        row, flagged, start = _run(0.05, 1.0)
+    def test_ruined_file_is_restored(self):
+        row, start = _run(0.05, 1.0)
         self.assertEqual(start, 1000)
-        self.assertFalse(flagged)
-        self.assertEqual(row["correctness_flag"], "ok")
         self.assertTrue(row["sync_status"].startswith("left unchanged"))
 
-    def test_bad_original_is_restored_and_flagged(self):
-        row, flagged, start = _run(0.6, 1.0)
-        self.assertEqual(start, 1000)
-        self.assertTrue(flagged)
-        self.assertEqual(row["correctness_flag"], "SUSPECT")
+    def test_verdict_is_left_as_the_run_reached_it(self):
+        # A cut version or jittered cues stay SUSPECT: undoing is not a clean bill of health.
+        for flag in ("ok", "SUSPECT"):
+            tmp_row = {"correctness_flag": flag, "reason": "partly_out_of_sync" if flag == "SUSPECT" else None}
+            original, written = _subs(1.0), _subs(2.0)
+            with tempfile.TemporaryDirectory() as d:
+                path = Path(d) / "s.srt"
+                written.save(str(path))
+                row = {"sync_status": "fixed (Δ5.0s)", "note": "", **tmp_row}
+                with mock.patch.object(P, "_dense_pool", side_effect=_pool_for({1.0: 0.05, 2.0: 1.0})):
+                    P._undo_rewrite_that_made_it_worse(None, Path("v.mkv"), path, CFG, row, original)
+            self.assertEqual((row["correctness_flag"], row["reason"]), (tmp_row["correctness_flag"], tmp_row["reason"]))
 
     def test_real_improvement_is_kept(self):
-        row, flagged, start = _run(0.8, 0.05)
+        row, start = _run(0.8, 0.05)
         self.assertEqual(start, 2000)
         self.assertTrue(row["sync_status"].startswith("fixed"))
 
     def test_untouched_file_is_ignored(self):
-        row, flagged, start = _run(0.05, 1.0, status="already in sync")
+        row, start = _run(0.05, 1.0, status="already in sync")
         self.assertEqual(start, 2000)
 
 

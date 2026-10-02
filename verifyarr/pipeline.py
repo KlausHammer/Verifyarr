@@ -2021,7 +2021,6 @@ def _try_rate_from_baseline(conn: sqlite3.Connection, video_path: Path, subtitle
 # three good files (0.02-0.07 off) rewritten to 1.00 off by a failed alass fit.
 REWRITE_WORSE_MIN_LINES = 40
 REWRITE_WORSE_MARGIN = 0.15
-REWRITE_BAD_ORIGINAL = 0.30
 
 
 def _share_off(pts: list) -> Optional[float]:
@@ -2031,22 +2030,23 @@ def _share_off(pts: list) -> Optional[float]:
 
 
 def _undo_rewrite_that_made_it_worse(conn: sqlite3.Connection, video_path: Path,
-                                     subtitle_path: Path, cfg: Config, row: dict, original) -> bool:
+                                     subtitle_path: Path, cfg: Config, row: dict, original) -> None:
     """Puts the original back when the file this run wrote is clearly further from the audio
-    than the original was (only judgeable with a cached full transcript). An original that was
-    itself bad is flagged for a fresh subtitle (True); a good one is simply left as it was."""
+    than the original was (only judgeable with a cached full transcript). The verdict is left
+    exactly as the run reached it: undoing a rewrite must never turn a SUSPECT into ok (a cut
+    version, jittered cues) -- it only stops a failed fit from replacing a better file."""
     if (original is None or cfg.dry_run
             or not (row.get("sync_status") or "").startswith("fixed")):
-        return False
+        return
     before = _share_off(_dense_pool(conn, video_path, original, cfg))
     if before is None:
-        return False
+        return
     try:
         after = _share_off(_dense_pool(conn, video_path, load_subs(subtitle_path), cfg))
     except Exception:
-        return False
+        return
     if after is None or after <= before + REWRITE_WORSE_MARGIN:
-        return False
+        return
     original.save(str(subtitle_path))
     log.warning("rewrite of %s undone: %.0f%% of lines >%.1fs off afterwards, %.0f%% before",
                 subtitle_path.name, after * 100, ANCHOR_SUSPECT_THRESHOLD_S, before * 100)
@@ -2057,12 +2057,6 @@ def _undo_rewrite_that_made_it_worse(conn: sqlite3.Connection, video_path: Path,
     row["fps_ratio"] = None
     row["note"] = (row.get("note", "") + f" Rewrite undone: {after:.0%} of lines were more than "
                    f"{ANCHOR_SUSPECT_THRESHOLD_S:.1f}s off afterwards against {before:.0%} before.").strip()
-    if before > REWRITE_BAD_ORIGINAL:
-        _flag_suspect(row, REASON_PARTLY_OUT_OF_SYNC)
-        return True
-    row["correctness_flag"] = "ok"
-    row["reason"] = None
-    return False
 
 
 # A whole file sitting one steady offset off, read from the dense pool. alass can miss a
@@ -2908,9 +2902,8 @@ def correctness_and_finish(video_path: Path, subtitle_path: Path, lang: Optional
     # safe default -- rather than leave the file unsynced under a "[pending]" status.
     if "_ambiguous_sync" in row:
         apply_pending_sync(subtitle_path, cfg, row, reason=f"correctness check: {row.get('correctness_flag')}")
-    if _undo_rewrite_that_made_it_worse(conn, video_path, subtitle_path, cfg, row,
-                                        orig_subs or pre_sync_subs):
-        row["auto_action"] = act_on_suspect()
+    _undo_rewrite_that_made_it_worse(conn, video_path, subtitle_path, cfg, row,
+                                     orig_subs or pre_sync_subs)
     row["whisper_cost"] = _row_cost(row)
     save_row()
     return row
