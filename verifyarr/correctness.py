@@ -768,31 +768,27 @@ def cue_gaps(subs, min_gap_s: float = MISSING_MIDDLE_MIN_GAP_S) -> list[tuple[fl
     return out
 
 
-# Outro songs, credits and promos for other shows (The Boys S05E07, Marvelous Mrs. Maisel
-# S01E07, What We Do in the Shadows S03E02, S.W.A.T. S03E18): nothing is judged here.
-END_IGNORE_S = 120.0
+# Opening songs and recaps (The White Lotus S01E06 0:00-2:20), outro songs, credits and
+# promos for other shows (The Boys S05E07, Marvelous Mrs. Maisel S01E07, What We Do in the
+# Shadows S03E02, S.W.A.T. S03E18): nothing is judged in the first and last two minutes.
+EDGE_IGNORE_S = 120.0
+END_IGNORE_S = EDGE_IGNORE_S
 
 
 def all_gaps(subs, duration_s: Optional[float],
              min_gap_s: float = MISSING_MIDDLE_MIN_GAP_S) -> list[tuple[float, float]]:
-    """cue_gaps plus head [0, first cue] and tail [last cue, duration - END_IGNORE_S]."""
+    """cue_gaps plus head [0, first cue] and tail [last cue, duration], all clipped to
+    [EDGE_IGNORE_S, duration - EDGE_IGNORE_S] and dropped when shorter than min_gap_s then."""
     gaps = list(cue_gaps(subs, min_gap_s))
     if not subs.events:
         return gaps
-    if duration_s:
-        # A song or credits gap can sit between cues late in the file (The White Lotus S02E07
-        # 75:06 of 77:00): clip every gap at the ignore line.
-        limit = duration_s - END_IGNORE_S
-        gaps = [(a, min(b, limit)) for a, b in gaps if min(b, limit) - a >= min_gap_s]
     ev = sorted(subs.events, key=lambda e: e.start)
     if ev[0].start / 1000.0 >= min_gap_s:
         gaps.append((0.0, ev[0].start / 1000.0))
     if duration_s:
-        tail0 = max(e.end for e in ev) / 1000.0
-        tail1 = duration_s - END_IGNORE_S
-        if tail1 - tail0 >= min_gap_s:
-            gaps.append((tail0, tail1))
-    return gaps
+        gaps.append((max(e.end for e in ev) / 1000.0, duration_s))
+    lo, hi = EDGE_IGNORE_S, (duration_s - EDGE_IGNORE_S) if duration_s else float("inf")
+    return [(max(x, lo), min(y, hi)) for x, y in gaps if min(y, hi) - max(x, lo) >= min_gap_s]
 
 
 def _is_music(text: str) -> bool:

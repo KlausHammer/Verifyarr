@@ -109,10 +109,10 @@ class MissingMiddleTests(unittest.TestCase):
     def test_truncated_start_is_a_gap(self):
         subs = _subs((500, 510, "a"), (600, 610, "b"))
         text = " ".join(f"w{i}" for i in range(150))
-        segs = _segs((20, 400, text))
+        segs = _segs((130, 400, text))
         hit = C.missing_middle_evidence(subs, segs, duration_s=2000.0)
         self.assertIsNotNone(hit)
-        self.assertEqual(hit["gap_start"], 0.0)
+        self.assertEqual(hit["gap_start"], C.EDGE_IGNORE_S)
 
     def test_short_credits_tail_stays_silent(self):
         subs = _subs((0, 10, "a"), (100, 110, "b"))
@@ -132,9 +132,16 @@ class MissingMiddleTests(unittest.TestCase):
         subs = _subs((0, 10, "a"), (100, 110, "b"), (200, 205, "c"))
         self.assertTrue(all(b <= 180.0 for _, b in C.all_gaps(subs, 300.0)))
 
+    def test_opening_in_the_first_two_minutes_is_not_judged(self):
+        # The White Lotus S01E06: no cues 0:00-2:20, 35 s of opening song.
+        subs = _subs((140, 150, "a"), (300, 310, "b"))
+        text = " ".join(f"w{i}" for i in range(150))
+        segs = _segs((10, 100, text))
+        self.assertIsNone(C.missing_middle_evidence(subs, segs, duration_s=2000.0))
+
     def test_tail_gap_stops_two_minutes_before_the_end(self):
         subs = _subs((0, 10, "a"), (100, 110, "b"))
-        self.assertEqual(C.all_gaps(subs, 1000.0)[-1], (110.0, 880.0))
+        self.assertEqual(C.all_gaps(subs, 1000.0)[-1], (120.0, 880.0))
 
     def test_tiny_bar_is_lower(self):
         self.assertEqual(C.missing_middle_min_words("ggml-tiny.en.bin"), 50)
