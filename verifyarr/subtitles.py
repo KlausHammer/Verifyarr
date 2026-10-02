@@ -110,7 +110,8 @@ def tokenize(text: str) -> set[str]:
 # one. A leading "-" (dash-speaker marker) is stripped before checking, so "-(screams)" still
 # counts. Text with a bracket ASIDE inside real dialogue ("Free tickets to (coughs) see...") does
 # NOT match, since it isn't the whole segment.
-_NONSPEECH_RE = re.compile(r"^-?\s*(?:[\[(][^\[\]()]*[\])]\s*)+$")
+# large-v3-turbo writes its annotations with asterisks ("*Music*", "*gunshot*").
+_NONSPEECH_RE = re.compile(r"^-?\s*(?:(?:[\[(][^\[\]()]*[\])]|\*[^*]+\*)\s*)+$")
 
 
 def is_nonspeech_annotation(text: str) -> bool:

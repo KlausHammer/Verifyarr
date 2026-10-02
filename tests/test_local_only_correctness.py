@@ -99,3 +99,15 @@ class ReviewFixTests(unittest.TestCase):
                     "local_whisper_threads": 2}
             settings.set_settings_group(conn, "correctness", body)
             conn.close()
+
+
+class AsteriskTagTests(unittest.TestCase):
+    def test_turbo_style_tags_are_nonspeech(self):
+        from verifyarr.subtitles import is_nonspeech_annotation
+        for t in ("*Music*", "*gunshot*", "- *phone rings*", "[Music] *Music*"):
+            self.assertTrue(is_nonspeech_annotation(t), t)
+        self.assertFalse(is_nonspeech_annotation("*Music* and then he said hello"))
+        self.assertFalse(is_nonspeech_annotation("I think *that* was it"))
+
+    def test_asterisk_music_tag_is_a_music_mark(self):
+        self.assertEqual(len(correctness.music_spans([{"start": 1, "end": 2, "text": "*Music*"}])), 1)
