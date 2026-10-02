@@ -634,6 +634,13 @@ RATE_MAX_RESID_S = 0.40
 RATE_SNAP_MIN_TILT_S = 0.8
 RATE_SNAP_MIN_RHO = 0.45
 RATE_SNAP_MIN_GAIN_S = 0.05
+# A steep, monotone ramp is a rate even when jitter pushes resid past the cap
+# (My Name Is Earl S01E13: tilt 4.7s rho 0.88 gain 0.62 resid 0.52; The Bear:
+# tilt -6.1s rho -0.91 gain 1.2 resid 0.55). Blocks read keep <= 0.65 or gain < 0.
+RATE_STEEP_MIN_TILT_S = 3.0
+RATE_STEEP_MIN_RHO = 0.85
+RATE_STEEP_MIN_GAIN_S = 0.50
+RATE_STEEP_MAX_RESID_S = 0.65
 # Flat = nothing left to fix: tilt and offset inside Whisper noise. Tight is
 # the healthy SH ceiling (tilt 0.4s, offset 0.09s): a file already fixed
 # elsewhere is only left alone when it is that good (p50 0.31s slipped at 1.0).
@@ -677,6 +684,9 @@ def _slope_snaps(p: dict) -> bool:
 def rate_gates_pass(p: Optional[dict]) -> bool:
     if probe_gates_pass(p, RATE_MIN_POINTS, RATE_MIN_TILT_S, RATE_MIN_RHO,
                         RATE_MIN_KEEP, RATE_MIN_GAIN_S, RATE_MAX_RESID_S):
+        return True
+    if probe_gates_pass(p, RATE_MIN_POINTS, RATE_STEEP_MIN_TILT_S, RATE_STEEP_MIN_RHO,
+                        RATE_MIN_KEEP, RATE_STEEP_MIN_GAIN_S, RATE_STEEP_MAX_RESID_S):
         return True
     # A small ramp is weak evidence alone, but a slope that equals a real
     # framerate conversion (23.976/24 walks ~1s in 20 min) is not a coincidence.

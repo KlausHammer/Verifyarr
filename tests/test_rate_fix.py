@@ -42,6 +42,18 @@ class RateGateTests(unittest.TestCase):
                                             S.RATE_MAX_RESID_S))
         self.assertTrue(S.rate_gates_pass(_probe(pts)))
 
+    def test_steep_noisy_ramp_passes(self):
+        # 0.38% over 20 min walks 4.7s; jitter 0.5s lifts resid past the 0.40 cap.
+        pts = _pool(0.0038, 3.4, n=200, span=1235.0, noise=1.0)
+        p = _probe(pts)
+        self.assertGreater(p["resid"], S.RATE_MAX_RESID_S)
+        self.assertTrue(S.rate_gates_pass(p))
+
+    def test_noisy_block_still_fails(self):
+        pts = _pool(0.0, 0.0, n=200, span=1235.0, noise=1.0)
+        pts = [(a, s + (4.0 if a > 600 else 0.0)) for a, s in pts]
+        self.assertFalse(S.rate_gates_pass(_probe(pts)))
+
     def test_tiny_ramp_off_ratio_still_fails(self):
         # 0.012% walks 0.65s in 90 min: no conversion ratio, under every bar.
         pts = _pool(0.00012, 0.2, n=300, span=5400.0, noise=0.3)

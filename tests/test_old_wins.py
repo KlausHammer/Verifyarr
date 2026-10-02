@@ -95,6 +95,18 @@ class OldWinsTests(unittest.TestCase):
         self.assertEqual(winner, "old", row["note"][-300:])
         self.assertIn("already in sync", row["sync_status"])
 
+    def test_old_stays_when_blocks_passes_content_but_far_below_old(self):
+        """Rick and Morty S04E05: old 0.87 ok at 0.9s, blocks 0.31 ok (37s off), new 0.16 SUSPECT.
+        Only old is within the tie margin, and it is unproven in the late blocks: it still beats a
+        candidate that is 0.56 worse on text. Was written as d62s."""
+        winner, row, _disk = _resolve(
+            [None, None, 60.0, 60.0, None, None, None, None],
+            [0.9, 0.9, 0.9, None, None, None, None, None],
+            blocks_res=[37.4, 37.4, None, None, None, None, None, None],
+            content={"new": (0.16, "SUSPECT"), "blocks": (0.31, "ok"), "old": (0.87, "ok")},
+            new_flag="SUSPECT")
+        self.assertEqual(winner, "old", row["note"][-300:])
+
     def test_single_block_old_wins_when_clearly_better(self):
         """Single block: new 8.5 s off, old 0.7 s -- old is kept."""
         new = [8.5, 8.2, 8.8, 8.1, 8.6, 8.4, 8.3, 8.7]
