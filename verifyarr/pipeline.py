@@ -1057,12 +1057,14 @@ def _resolve_ambiguous_sync(conn: sqlite3.Connection, video_path: Path, subtitle
         and could resurrect the very candidate pick() had already correctly rejected -- which is
         exactly what a first version of this function did, picking 'blocks' (a worse anchor
         residual, marginally higher content score within the same noise-level tie margin the
-        caller already decided not to trust on its own) instead of 'new'. Falls back to 'new'
-        -- the safe, single-offset default -- only if the pool has nothing left to rank."""
+        caller already decided not to trust on its own) instead of 'new'. `pool` holds only
+        candidates whose text matched the audio, so with no rival left 'old' stays: falling
+        back to a candidate that FAILED the content check overwrote a correct file (President
+        Curtis S01E01: old 0.92 ok at 0.2s, alass' fits 0.15/0.35 SUSPECT, written as d107s)."""
         if winner != "old" or _old_wins_fairly():
             return winner
         rivals = [k for k in pool if k != "old"]
-        return pick(rivals) if rivals else ("new" if "new" in subs_by_key else winner)
+        return pick(rivals) if rivals else winner
 
     # 2. Content evidence -- only when timing alone didn't confirm the default.
     scored: dict[str, dict] = {"new": {"avg_score": result.get("avg_score"), "flag": result.get("flag"),

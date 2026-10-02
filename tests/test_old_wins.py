@@ -33,7 +33,7 @@ def _subs_span(seconds=3000.0, n=10):
 REGIONS = [223.8, 949.7, 1257.4, 1719.5, 2016.1, 2420.3, 2805.3, 3025.8]
 
 
-def _resolve(new_res, old_res, blocks_res=None, single_block=False):
+def _resolve(new_res, old_res, blocks_res=None, single_block=False, content=None, new_flag="ok"):
     """Calls _resolve_ambiguous_sync with the given residuals per clip."""
     new_subs, old_subs = _subs_span(), _subs_span()
     blocks_subs = _subs_span() if blocks_res is not None else None
@@ -47,10 +47,11 @@ def _resolve(new_res, old_res, blocks_res=None, single_block=False):
     def fake(conn, video, subs, lang, tl, cfg, score=False, **kw):
         key = by_id[id(subs)]
         samples = [{"start": t, "anchor": {"shift": s, "anchor_count": 3}}
-                   for t, s in zip(REGIONS, resid[key])]
+                   for t, s in zip(REGIONS, resid[key]) if s is not None]
         if not score:
             return {"avg_score": None, "flag": None, "samples": samples}
-        return {"avg_score": 0.80, "flag": "ok", "samples": samples}
+        avg, flag = (content or {}).get(key, (0.80, "ok"))
+        return {"avg_score": avg, "flag": flag, "samples": samples}
 
     ambiguous = {"old_subs": old_subs, "orig_subs": old_subs, "new_subs": new_subs,
                  "max_shift_new": 8.4, "structural": False,
@@ -61,7 +62,7 @@ def _resolve(new_res, old_res, blocks_res=None, single_block=False):
                          blocks_time_ranges=[(0, 800), (800, 1600), (1600, 3200)])
     else:
         ambiguous.update(blocks_time_ranges=[])
-    result = {"avg_score": 0.80, "flag": "ok",
+    result = {"avg_score": 0.80, "flag": new_flag,
               "samples": [{"start": 223.8, "score": 0.80}], "audio_lang": "en",
               "swap_severity": None, "fps_points": [], "full_coverage": False}
     row = {"note": "", "sync_status": "fixed (Δ8.4s) [pending verification]",
@@ -81,6 +82,19 @@ def _resolve(new_res, old_res, blocks_res=None, single_block=False):
 
 
 class OldWinsTests(unittest.TestCase):
+    def test_old_stays_when_it_is_the_only_candidate_matching_the_audio(self):
+        """President Curtis S01E01: old 0.92 ok at 0.2s, but no anchor in the last block, so it is
+        'unproven'. alass' fits failed the content check (0.15/0.35 SUSPECT): they are not a fallback."""
+        # No clip carries an anchor for both old and a rival, so timing cannot compare them (as in the real file).
+        winner, row, _disk = _resolve(
+            [None, None, None, None, None, 50.0, 50.0, None],
+            [0.2, 0.2, 0.2, None, None, None, None, None],
+            blocks_res=[None, None, None, None, 33.0, 33.0, 33.0, None],
+            content={"new": (0.15, "SUSPECT"), "blocks": (0.35, "SUSPECT"), "old": (0.92, "ok")},
+            new_flag="SUSPECT")
+        self.assertEqual(winner, "old", row["note"][-300:])
+        self.assertIn("already in sync", row["sync_status"])
+
     def test_single_block_old_wins_when_clearly_better(self):
         """Single block: new 8.5 s off, old 0.7 s -- old is kept."""
         new = [8.5, 8.2, 8.8, 8.1, 8.6, 8.4, 8.3, 8.7]
