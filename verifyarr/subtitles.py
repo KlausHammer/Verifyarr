@@ -629,6 +629,11 @@ RATE_MIN_RHO = 0.70
 RATE_MIN_KEEP = 0.90
 RATE_MIN_GAIN_S = 0.20
 RATE_MAX_RESID_S = 0.40
+# Lower bars when the slope snaps to a real conversion ratio (Bob's Burgers
+# S15E06: 23.976/24, tilt 1.03s, rho 0.54, gain 0.08s -- failed all three above).
+RATE_SNAP_MIN_TILT_S = 0.8
+RATE_SNAP_MIN_RHO = 0.45
+RATE_SNAP_MIN_GAIN_S = 0.05
 # Flat = nothing left to fix: tilt and offset inside Whisper noise. Tight is
 # the healthy SH ceiling (tilt 0.4s, offset 0.09s): a file already fixed
 # elsewhere is only left alone when it is that good (p50 0.31s slipped at 1.0).
@@ -663,9 +668,21 @@ def probe_gates_pass(p: Optional[dict], min_points: int, min_tilt: float, min_rh
             and p["resid"] <= max_resid and abs(p["slope"]) <= STRETCH_MAX_RATE)
 
 
+def _slope_snaps(p: dict) -> bool:
+    """The measured slope lands on a real conversion ratio."""
+    ratio = stretch_ratio(p)
+    return any(abs(r / ratio - 1) <= RATE_SNAP_TOL for r, _ in RATE_SNAP_RATIOS)
+
+
 def rate_gates_pass(p: Optional[dict]) -> bool:
-    return probe_gates_pass(p, RATE_MIN_POINTS, RATE_MIN_TILT_S, RATE_MIN_RHO,
-                            RATE_MIN_KEEP, RATE_MIN_GAIN_S, RATE_MAX_RESID_S)
+    if probe_gates_pass(p, RATE_MIN_POINTS, RATE_MIN_TILT_S, RATE_MIN_RHO,
+                        RATE_MIN_KEEP, RATE_MIN_GAIN_S, RATE_MAX_RESID_S):
+        return True
+    # A small ramp is weak evidence alone, but a slope that equals a real
+    # framerate conversion (23.976/24 walks ~1s in 20 min) is not a coincidence.
+    return (p is not None and p.get("rho") is not None and _slope_snaps(p)
+            and probe_gates_pass(p, RATE_MIN_POINTS, RATE_SNAP_MIN_TILT_S, RATE_SNAP_MIN_RHO,
+                                 RATE_MIN_KEEP, RATE_SNAP_MIN_GAIN_S, RATE_MAX_RESID_S))
 
 
 def rate_is_flat(p: Optional[dict], tight: bool = False) -> bool:

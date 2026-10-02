@@ -33,6 +33,20 @@ class RateGateTests(unittest.TestCase):
     def test_ntsc_rate_passes(self):
         self.assertTrue(S.rate_gates_pass(_probe(_pool(0.001, 0.0))))
 
+    def test_small_ntsc_ramp_passes_when_slope_snaps(self):
+        # 0.1% on a 21 min episode walks ~1.2s: under the plain bars, but the
+        # slope is exactly 23.976/24 (Bob's Burgers S15E06).
+        pts = _pool(0.001, 0.2, n=200, span=1200.0, noise=0.3)
+        self.assertFalse(S.probe_gates_pass(_probe(pts), S.RATE_MIN_POINTS, S.RATE_MIN_TILT_S,
+                                            S.RATE_MIN_RHO, S.RATE_MIN_KEEP, S.RATE_MIN_GAIN_S,
+                                            S.RATE_MAX_RESID_S))
+        self.assertTrue(S.rate_gates_pass(_probe(pts)))
+
+    def test_tiny_ramp_off_ratio_still_fails(self):
+        # 0.012% walks 0.65s in 90 min: no conversion ratio, under every bar.
+        pts = _pool(0.00012, 0.2, n=300, span=5400.0, noise=0.3)
+        self.assertFalse(S.rate_gates_pass(_probe(pts)))
+
     def test_healthy_file_fails(self):
         self.assertFalse(S.rate_gates_pass(_probe(_pool(0.0, 0.1))))
 
