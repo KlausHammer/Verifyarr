@@ -7,7 +7,7 @@ services:
     cpu_shares: 128
     environment:
       # Your ids on the host (run `id -u` / `id -g`): files Verifyarr writes get
-      # these owners instead of root, so Sonarr/Radarr/Bazarr/Plex can manage them.
+      # these owners instead of root, so Sonarr/Radarr/Bazarr can manage them.
       PUID: 1000
       PGID: 1000
       # Permission mask for new files (022 = rw-r--r--). Must stay quoted (octal).

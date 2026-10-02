@@ -2,7 +2,7 @@
 
 [![tests](https://github.com/KlausHammer/Verifyarr/actions/workflows/tests.yml/badge.svg)](https://github.com/KlausHammer/Verifyarr/actions/workflows/tests.yml)
 
-**Self-hosted subtitle checker and fixer for a Plex/Bazarr library.** Bazarr downloads subtitles; many
+**Self-hosted subtitle checker and fixer for a media library managed by Bazarr.** Bazarr downloads subtitles; many
 of them are out of sync, cut for another release, missing lines or simply for the wrong episode.
 Verifyarr *listens* to the audio with a small local Whisper model, compares what is said with what the
 subtitle says at the same moment, **fixes what can be fixed safely**, and **flags the rest** so Bazarr can
@@ -20,18 +20,27 @@ fetch a new one. No cloud speech recognition, no API key, runs on a small CPU bo
 ## How it works
 
 ```mermaid
-flowchart LR
+flowchart TD
   A[Subtitle + video] --> B[alass fits:<br/>single offset, blocks]
   A --> C[Listen: 2 clips per 10 min<br/>local tiny.en + VAD]
   B --> D{Which fit matches<br/>the audio anchors?}
   C --> D
   D -->|clips disagree| E[Whole-episode transcript]
   E --> D
-  D --> F[Fix and verify again]
-  D --> G[Flag: quarantine / Bazarr blacklist + refetch]
+  D -->|offset / framerate / drift| F[Fix, then verify again]
+  F -->|measures clean| OK([Subtitle OK])
+  F -->|still off| G
+  D -->|matches already| OK
+  D -->|wrong episode, missing lines,<br/>swapped lines, bad blocks| G[Flag as suspect]
+  G --> H[Bazarr blacklists it<br/>and finds another subtitle]
+  H --> I{New subtitle passes<br/>the same test?}
+  I -->|yes| OK
+  I -->|no, try next candidate| H
+  I -->|attempts run out| J([Original put back, stays flagged])
 ```
 
-alass proposes timings; the audio decides. A fix is only written when the corrected file measures clean
+alass proposes timings; the audio decides. The refetch loop (blacklist, find another, test it) runs when the action
+is set to `remediate`; with `off` or `quarantine` the file is only flagged or moved. A fix is only written when the corrected file measures clean
 against the same Whisper evidence, so a bad fit (alass is sometimes wildly wrong) is rejected instead of applied.
 
 ## Install with Docker
