@@ -2023,7 +2023,12 @@ REWRITE_WORSE_MIN_LINES = 40
 REWRITE_WORSE_MARGIN = 0.15
 
 
-def _share_off(pts: list) -> Optional[float]:
+def _share_off(pts: list, span: Optional[tuple] = None) -> Optional[float]:
+    """Share of lines more than the suspect threshold off. `span` limits it to audio times
+    inside (lo, hi): the pool only holds lines that matched, so a drifted original that
+    matches early on must be compared with the fix on that same stretch."""
+    if span is not None:
+        pts = [(a, c) for a, c in pts if span[0] <= a <= span[1]]
     if len(pts) < REWRITE_WORSE_MIN_LINES:
         return None
     return sum(abs(a - c) > ANCHOR_SUSPECT_THRESHOLD_S for a, c in pts) / len(pts)
@@ -2038,11 +2043,13 @@ def _undo_rewrite_that_made_it_worse(conn: sqlite3.Connection, video_path: Path,
     if (original is None or cfg.dry_run
             or not (row.get("sync_status") or "").startswith("fixed")):
         return
-    before = _share_off(_dense_pool(conn, video_path, original, cfg))
+    before_pts = _dense_pool(conn, video_path, original, cfg)
+    before = _share_off(before_pts)
     if before is None:
         return
+    span = (min(a for a, _ in before_pts), max(a for a, _ in before_pts))
     try:
-        after = _share_off(_dense_pool(conn, video_path, load_subs(subtitle_path), cfg))
+        after = _share_off(_dense_pool(conn, video_path, load_subs(subtitle_path), cfg), span)
     except Exception:
         return
     if after is None or after <= before + REWRITE_WORSE_MARGIN:
@@ -2055,6 +2062,10 @@ def _undo_rewrite_that_made_it_worse(conn: sqlite3.Connection, video_path: Path,
     row["sync_split_blocks"] = None
     row["sync_block_spread_s"] = None
     row["fps_ratio"] = None
+    # Evidence gathered against the rewritten file describes a file that is gone.
+    row["line_order_cache_key"] = None
+    row["line_order_cache_json"] = None
+    row["line_order_fixed"] = 0
     row["note"] = (row.get("note", "") + f" Rewrite undone: {after:.0%} of lines were more than "
                    f"{ANCHOR_SUSPECT_THRESHOLD_S:.1f}s off afterwards against {before:.0%} before.").strip()
 

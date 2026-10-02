@@ -124,13 +124,18 @@ class MissingMiddleTests(unittest.TestCase):
         # Outro song / promos after the last cue: The Boys S05E07, Maisel S01E07.
         subs = _subs((0, 10, "a"), (100, 110, "b"))
         text = " ".join(f"w{i}" for i in range(150))
-        segs = _segs((120, 235, text))
-        self.assertIsNone(C.missing_middle_evidence(subs, segs, duration_s=230.0))
+        segs = _segs((1300, 1395, text))
+        self.assertIsNone(C.missing_middle_evidence(subs, segs, duration_s=1400.0))
 
     def test_gap_between_cues_late_in_the_file_is_clipped(self):
         # The White Lotus S02E07: a song gap at 75:06 of 77:00 with a cue after it.
-        subs = _subs((0, 10, "a"), (100, 110, "b"), (200, 205, "c"))
-        self.assertTrue(all(b <= 180.0 for _, b in C.all_gaps(subs, 300.0)))
+        subs = _subs((0, 10, "a"), (100, 110, "b"), (1300, 1305, "c"))
+        self.assertTrue(all(b <= 1380.0 for _, b in C.all_gaps(subs, 1500.0)))
+
+    def test_short_file_keeps_a_middle_to_judge(self):
+        # Ten percent at most: a 3-minute file ignores 18 s per edge, not 120.
+        subs = _subs((0, 10, "a"), (100, 110, "b"))
+        self.assertEqual(C.all_gaps(subs, 180.0)[-1], (110.0, 162.0))
 
     def test_opening_in_the_first_two_minutes_is_not_judged(self):
         # The White Lotus S01E06: no cues 0:00-2:20, 35 s of opening song.
@@ -141,7 +146,7 @@ class MissingMiddleTests(unittest.TestCase):
 
     def test_tail_gap_stops_two_minutes_before_the_end(self):
         subs = _subs((0, 10, "a"), (100, 110, "b"))
-        self.assertEqual(C.all_gaps(subs, 1000.0)[-1], (120.0, 880.0))
+        self.assertEqual(C.all_gaps(subs, 1500.0)[-1], (120.0, 1380.0))
 
     def test_tiny_bar_is_lower(self):
         self.assertEqual(C.missing_middle_min_words("ggml-tiny.en.bin"), 50)

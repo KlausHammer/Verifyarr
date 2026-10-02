@@ -64,6 +64,24 @@ class UndoWorseRewriteTests(unittest.TestCase):
         self.assertEqual(start, 2000)
         self.assertTrue(row["sync_status"].startswith("fixed"))
 
+    def test_original_that_matches_only_early_is_compared_on_that_stretch(self):
+        # A drifted original matches only the first part of the file; the fix matches the whole
+        # file, including a noisy late half. Compared on the early stretch both are clean.
+        def dense(conn, video, subs, cfg):
+            early = [(30.0 + i, 30.0 + i) for i in range(60)]
+            if subs[0].start == 1000:
+                return early
+            return early + [(500.0 + i, 500.0 + i - (10.0 if i % 2 else 0.0)) for i in range(60)]
+        original, written = _subs(1.0), _subs(2.0)
+        with tempfile.TemporaryDirectory() as d:
+            path = Path(d) / "s.srt"
+            written.save(str(path))
+            row = {"sync_status": "fixed (rate 23.976/25, up to 5.0s)", "note": ""}
+            with mock.patch.object(P, "_dense_pool", side_effect=dense):
+                P._undo_rewrite_that_made_it_worse(None, Path("v.mkv"), path, CFG, row, original)
+            self.assertEqual(pysubs2.load(str(path))[0].start, 2000)
+            self.assertTrue(row["sync_status"].startswith("fixed"))
+
     def test_untouched_file_is_ignored(self):
         row, start = _run(0.05, 1.0, status="already in sync")
         self.assertEqual(start, 2000)

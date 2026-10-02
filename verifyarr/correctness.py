@@ -787,7 +787,9 @@ def all_gaps(subs, duration_s: Optional[float],
         gaps.append((0.0, ev[0].start / 1000.0))
     if duration_s:
         gaps.append((max(e.end for e in ev) / 1000.0, duration_s))
-    lo, hi = EDGE_IGNORE_S, (duration_s - EDGE_IGNORE_S) if duration_s else float("inf")
+    # Ten percent at most, so a short file still has a middle to judge.
+    edge = min(EDGE_IGNORE_S, 0.1 * duration_s) if duration_s else EDGE_IGNORE_S
+    lo, hi = edge, (duration_s - edge) if duration_s else float("inf")
     return [(max(x, lo), min(y, hi)) for x, y in gaps if min(y, hi) - max(x, lo) >= min_gap_s]
 
 
