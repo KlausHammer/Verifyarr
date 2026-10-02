@@ -47,6 +47,21 @@ class BaselineRampTests(unittest.TestCase):
             self.assertFalse(pipeline._baseline_shows_ramp(None, Path("v.mkv"), None, _subs(), _subs()))
         self.assertEqual(dp.call_count, 1)
 
+    def check_rate(self, pool, slope):
+        with mock.patch.object(pipeline, "_dense_pool", return_value=pool):
+            return pipeline._baseline_shows_ramp(None, Path("v.mkv"), None, _subs(), ramp_slope=slope)
+
+    def test_a_ramp_in_the_original_must_be_the_rescued_rate(self):
+        # cue = 1.0283 a + 1.3 reads as slope -2.83 % in (audio, audio - cue).
+        pool = _pool(lambda a: a * 1.0283 + 1.3)
+        self.assertTrue(self.check_rate(pool, -0.0283))
+        self.assertFalse(self.check_rate(pool, +0.039))
+
+    def test_a_mild_drift_does_not_license_alass_own_staircase(self):
+        # Avatar S01E14: the original drifts ~0.2 %, alass' output shows -3.9 %.
+        pool = _pool(lambda a: a * 0.998 + 2.0)
+        self.assertFalse(self.check_rate(pool, -0.039))
+
     def test_no_baseline_at_all_keeps_the_old_behaviour(self):
         self.assertTrue(self.check(_pool(lambda a: a), None))
 

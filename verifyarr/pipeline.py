@@ -807,6 +807,8 @@ CONTENT_SCORE_TIE_MARGIN = 0.1
 # pools reach rho <= 0.95 at gain <= 6.7. Calibrated on 2 configs (C_S02E04); revert
 # this path if it ever moves a non-drift cell.
 RAMP_RESCUE_KEEP_FRAC = 0.85
+# A rescued rate must be the ORIGINAL's own rate, within this (0.5 %-points of rate).
+RAMP_BASELINE_RATE_TOL = 0.005
 RAMP_RESCUE_RHO_MIN = 0.99
 RAMP_RESCUE_GAIN_MIN_S = 10.0
 
@@ -842,13 +844,17 @@ def _ramp_rescue_probe(result: dict, new_subs, cfg: Config) -> Optional[dict]:
     return probe
 
 
-def _baseline_shows_ramp(conn: sqlite3.Connection, video_path: Path, cfg: Config, *baselines) -> bool:
+def _baseline_shows_ramp(conn: sqlite3.Connection, video_path: Path, cfg: Config, *baselines,
+                         ramp_slope: Optional[float] = None) -> bool:
     """False only when a baseline's full pool is positively FLAT (one line at any offset, no tilt).
     A rate that exists only in alass' output is alass' own clamped/guessed staircase: Taskmaster
     S06E02 had a flat -3.9s original, alass wrote -88s (early cues clamped to 0), and the
     "ramp" in that output was rescued into a -4% fix. Unknown counts as a ramp: no pool, a
-    pool too thin to probe, or a noisy/block-shaped one that is neither a ramp nor a flat line."""
-    flat = False
+    pool too thin to probe, or a noisy/block-shaped one that is neither a ramp nor a flat line.
+    With `ramp_slope` (the rescue's rate), a baseline ramp must also be that rate: Avatar S01E14 had
+    a mild real drift (+0.2 %), alass wrote its own -3.9 % staircase, and rescuing THAT rate undid
+    alass' guess, clamped the first 38 s of cues away and flagged the file missing lines."""
+    flat = other_rate = False
     done: list = []
     for b in baselines:
         if b is None or any(b is d or _same_timing(b, d) for d in done):
@@ -858,9 +864,12 @@ def _baseline_shows_ramp(conn: sqlite3.Connection, video_path: Path, cfg: Config
         if p is None:
             continue
         if rate_gates_pass(p) or _stretch_gates_pass(p) or _ramp_overwhelming(p):
-            return True
+            if ramp_slope is None or abs(p["slope"] - ramp_slope) <= RAMP_BASELINE_RATE_TOL:
+                return True
+            other_rate = True
+            continue
         flat = flat or (p["keep_frac"] >= RATE_MIN_KEEP and abs(p["tilt"]) < RATE_FLAT_TILT_S)
-    return not flat
+    return not (flat or other_rate)
 
 
 def _same_timing(a, b) -> bool:
@@ -1077,8 +1086,9 @@ def _resolve_ambiguous_sync(conn: sqlite3.Connection, video_path: Path, subtitle
     old_verifies = (old_t is not None and old_t["mean_abs_shift"] <= ANCHOR_PREFER_MARGIN_S
                     and len(old_t["regions"]) >= SCREEN_MIN_CLIPS)
     ramp_probe = None if old_verifies else _ramp_rescue_probe(result, new_subs, cfg)
-    if ramp_probe is not None and not _baseline_shows_ramp(conn, video_path, cfg, orig_subs, old_subs):
-        log.info("ramp rescue for %s dropped: the original's own pool is flat", subtitle_path.name)
+    if ramp_probe is not None and not _baseline_shows_ramp(conn, video_path, cfg, orig_subs, old_subs,
+                                                      ramp_slope=ramp_probe["slope"]):
+        log.info("ramp rescue for %s dropped: the original does not show this rate", subtitle_path.name)
         ramp_probe = None
     ramp_via_old = False
     ramp_decided = False
