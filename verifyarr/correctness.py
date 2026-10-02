@@ -768,19 +768,30 @@ def cue_gaps(subs, min_gap_s: float = MISSING_MIDDLE_MIN_GAP_S) -> list[tuple[fl
     return out
 
 
+# Outro songs, credits and promos for other shows (The Boys S05E07, Marvelous Mrs. Maisel
+# S01E07, What We Do in the Shadows S03E02, S.W.A.T. S03E18): nothing is judged here.
+END_IGNORE_S = 120.0
+
+
 def all_gaps(subs, duration_s: Optional[float],
              min_gap_s: float = MISSING_MIDDLE_MIN_GAP_S) -> list[tuple[float, float]]:
-    """cue_gaps plus head [0, first cue] and tail [last cue, duration]."""
+    """cue_gaps plus head [0, first cue] and tail [last cue, duration - END_IGNORE_S]."""
     gaps = list(cue_gaps(subs, min_gap_s))
     if not subs.events:
         return gaps
+    if duration_s:
+        # A song or credits gap can sit between cues late in the file (The White Lotus S02E07
+        # 75:06 of 77:00): clip every gap at the ignore line.
+        limit = duration_s - END_IGNORE_S
+        gaps = [(a, min(b, limit)) for a, b in gaps if min(b, limit) - a >= min_gap_s]
     ev = sorted(subs.events, key=lambda e: e.start)
     if ev[0].start / 1000.0 >= min_gap_s:
         gaps.append((0.0, ev[0].start / 1000.0))
     if duration_s:
         tail0 = max(e.end for e in ev) / 1000.0
-        if duration_s - tail0 >= min_gap_s:
-            gaps.append((tail0, duration_s))
+        tail1 = duration_s - END_IGNORE_S
+        if tail1 - tail0 >= min_gap_s:
+            gaps.append((tail0, tail1))
     return gaps
 
 
