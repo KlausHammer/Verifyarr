@@ -68,28 +68,12 @@ Source: [modelrapport.md](modelrapport.md).
 | Detection | 36 healthy and 16 bad files | 16 of 16 bad flagged, 0 of 36 healthy flagged | [modelrapport.md](modelrapport.md) |
 | Uneven offsets | 8 healthy episodes, hole / drift / piecewise | Hole 8/8; drift 8/8 flagged ok but loose; piecewise 7/8 good | [modelrapport.md](modelrapport.md) |
 | Injected errors, production setup | 11 episodes × 23 scenarios | Every type passes except constant offset 63/66 and per-line jitter 8/11 | [README](../README.md#how-well-it-works) |
-| Real library | 100 random episodes from the real library, own stored transcripts | See section 5 | – |
-| Full against sampled transcript | 36 of those episodes | See section 5 | – |
-| Music marking | 5 songs, 6 models, 3 settings | See section 6 | – |
+| Music marking | 5 songs, 6 models, 3 settings | See section 5 | – |
 
 The test matrix report predates the rate and drift fixes: its finding that drift is not handled applied to the code
 of that date and has since been addressed. Treat it as history, not as the current state.
 
-## 5. Real library, and full against sampled transcript
-
-A hundred random episodes from a real library were run through the finished pipeline, and each result was checked against
-the app's own stored transcripts.
-
-- It found real gaps, which were fixed: gentle drift and framerate cases the first gates missed, and a steady
-  offset of about 2 s.
-- It also found three healthy files that a bad alass fit had made worse. A rewrite is now compared with the
-  original and undone if it made the file worse. A flag is never changed by the undo.
-- False "missing lines" alarms on songs, outros, intros and ads were reduced: the first and last two minutes are
-  ignored, and music gets a wide margin.
-- **Full against sampled**, 36 episodes: sampled missed no timing error. 31 of 36 flags were the same; of the other
-  five, four were false and one was doubtful. Full mode cost about 1.3× the time, so sampled stays the default.
-
-## 6. Can Whisper be told to mark music?
+## 5. Can Whisper be told to mark music?
 
 Five songs, with 30 s of dialogue before and after each. Music is detected through the ♪ and `[MUSIC]` tags
 Whisper writes. `--prompt` primes the decoder with such tags, and `--carry-initial-prompt` repeats it on every
