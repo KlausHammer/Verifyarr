@@ -675,10 +675,15 @@ def probe_gates_pass(p: Optional[dict], min_points: int, min_tilt: float, min_rh
             and p["resid"] <= max_resid and abs(p["slope"]) <= STRETCH_MAX_RATE)
 
 
+# Tighter than RATE_SNAP_TOL: that one picks between ratios once a rate is proven, this one
+# is what lets a weak ramp through. Bob's Burgers sits 0.0001 from 23.976/24.
+RATE_SNAP_GATE_TOL = 0.0003
+
+
 def _slope_snaps(p: dict) -> bool:
     """The measured slope lands on a real conversion ratio."""
     ratio = stretch_ratio(p)
-    return any(abs(r / ratio - 1) <= RATE_SNAP_TOL for r, _ in RATE_SNAP_RATIOS)
+    return any(abs(r / ratio - 1) <= RATE_SNAP_GATE_TOL for r, _ in RATE_SNAP_RATIOS)
 
 
 def rate_gates_pass(p: Optional[dict]) -> bool:

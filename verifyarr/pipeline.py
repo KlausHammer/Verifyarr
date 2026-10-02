@@ -33,6 +33,7 @@ from verifyarr.subtitles import (
     FPS_RATIOS, FPS_ANCHOR_TILT_MIN_S, FPS_BINNED_TILT_MIN_S, FPS_LOO_TILT_MIN_S,
     FPS_VAD_TILT_MIN_S, FPS_MIN_ANCHORS,
     FPS_MAX_BASE_SPREAD_S, rate_gates_pass, rate_is_flat, snap_rate, RATE_MIN_TILT_S,
+    RATE_MIN_POINTS, RATE_MAX_RESID_S,
     RATE_FLAT_TILT_S, RATE_MIN_KEEP,
     probe_gates_pass, stretch_ratio, stretch_name, _theil_tilt,
 )
@@ -1968,7 +1969,7 @@ def _rescaled(subs, ratio: float, offset: float):
 
 def _try_rate_from_baseline(conn: sqlite3.Connection, video_path: Path, subtitle_path: Path,
                             cfg: Config, media_root: Path, baseline, current,
-                            over_blocks: bool = False):
+                            over_blocks: bool = False, allow_offset: bool = False):
     """Rate error fixed from the pre-sync file over the full transcript.
 
     alass answers a drift with one shift (or blocks) and leaves the ramp; the
@@ -1982,7 +1983,10 @@ def _try_rate_from_baseline(conn: sqlite3.Connection, video_path: Path, subtitle
     pts = _dense_pool(conn, video_path, baseline, cfg)
     p = _dense_probe(pts)
     if not rate_gates_pass(p):
-        return None
+        if not allow_offset:
+            return None
+        return _try_offset_from_dense(conn, video_path, subtitle_path, cfg, media_root,
+                                      baseline, current, over_blocks, pts, p)
     if current is not baseline and not over_blocks and rate_is_flat(
             _dense_probe(_dense_pool(conn, video_path, current, cfg)), tight=True):
         return None
@@ -2009,6 +2013,104 @@ def _try_rate_from_baseline(conn: sqlite3.Connection, video_path: Path, subtitle
             f"transcript (tilt {p['tilt']:+.1f}s over {p['n']} lines, rho {p['rho']:+.2f}, "
             f"{p['keep_frac']:.0%} on the line; flat after: tilt {after['tilt']:+.2f}s).")
     log.info("rate fix %s for %s:%s", name, subtitle_path.name, note)
+    return fixed, note, info
+
+
+# A rewrite must never leave the file worse than it found it. Measured on the dense pool of
+# the cached full transcript: share of lines more than 2s off, before vs after. Z100 had
+# three good files (0.02-0.07 off) rewritten to 1.00 off by a failed alass fit.
+REWRITE_WORSE_MIN_LINES = 40
+REWRITE_WORSE_MARGIN = 0.15
+REWRITE_BAD_ORIGINAL = 0.30
+
+
+def _share_off(pts: list) -> Optional[float]:
+    if len(pts) < REWRITE_WORSE_MIN_LINES:
+        return None
+    return sum(abs(a - c) > ANCHOR_SUSPECT_THRESHOLD_S for a, c in pts) / len(pts)
+
+
+def _undo_rewrite_that_made_it_worse(conn: sqlite3.Connection, video_path: Path,
+                                     subtitle_path: Path, cfg: Config, row: dict, original) -> bool:
+    """Puts the original back when the file this run wrote is clearly further from the audio
+    than the original was (only judgeable with a cached full transcript). An original that was
+    itself bad is flagged for a fresh subtitle (True); a good one is simply left as it was."""
+    if (original is None or cfg.dry_run
+            or not (row.get("sync_status") or "").startswith("fixed")):
+        return False
+    before = _share_off(_dense_pool(conn, video_path, original, cfg))
+    if before is None:
+        return False
+    try:
+        after = _share_off(_dense_pool(conn, video_path, load_subs(subtitle_path), cfg))
+    except Exception:
+        return False
+    if after is None or after <= before + REWRITE_WORSE_MARGIN:
+        return False
+    original.save(str(subtitle_path))
+    log.warning("rewrite of %s undone: %.0f%% of lines >%.1fs off afterwards, %.0f%% before",
+                subtitle_path.name, after * 100, ANCHOR_SUSPECT_THRESHOLD_S, before * 100)
+    row["sync_status"] = "left unchanged (the rewrite made the file worse -- undone)"
+    row["sync_max_shift_s"] = None
+    row["sync_split_blocks"] = None
+    row["sync_block_spread_s"] = None
+    row["fps_ratio"] = None
+    row["note"] = (row.get("note", "") + f" Rewrite undone: {after:.0%} of lines were more than "
+                   f"{ANCHOR_SUSPECT_THRESHOLD_S:.1f}s off afterwards against {before:.0%} before.").strip()
+    if before > REWRITE_BAD_ORIGINAL:
+        _flag_suspect(row, REASON_PARTLY_OUT_OF_SYNC)
+        return True
+    row["correctness_flag"] = "ok"
+    row["reason"] = None
+    return False
+
+
+# A whole file sitting one steady offset off, read from the dense pool. alass can miss a
+# small one and then only offers a wild fit that fails verification (Brooklyn Nine-Nine
+# S02E06: +2.2s all the way, alass Δ8.8s rejected, nothing else tried). Healthy files
+# read |median| <= 0.4s, so 0.75s is well clear of noise.
+OFFSET_FIX_MIN_S = 0.75
+OFFSET_AFTER_MAX_S = 0.5
+OFFSET_MIN_COVER = 0.6
+
+
+def _try_offset_from_dense(conn: sqlite3.Connection, video_path: Path, subtitle_path: Path,
+                           cfg: Config, media_root: Path, baseline, current,
+                           over_blocks: bool, pts, p):
+    """One steady offset (no rate) from the pre-sync file over the full transcript.
+    Same contract as _try_rate_from_baseline: (fixed_subs, note_fragment, info) or None.
+    The corrected file must read flat and centred on the same pool."""
+    if (p is None or len(pts) < RATE_MIN_POINTS or p["keep_frac"] < RATE_MIN_KEEP
+            or p["resid"] > RATE_MAX_RESID_S or abs(p["tilt"]) >= RATE_FLAT_TILT_S):
+        return None
+    shift = statistics.median(a - c for a, c in pts)
+    if abs(shift) < OFFSET_FIX_MIN_S:
+        return None
+    # The pool must cover the file: a rate error (PAL) reads as one flat offset while the
+    # original still matches at the start (Robot Chicken: 64 lines early on, real -4.13%).
+    segments = _cached_full_segments(conn, video_path, cfg)
+    duration = max((float(s["end"]) for s in segments or []), default=0.0)
+    if duration <= 0 or p["span"] < OFFSET_MIN_COVER * duration:
+        return None
+    if current is not baseline and not over_blocks and rate_is_flat(
+            _dense_probe(_dense_pool(conn, video_path, current, cfg)), tight=True):
+        return None
+    fixed, worst = _rescaled(baseline, 1.0, shift)
+    after_pts = _dense_pool(conn, video_path, fixed, cfg)
+    after = _dense_probe(after_pts)
+    if (after is None or len(after_pts) < RATE_MIN_POINTS
+            or abs(statistics.median(a - c for a, c in after_pts)) > OFFSET_AFTER_MAX_S
+            or abs(after["tilt"]) >= RATE_FLAT_TILT_S or after["keep_frac"] < RATE_MIN_KEEP):
+        log.info("offset %+.1fs for %s discarded: not flat/centred after", shift, subtitle_path.name)
+        return None
+    if worst < cfg.min_change_seconds:
+        return None
+    _write_fix(subtitle_path, cfg, media_root, fixed)
+    info = {**_stretch_info("offset", 1.0, p, worst), "kind": "offset"}
+    note = (f" steady offset {shift:+.1f}s from the original file over the full transcript "
+            f"({len(pts)} lines, {p['keep_frac']:.0%} on the line; centred after: "
+            f"tilt {after['tilt']:+.2f}s).")
+    log.info("offset fix %+.1fs for %s:%s", shift, subtitle_path.name, note)
     return fixed, note, info
 
 
@@ -2452,7 +2554,8 @@ def correctness_and_finish(video_path: Path, subtitle_path: Path, lang: Optional
                 # Any rate from the original, then the discrete 0.1% path.
                 fix = _try_rate_from_baseline(conn, video_path, subtitle_path, cfg, media_root,
                                               orig_subs or current_subs, current_subs,
-                                              over_blocks=(row.get("sync_split_blocks") or 0) >= 2)
+                                              over_blocks=(row.get("sync_split_blocks") or 0) >= 2,
+                                              allow_offset=result.get("flag") == "ok")
                 if fix is not None:
                     return fix
                 fps_ev = result
@@ -2510,7 +2613,9 @@ def correctness_and_finish(video_path: Path, subtitle_path: Path, lang: Optional
                                              ramp_probe_saved)
             if fps_fix is not None:
                 current_subs, fps_note, fps_info = fps_fix
-                row["fps_ratio"] = fps_info["name"]
+                steady = fps_info.get("kind") == "offset"
+                if not steady:
+                    row["fps_ratio"] = fps_info["name"]
                 row["sync_max_shift_s"] = round(fps_info["worst"], 2)
                 # The rate fix replaced alass' file: its block fields no longer apply.
                 row["sync_split_blocks"] = None
@@ -2519,7 +2624,8 @@ def correctness_and_finish(video_path: Path, subtitle_path: Path, lang: Optional
                 # "already in sync", and every "healthy files untouched" count -- the matrix's
                 # included -- reads a rewritten file as untouched.
                 kind = "rate" if fps_info.get("kind") == "stretch" else "framerate"
-                row["sync_status"] = f"fixed ({kind} {fps_info['name']}, up to {fps_info['worst']:.1f}s)"
+                row["sync_status"] = (f"fixed (Δ{fps_info['worst']:.1f}s, steady offset)" if steady else
+                                      f"fixed ({kind} {fps_info['name']}, up to {fps_info['worst']:.1f}s)")
                 row["note"] = (row["note"] + fps_note).strip()
                 pre_recheck_collected = collected
                 collected, result, swap_severity = _recheck_after_resync(
@@ -2802,6 +2908,9 @@ def correctness_and_finish(video_path: Path, subtitle_path: Path, lang: Optional
     # safe default -- rather than leave the file unsynced under a "[pending]" status.
     if "_ambiguous_sync" in row:
         apply_pending_sync(subtitle_path, cfg, row, reason=f"correctness check: {row.get('correctness_flag')}")
+    if _undo_rewrite_that_made_it_worse(conn, video_path, subtitle_path, cfg, row,
+                                        orig_subs or pre_sync_subs):
+        row["auto_action"] = act_on_suspect()
     row["whisper_cost"] = _row_cost(row)
     save_row()
     return row
