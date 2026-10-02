@@ -58,11 +58,28 @@ if __name__ == "__main__":
 
 class ReviewFixTests(unittest.TestCase):
     def test_two_songs_far_apart_are_two_windows(self):
-        segs = [{"start": 30, "end": 40, "text": "real talk here now"},
+        segs = [{"start": 120, "end": 130, "text": "real talk here now"},
                 {"start": 500, "end": 510, "text": "more real talk here"}]
         music = [(10, 12), (900, 905)]
         secs, words = correctness.gap_speech(segs, 0, 1000, music)
         self.assertEqual(words, 8)
+
+    def test_lyrics_between_marks_150s_apart_are_one_song(self):
+        # FROM S04E03: [MUSIC] 7:06 ... (upbeat music) 8:56, lyrics between.
+        segs = [{"start": 20, "end": 30, "text": "whatever will be will be"}]
+        secs, words = correctness.gap_speech(segs, 0, 400, [(0, 2), (110, 112)])
+        self.assertEqual(words, 0)
+
+    def test_lyrics_after_the_last_mark_are_still_the_song(self):
+        # Westworld S01E01: the credits song ran 38s past its last mark.
+        segs = [{"start": 80, "end": 90, "text": "ain't no grave can hold"}]
+        secs, words = correctness.gap_speech(segs, 0, 400, [(40, 42)])
+        self.assertEqual(words, 0)
+
+    def test_talk_well_after_a_song_still_counts(self):
+        segs = [{"start": 200, "end": 210, "text": "real talk here now"}]
+        secs, words = correctness.gap_speech(segs, 0, 400, [(10, 12)])
+        self.assertEqual(words, 4)
 
     def test_record_plays_is_not_a_music_mark(self):
         self.assertEqual(correctness.music_spans([{"start": 1, "end": 2, "text": "(record plays)"}]), [])

@@ -791,7 +791,14 @@ def _is_music(text: str) -> bool:
 MUSIC_TAG_RE = re.compile(r"\b(?:music|song|singing|sings)\b", re.IGNORECASE)
 MUSIC_MARGIN_S = 8.0
 # Marks further apart than this are separate songs, each with its own window.
-MUSIC_CLUSTER_GAP_S = 60.0
+# Forgiving on purpose: nothing says where a song really starts and ends, and a
+# false "missing lines" costs a new subtitle. FROM S04E03: [MUSIC] 7:06 ...
+# (upbeat music) 8:56 with lyrics between; MINDHUNTER S01E01 speech over music
+# with the subtitles burned into the video.
+MUSIC_CLUSTER_GAP_S = 150.0
+# The lyrics outlast the last mark: Westworld S01E01's end-credit song ran 38s past
+# its last mark. Applied after the last mark of a cluster only.
+MUSIC_TRAIL_S = 45.0
 
 
 def music_spans(segments: list[dict]) -> list[tuple[float, float]]:
@@ -822,7 +829,7 @@ def gap_speech(segments: list[dict], g0: float, g1: float,
             windows[-1][1] = max(windows[-1][1], m[1])
         else:
             windows.append([m[0], m[1]])
-    windows = [(lo - MUSIC_MARGIN_S, hi + MUSIC_MARGIN_S) for lo, hi in windows]
+    windows = [(lo - MUSIC_MARGIN_S, hi + max(MUSIC_MARGIN_S, MUSIC_TRAIL_S)) for lo, hi in windows]
     secs, words = 0.0, 0
     for s in segments:
         try:
