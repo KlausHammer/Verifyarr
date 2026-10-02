@@ -86,4 +86,26 @@ Whisper writes. `--prompt` primes the decoder with such tags, and `--carry-initi
   about 94 % of each song.
 - **The prompt has a price:** more false marks in the dialogue around the songs (5–16 against 0–5 without it),
   although some of those may be real neighbouring music.
-- A larger test (eight songs and eight dialogue controls) is running; this section is updated when it is done.
+- **Larger test (8 songs, 8 dialogue clips of 90 s without music):** the same picture. Prompt plus carry finds all
+  8 songs on base.en, small.en and medium.en; carry only clearly helps tiny.en. Start and end land typically
+  3–7 s from the real boundaries. False marks in the dialogue clips: 2–4 without a prompt, up to 9 with it on
+  base/small/medium and 16 on tiny.en with carry. medium.en takes about three times as long as small.en.
+
+### Does better music detection catch more errors? No.
+
+Tested on the 100-episode real-library run: 26 candidate gaps (tiny hears 15 s or more of speech where the subtitle
+has no cue) in the 94 episodes with a full transcript. For each, small.en with the prompt and carry marked the music
+precisely, and that replaced the current wide music window.
+
+- Today 17 of the 26 gaps are flagged; with precise music windows 16 are. Seven change verdict.
+- **Four flags disappear** (The Bear, Gold Rush, Family Guy, Top Gear). In all four the "music" is dialogue between
+  and over songs (kitchen talk, replies between `[MUSIC]` tags), so precise windows would hide gaps that are probably real.
+- **Three flags appear.** One is the known false alarm (MINDHUNTER: speech over music with burned-in subtitles), which
+  comes back. Two (Family Guy, Rick and Morty) are real dialogue without subtitle, hidden today by a single stray
+  tiny.en music tag.
+- **No known false alarm is fixed.** The remaining ones are burned-in subtitles, ads and a foreign-language
+  announcement, which music marking cannot tell apart.
+
+So the extra music detection does not catch more errors and is not built. The one lesson: a single false music tag
+can hide a whole gap today. Caveats: 26 gaps, judged by reading the transcript; two of the episodes were produced by
+early code. Details: `fund_og_fejl.md` (section "Musik-detektion").
