@@ -688,16 +688,17 @@ function SyncTab() {
         <h2 id="sc-sync0" style={{ margin: '0 0 14px', fontSize: 15 }}>How hard to look</h2>
         <ChoiceField
           label="Whisper mode"
-          tip="Sampled: short clips spread over the file (fast, cheap); anything suspicious still gets the whole transcript. Full transcript: transcribes the whole episode/movie every time -- the most thorough, but far more Whisper work per file (local Whisper: time; cloud: API cost/quota)."
+          tip="Auto: the whole transcript with a tiny model (about 2 minutes per episode, and it sees block shifts that clips can miss: 99.3% against 96% in the test set), short clips with any bigger model. Sampled: short clips spread over the file (fast, cheap); anything suspicious still gets the whole transcript. Full transcript: transcribes the whole episode/movie every time -- the most thorough, but far more Whisper work per file (local Whisper: time; cloud: API cost/quota)."
           name="whisper_mode"
           value={data.whisper_mode}
           onPick={(whisper_mode) => setData({ ...data, whisper_mode })}
           options={[
+            { value: 'auto', title: 'Auto (recommended)', desc: 'whole file with a tiny model, clips with bigger ones' },
             { value: 'sampled', title: 'Sampled clips', desc: 'short clips spread over the file' },
             { value: 'full', title: 'Full episode/movie transcript', desc: 'the whole file, every time' },
           ]}
         />
-        {data.whisper_mode === 'sampled' && (
+        {data.whisper_mode !== 'full' && (
           <Field
             label="Clips per 10 minutes"
             tip="How many 30s audio clips to check per 10 minutes of video (at least 3), placed where there is dialogue. Long films get proportionally more. More clips notice more on their own but cost more Whisper time. 0 = a fixed 16 clips per file."
@@ -721,7 +722,7 @@ function SyncTab() {
             tip="Finds subtitles made for another framerate or speed (24 vs 23.976, PAL 25) that slowly walk out of sync, and rescales them. Only rewrites once the whole transcript and the audio's own speech pattern agree."
             advanced
           />
-          {data.whisper_mode === 'sampled' && (
+          {data.whisper_mode !== 'full' && (
             <Field
               label="Drift look-closer threshold (s)"
               tip="If the clips drift apart by at least this much from the start to the end of the file, the whole file is transcribed to check for a framerate/speed error. It never fixes anything on its own. Lower catches smaller drift but transcribes more healthy files. Measured: real 0.1% drift 0.8-1.7s, healthy files up to 0.9s. 0 = off."
@@ -734,7 +735,7 @@ function SyncTab() {
 
         <section className="card" aria-labelledby="sc-sync2">
           <h2 id="sc-sync2" style={{ margin: '0 0 14px', fontSize: 15 }}>Blocks and offsets</h2>
-          {data.whisper_mode === 'sampled' && (
+          {data.whisper_mode !== 'full' && (
             <ToggleRow
               id="escalate_sampled_to_full"
               checked={data.escalate_sampled_to_full}

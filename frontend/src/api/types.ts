@@ -218,7 +218,7 @@ export interface SyncSettings {
   window_minutes: number
   overlap_threshold: number
   block_spread_suspect_threshold_s: number
-  whisper_mode: 'sampled' | 'full'
+  whisper_mode: 'auto' | 'sampled' | 'full'
   anchor_check_enabled: boolean
   anchor_resync_enabled: boolean
   escalate_sampled_to_full: boolean

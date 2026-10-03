@@ -61,7 +61,7 @@ files, and the file must come out untouched and not flagged.
 ![Pass rate per error type](img/errors.svg)
 
 <!-- table:errors -->
-| Error type | Passes when | Sampled (production) | Full transcript | Range over all 15 models (sampled) |
+| Error type | Passes when | Sampled | Full transcript | Range over all 15 models (sampled) |
 |---|---|---|---|---|
 | Constant offset (0.7 s to 45 s) | fixed (median error <= 0.25 s, 98 % of lines within 1 s) | 50/50 | 50/50 | 49-50 of 50 |
 | Framerate, PAL, drift | fixed, same bar | 159/160 | 159/160 | 152-159 of 160 |
@@ -75,9 +75,15 @@ files, and the file must come out untouched and not flagged.
 | Healthy file (no false alarm) | left untouched, not flagged | 10/10 | 10/10 | 8-10 of 10 |
 <!-- /table:errors -->
 
-- **Sampled** (production) and **full-transcript** mode agree on offsets, rate errors, wrong episodes, swaps and untouched
+- **Sampled** and **full-transcript** mode agree on offsets, rate errors, wrong episodes, swaps and untouched
   files. The difference is in blocks: sampled flags 194 of 200 block errors, full flags 199 of 200, because short blocks
   can fall between the sampled clips.
+  Paired over the three tiny setups (1,740 run pairs), full passes 35 rows that sampled fails and sampled passes 17 that
+  full fails: a net gain of about 1 %, almost all of it in blocks (596 against 576 of 600; the 20 missed were not escalated,
+  the clips agreed with each other). Repairs are equal (about 23 % of blocks). Sampled mode escalates to the whole
+  transcript anyway in 94 % of the block runs, and a whole tiny transcript takes about 2.3 minutes. The setting
+  `sync.whisper_mode` is therefore `auto` by default: full transcript with a tiny model, sampled clips with anything bigger,
+  where a whole transcript costs 4-10 times more. `sampled` and `full` force one mode.
 - **Constant offset of +0.3 s** (just above the 0.25 s decision bar) is reported on its own: 7 of 10 are fixed, the other three stay
   at +0.3 s. It is a boundary, not a miss of a real error.
 

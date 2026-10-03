@@ -112,7 +112,7 @@ def md_models():
 
 def md_errors():
     sm, *_ = load()
-    out = ["| Error type | Passes when | Sampled (production) | Full transcript | Range over all 15 models (sampled) |", "|---|---|---|---|---|"]
+    out = ["| Error type | Passes when | Sampled | Full transcript | Range over all 15 models (sampled) |", "|---|---|---|---|---|"]
     for g in HEADLINE + ["clean"]:
         ps, pf = cell(sm, DEFAULT, "sampled", g), cell(sm, DEFAULT, "full", g)
         lo = min(cell(sm, m, "sampled", g)[0] for m in sm["models"])
@@ -190,7 +190,7 @@ def errors():
     W, x0, pw = 900, 290, 260
     H = 84 + 36 * len(groups) + 40
     b = [f'<text class="t1" x="20" y="28" font-size="16" font-weight="600">Injected errors, production model ({NAME[DEFAULT]})</text>',
-         '<text class="t2" x="20" y="48" font-size="12.5">Ten verified episodes, 58 scenarios. Passed / run: sampled mode (production, blue) and full-transcript mode (grey).</text>']
+         '<text class="t2" x="20" y="48" font-size="12.5">Ten verified episodes, 58 scenarios. Passed / run: sampled mode (blue) and full-transcript mode (grey).</text>']
     for j, g in enumerate(groups):
         y = 70 + 36 * j
         b.append(f'<text class="t1" x="20" y="{y + 18}" font-size="12.5">{GROUP_NAME[g]}</text>')

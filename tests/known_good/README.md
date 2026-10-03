@@ -93,5 +93,5 @@ and the whisper sweeps under `whisper_gpu_staging/{sweep,sweep_linux,kg_sweep_gp
 | Per-line jitter | +-1..3 s on every cue | no worse than injected |
 | Healthy file | no corruption | left untouched and not flagged |
 
-`full` mode hands the pipeline the whole transcript. `sampled` is the production default: short clips placed by the real
+`full` mode hands the pipeline the whole transcript. `sampled` is what the app uses with models bigger than tiny: short clips placed by the real
 code, cut from the same transcript, with escalation to the whole transcript when the clips disagree.

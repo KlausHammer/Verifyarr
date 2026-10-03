@@ -161,7 +161,7 @@ Charts, tables and the caveats: [models and tests](docs/models_and_tests.md).
 <details><summary>Data behind the chart</summary>
 
 <!-- table:errors -->
-| Error type | Passes when | Sampled (production) | Full transcript | Range over all 15 models (sampled) |
+| Error type | Passes when | Sampled | Full transcript | Range over all 15 models (sampled) |
 |---|---|---|---|---|
 | Constant offset (0.7 s to 45 s) | fixed (median error <= 0.25 s, 98 % of lines within 1 s) | 50/50 | 50/50 | 49-50 of 50 |
 | Framerate, PAL, drift | fixed, same bar | 159/160 | 159/160 | 152-159 of 160 |

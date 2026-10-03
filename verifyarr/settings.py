@@ -107,6 +107,17 @@ _GGML_MODEL_FILENAME_RE = re.compile(r"^ggml-[\w.\-]+\.bin$")
 LOG_LEVELS = ("DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL")
 
 
+WHISPER_MODES = ("auto", "sampled", "full")
+
+
+def resolve_whisper_mode(mode: str, model_path: str) -> str:
+    """auto -> full with a tiny model (a whole transcript costs ~2 min and sees blocks that clips can
+    miss: 99.3 % vs 96 % in the Known Good matrix), sampled with any bigger one."""
+    if mode in ("sampled", "full"):
+        return mode
+    return "full" if "tiny" in Path(model_path or "").name.lower() else "sampled"
+
+
 def validate_local_whisper_model(raw: Optional[str]) -> Optional[str]:
     """None when usable, else a plain-language reason. A missing ggml-*.bin is allowed
     (downloaded on first use) unless its directory exists but is unwritable (:ro mount)."""
@@ -432,7 +443,7 @@ class Config:
             clips_per_10min=vals["sync.clips_per_10min"],
             clip_tilt_escalate_s=vals["sync.clip_tilt_escalate_s"],
             require_audio_lang=vals["correctness.require_audio_lang"] or None,
-            whisper_mode=vals["sync.whisper_mode"],
+            whisper_mode=resolve_whisper_mode(vals["sync.whisper_mode"], vals["correctness.local_whisper_model"]),
             line_order_enabled=vals["sync.line_order_enabled"],
             line_order_audio_confirm=vals["sync.line_order_audio_confirm"],
             line_order_swap_threshold_pct=vals["sync.line_order_swap_threshold_pct"],
@@ -638,8 +649,8 @@ SETTING_DEFS: dict = {
     "sync.clip_tilt_escalate_s": ("sync", "float", 0.7),
     "sync.window_minutes":      ("sync", "float", 0.5),
     "sync.overlap_threshold":   ("sync", "float", 0.25),
-    # sampled | full -- see Config.whisper_mode.
-    "sync.whisper_mode":        ("sync", "str", "sampled"),
+    # auto | sampled | full -- see resolve_whisper_mode. auto = full with a tiny model, sampled otherwise.
+    "sync.whisper_mode":        ("sync", "str", "auto"),
     # VAD timeline (see vad.py): sample placement and block confirmation. On by default --
     # the image ships binary and Silero model; the tested setup is tiny.en + VAD. Empty
     # binary = disabled; a missing file disables it too. Language-independent.
@@ -865,6 +876,9 @@ def set_settings_group(conn, group: str, values: dict) -> None:
                            else validate_executable_file(value, "local Whisper binary"))
                 if problem is not None:
                     raise ValueError(problem)
+        elif key == "sync.whisper_mode":
+            if value not in WHISPER_MODES:
+                raise ValueError(f"unknown whisper mode: {value!r} — use one of {', '.join(WHISPER_MODES)}")
         elif key == "generate.vocabulary_hint":
             value = clean_vocabulary_hint(value) or ""
         elif key == "generate.assume_spoken_lang":
