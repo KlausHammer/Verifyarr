@@ -32,3 +32,10 @@ tests/e2e_work_*.log
 tests/e2e_matrix_[0-9]*.jsonl
 tests/e2e_matrix_summary_[0-9]*.json
 tests/e2e_valid_*[0-9].jsonl
+
+# Known Good dataset runs (work files; the merged results live in tests/known_good/results/)
+tests/kg_*_[0-9]*.jsonl
+tests/kg_*_summary_[0-9]*.json
+tests/kg_*.jsonl
+tests/kg_*_summary.json
+tests/known_good/data/alass/*.part*

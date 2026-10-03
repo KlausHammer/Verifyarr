@@ -194,6 +194,8 @@ MODES = ["full", "sampled"]
 AUDIOS = ["on", "off"]
 
 OUT_DIR = Path(__file__).parent
+# Dataset mode (tests/known_good/replay.py) runs with no media on disk.
+VIDEO_OPTIONAL = False
 
 
 def media_dir(slug):
@@ -1182,7 +1184,7 @@ def main(argv=None):
             print(f"{slug}: skipped ({e})", flush=True)
             continue
         video = media_dir(slug) / fx["video_name"]
-        if not video.exists():
+        if not VIDEO_OPTIONAL and not video.exists():
             print(f"{slug}: skipped (no video {video.name})", flush=True)
             continue
         # One seeded cache per shard: every row reuses the same WAV entry.
@@ -1504,6 +1506,12 @@ def build_summary(results, models, slugs, scen, modes=None, audios=None):
             "agreement_clean": agreement_clean, "swap_detail": swap_detail,
             "clean_swap_delta": clean_swap_delta, "escalation": escalation,
             "drift_case": drift_case}
+
+
+if _os.environ.get("VERIFYARR_KG"):
+    sys.path.insert(0, str(Path(__file__).resolve().parent / "known_good"))
+    import replay as _kg_replay
+    _kg_replay.install(sys.modules[__name__])
 
 
 if __name__ == "__main__":
