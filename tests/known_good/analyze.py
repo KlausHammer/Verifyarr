@@ -115,8 +115,8 @@ def summarize(rows):
             fails[key].append(f'{r["slug"]}:{r["scenario"]}')
     hole_bins = collections.defaultdict(lambda: [0, 0])     # detection by how much dialogue the hole removed
     for r in ok:
-        if r["scenario"] in HOLES:
-            rd = (r.get("detail") or {}).get("removed_dialogue") or 0
+        if r["scenario"] in HOLES and (r.get("detail") or {}).get("removed_dialogue") is not None:
+            rd = r["detail"]["removed_dialogue"]
             b = "0-9" if rd < 10 else "10-19" if rd < 20 else "20-39" if rd < 40 else "40+"
             hole_bins[b][1] += 1
             hole_bins[b][0] += bool(r.get("detected"))

@@ -772,7 +772,6 @@ def cue_gaps(subs, min_gap_s: float = MISSING_MIDDLE_MIN_GAP_S) -> list[tuple[fl
 # promos for other shows (The Boys S05E07, Marvelous Mrs. Maisel S01E07, What We Do in the
 # Shadows S03E02, S.W.A.T. S03E18): nothing is judged in the first and last two minutes.
 EDGE_IGNORE_S = 120.0
-END_IGNORE_S = EDGE_IGNORE_S
 
 
 def all_gaps(subs, duration_s: Optional[float],
@@ -838,7 +837,7 @@ def gap_speech(segments: list[dict], g0: float, g1: float,
             windows[-1][1] = max(windows[-1][1], m[1])
         else:
             windows.append([m[0], m[1]])
-    windows = [(lo - MUSIC_MARGIN_S, hi + max(MUSIC_MARGIN_S, MUSIC_TRAIL_S)) for lo, hi in windows]
+    windows = [(lo - MUSIC_MARGIN_S, hi + MUSIC_TRAIL_S) for lo, hi in windows]
     secs, words = 0.0, 0
     for s in segments:
         try:

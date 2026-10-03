@@ -3,6 +3,7 @@ import gzip
 import json
 import lzma
 import os
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -58,20 +59,19 @@ def test_alass_answers_recorded_for_every_episode():
 
 def test_matrix_runs_from_the_dataset_without_media(tmp_path):
     env = dict(os.environ, VERIFYARR_KG="replay", VERIFYARR_TEST_DATA=str(tmp_path / "no-media"))
-    stem = "kg_pytest_smoke"
-    out = ROOT / f"{stem}.jsonl"
+    stem, shard = "kg_pytest_smoke", "kgpytest"             # own shard: never touches a real run's work dir
+    out = ROOT / f"{stem}_{shard}.jsonl"
     try:
         r = subprocess.run([sys.executable, str(ROOT / "e2e_matrix.py"), "--only", "KG_BOB_S15E01", "--models",
                             "tiny.en-greedy-cpu", "--scenarios", "clean,uniform,drift,missing_middle", "--mode", "full",
-                            "--audio-confirm", "off", "--out", stem],
+                            "--audio-confirm", "off", "--out", stem, "--shard", shard],
                            env=env, capture_output=True, text=True, timeout=900, cwd=str(ROOT.parent))
         assert r.returncode == 0, r.stdout[-1500:] + r.stderr[-1500:]
         rows = {x["scenario"]: x for x in map(json.loads, out.read_text(encoding="utf-8").splitlines())}
     finally:
         for p in ROOT.glob(f"{stem}*"):
             p.unlink()
-        import shutil
-        shutil.rmtree(ROOT / "e2e_work_matrix", ignore_errors=True)
+        shutil.rmtree(ROOT / f"e2e_work_matrix_{shard}", ignore_errors=True)
     assert set(rows) == {"clean", "uniform", "drift", "missing_middle"}
     assert all(x["status"] == "ok" for x in rows.values())
     assert rows["clean"]["untouched"] and rows["clean"]["flag"] == "ok"           # no false positive on a verified file

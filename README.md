@@ -193,4 +193,5 @@ Anyone can rerun this without any media: the data, the stored Whisper output and
 - Whisper evidence is thin where there is no dialogue (credits): an error confined there cannot be judged reliably.
 - A file that alass splits into several blocks is always reported as "fetch a fresh subtitle", even after a verified repair.
 - Verified on ten English episodes with injected errors, which model real errors but are not a sample of them. Lines swapped inside a cue are not verified in the reference set (22 lines are flagged across the ten files).
+- A rate fit can overshoot on a file that is really a staircase of cuts: in 16 of the 17,400 runs (one Bob's Burgers case) a -4.1 % stretch was written over a cut version and left it further from the truth than before, though the file was flagged SUSPECT. The post-fix safety net compares only the stretch the original matched, so it does not see damage outside it.
 - With a fixed hash seed the matrix is repeatable; without it 0.1 % of the verdicts differ between runs, so the pipeline has a small order dependence.

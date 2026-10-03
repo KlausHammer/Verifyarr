@@ -49,7 +49,9 @@ def _load_alass(slug):
     return table
 
 
-def _read_entries(p):
+def _read_entries(p, strict=False):
+    """Entries of one alass answer file. A file another process is still writing is skipped quietly while replaying
+    (its answers are recomputed in auto mode or reported as a miss); strict=True raises instead, for the merge."""
     opener = lzma.open if p.suffix == ".xz" else gzip.open
     try:
         with opener(p, "rt", encoding="utf-8") as f:
@@ -57,8 +59,8 @@ def _read_entries(p):
                 if line.strip():
                     yield json.loads(line)
     except (EOFError, lzma.LZMAError, OSError, ValueError):
-        # A part file another process is still writing: its entries are recomputed (auto) or reported as a miss.
-        return
+        if strict:
+            raise
 
 
 def _flush_new():
@@ -82,11 +84,18 @@ def merge_alass():
     d = DATA / "alass"
     slugs = sorted({p.name.split(".")[0] for p in d.glob("*.jsonl.*")})
     for slug in slugs:
-        table = {}
-        files = sorted(d.glob(f"{slug}.*jsonl.*"))
-        for p in files:
-            for e in _read_entries(p):
+        table, files, unreadable = {}, [], []
+        for p in sorted(d.glob(f"{slug}.*jsonl.*")):
+            try:
+                entries = list(_read_entries(p, strict=True))
+            except (EOFError, lzma.LZMAError, OSError, ValueError):
+                unreadable.append(p)        # still being written, or corrupt: leave it alone
+                continue
+            files.append(p)
+            for e in entries:
                 table[e["k"]] = e
+        if unreadable:
+            print(f"{slug}: skipped unreadable part file(s) {[p.name for p in unreadable]}; they are kept")
         tmp = d / f"{slug}.merged.tmp"
         with lzma.open(tmp, "wt", encoding="utf-8", preset=9) as f:
             for k in sorted(table):

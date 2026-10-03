@@ -20,6 +20,7 @@ Run: .venv/bin/python tests/e2e_matrix_parallel.py [--workers 16]
 """
 from __future__ import annotations
 import json
+import os
 import subprocess
 import sys
 from concurrent.futures import ProcessPoolExecutor
@@ -44,7 +45,9 @@ def run_shard(args):
     cmd = [str(PY), str(HERE / "e2e_matrix.py"),
            "--only", slug, "--models", model, "--shard", str(i)] + extra
     with open(log, "w", encoding="utf-8") as fh:
-        p = subprocess.run(cmd, cwd=str(STAGING), stdout=fh, stderr=subprocess.STDOUT)
+        # A fixed hash seed makes a rerun identical (see the note at the bottom of e2e_matrix.py).
+        p = subprocess.run(cmd, cwd=str(STAGING), stdout=fh, stderr=subprocess.STDOUT,
+                           env={**os.environ, "PYTHONHASHSEED": "0"})
     tail = log.read_text(encoding="utf-8").strip().splitlines()[-3:]
     return slug, model, p.returncode, tail
 

@@ -5,7 +5,7 @@
 For every (model, episode): the stored transcript against the verified subtitle.
   F1        word recall/precision of the transcript against the subtitle text (difflib matching blocks)
   anchors   matched subtitle lines per 10 minutes of audio, and the share within 0.5 s of the episode median
-  clips>=3  share of 30 s clips with at least ANCHOR_MIN_COUNT anchors (what the sampled mode needs)
+  clips>=3  share of all 30 s windows with at least ANCHOR_MIN_COUNT anchors (what the sampled mode needs)
 Writes model_quality.json and model_quality.md.
 """
 import difflib
@@ -51,8 +51,9 @@ def main(argv):
                 med = statistics.median(offs)
                 a += len(offs)
                 a05 += sum(abs(o - med) <= 0.5 for o in offs)
-                c += len(samples)
                 cok += sum(len(s["anchor_points"]) >= ANCHOR_MIN_COUNT for s in samples)
+            # dense_anchor_points only returns clips that matched a line, so the denominator is every 30 s window.
+            c += int(max(s["end"] for s in segs) // 30) + 1
             mins += max(s["end"] for s in segs) / 60.0
             eps += 1
         if not sn or not tn:

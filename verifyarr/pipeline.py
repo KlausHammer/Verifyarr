@@ -2525,6 +2525,8 @@ def correctness_and_finish(video_path: Path, subtitle_path: Path, lang: Optional
                     + len(result.get("line_flagged") or [])
                 row["line_order_swap_rate"] = result.get("swap_rate")
                 row["auto_action"] = act_on_suspect()
+                _undo_rewrite_that_made_it_worse(conn, video_path, subtitle_path, cfg, row,
+                                                 orig_subs or pre_sync_subs)
                 row["whisper_cost"] = _row_cost(row)
                 save_row()
                 return row
@@ -2595,6 +2597,8 @@ def correctness_and_finish(video_path: Path, subtitle_path: Path, lang: Optional
                     + len(result.get("line_flagged") or []) \
                     if isinstance(result, dict) else 0
                 row["auto_action"] = act_on_suspect()
+                _undo_rewrite_that_made_it_worse(conn, video_path, subtitle_path, cfg, row,
+                                                 orig_subs or pre_sync_subs)
                 row["whisper_cost"] = _row_cost(row)
                 save_row()
                 return row

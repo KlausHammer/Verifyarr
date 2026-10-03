@@ -6,7 +6,7 @@
   "f1": 0.84,
   "anchors_per_10min": 62.3,
   "share_anchors_within_0.5s": 0.667,
-  "clips_with_3plus_anchors": 0.686
+  "clips_with_3plus_anchors": 0.538
  },
  "base.en-greedy-cpu": {
   "episodes": 10,
@@ -15,7 +15,7 @@
   "f1": 0.839,
   "anchors_per_10min": 63.7,
   "share_anchors_within_0.5s": 0.661,
-  "clips_with_3plus_anchors": 0.695
+  "clips_with_3plus_anchors": 0.545
  },
  "base.en-q5_1-cpu": {
   "episodes": 10,
@@ -24,7 +24,7 @@
   "f1": 0.839,
   "anchors_per_10min": 61.2,
   "share_anchors_within_0.5s": 0.652,
-  "clips_with_3plus_anchors": 0.687
+  "clips_with_3plus_anchors": 0.532
  },
  "groq-turbo": {
   "episodes": 10,
@@ -33,7 +33,7 @@
   "f1": 0.887,
   "anchors_per_10min": 67.5,
   "share_anchors_within_0.5s": 0.643,
-  "clips_with_3plus_anchors": 0.725
+  "clips_with_3plus_anchors": 0.581
  },
  "medium.en": {
   "episodes": 10,
@@ -42,7 +42,7 @@
   "f1": 0.899,
   "anchors_per_10min": 68.6,
   "share_anchors_within_0.5s": 0.67,
-  "clips_with_3plus_anchors": 0.71
+  "clips_with_3plus_anchors": 0.581
  },
  "medium.en-greedy": {
   "episodes": 10,
@@ -51,7 +51,7 @@
   "f1": 0.906,
   "anchors_per_10min": 70.5,
   "share_anchors_within_0.5s": 0.676,
-  "clips_with_3plus_anchors": 0.727
+  "clips_with_3plus_anchors": 0.59
  },
  "medium.en-q5_0": {
   "episodes": 10,
@@ -60,7 +60,7 @@
   "f1": 0.902,
   "anchors_per_10min": 68.6,
   "share_anchors_within_0.5s": 0.67,
-  "clips_with_3plus_anchors": 0.722
+  "clips_with_3plus_anchors": 0.584
  },
  "small.en": {
   "episodes": 10,
@@ -69,7 +69,7 @@
   "f1": 0.884,
   "anchors_per_10min": 65.4,
   "share_anchors_within_0.5s": 0.658,
-  "clips_with_3plus_anchors": 0.7
+  "clips_with_3plus_anchors": 0.561
  },
  "small.en-greedy": {
   "episodes": 10,
@@ -78,7 +78,7 @@
   "f1": 0.887,
   "anchors_per_10min": 68.1,
   "share_anchors_within_0.5s": 0.671,
-  "clips_with_3plus_anchors": 0.726
+  "clips_with_3plus_anchors": 0.582
  },
  "small.en-q5_1": {
   "episodes": 10,
@@ -87,7 +87,7 @@
   "f1": 0.885,
   "anchors_per_10min": 66.4,
   "share_anchors_within_0.5s": 0.655,
-  "clips_with_3plus_anchors": 0.701
+  "clips_with_3plus_anchors": 0.569
  },
  "tiny.en-cpu": {
   "episodes": 10,
@@ -96,7 +96,7 @@
   "f1": 0.799,
   "anchors_per_10min": 57.3,
   "share_anchors_within_0.5s": 0.686,
-  "clips_with_3plus_anchors": 0.635
+  "clips_with_3plus_anchors": 0.491
  },
  "tiny.en-greedy-cpu": {
   "episodes": 10,
@@ -105,7 +105,7 @@
   "f1": 0.79,
   "anchors_per_10min": 56.9,
   "share_anchors_within_0.5s": 0.643,
-  "clips_with_3plus_anchors": 0.642
+  "clips_with_3plus_anchors": 0.499
  },
  "tiny.en-q5_1-cpu": {
   "episodes": 10,
@@ -114,7 +114,7 @@
   "f1": 0.798,
   "anchors_per_10min": 57.5,
   "share_anchors_within_0.5s": 0.684,
-  "clips_with_3plus_anchors": 0.643
+  "clips_with_3plus_anchors": 0.495
  },
  "turbo-q5_0": {
   "episodes": 10,
@@ -123,7 +123,7 @@
   "f1": 0.885,
   "anchors_per_10min": 66.4,
   "share_anchors_within_0.5s": 0.672,
-  "clips_with_3plus_anchors": 0.692
+  "clips_with_3plus_anchors": 0.566
  },
  "turbo-q8_0": {
   "episodes": 10,
@@ -132,6 +132,6 @@
   "f1": 0.884,
   "anchors_per_10min": 65.8,
   "share_anchors_within_0.5s": 0.676,
-  "clips_with_3plus_anchors": 0.689
+  "clips_with_3plus_anchors": 0.561
  }
 }
