@@ -115,33 +115,44 @@ move instead.
 
 ## Why `tiny.en`
 
-![Ten Whisper models on the same 242 tests: detection is flat, cost is not](docs/img/models.svg)
+![Fifteen model configurations on the same ten verified episodes](docs/img/models.svg)
 
 <details><summary>Data behind the chart</summary>
 
-| Model | Passed of 242 | Speed (× real time, 4 CPU threads) | Word F1 |
-|---|---|---|---|
-| **tiny.en (greedy), default** | 239 | 25 | 0.78 |
-| tiny.en | 236 | 17 | 0.79 |
-| base.en (greedy) | 239 | 16 | 0.83 |
-| small.en (greedy) | 240 | 5.8 | 0.88 |
-| small.en | 237 | 4.5 | 0.88 |
-| medium.en (greedy) | 237 | 2.1 | 0.90 |
-| medium.en | 237 | 1.8 | 0.89 |
-| large-v3-turbo q8_0 | 238 | 1.7 | 0.89 |
-| large-v3-turbo q5_0 | 238 | 1.3 | 0.89 |
-| cloud: Groq large-v3-turbo | 232 | network | 0.89 |
+<!-- table:models -->
+| Model | Errors handled, sampled | Errors handled, full | Healthy files left alone, sampled / full | Speed (x real time) | RAM | Word F1 |
+|---|---|---|---|---|---|---|
+| **tiny.en (greedy) — default** | 98.0 % (499/509) | 99.0 % (504/509) | 10/10 and 10/10 | 25.5 | 0.6 GB | 0.79 |
+| tiny.en | 96.7 % (492/509) | 98.8 % (503/509) | 10/10 and 9/10 | 16.8 | 0.6 GB | 0.80 |
+| tiny.en q5_1 | 97.4 % (496/509) | 96.9 % (493/509) | 9/10 and 9/10 | 16.5 | 0.6 GB | 0.80 |
+| base.en (greedy) | 96.1 % (489/509) | 97.8 % (498/509) | 9/10 and 8/10 | 16.4 | 0.7 GB | 0.84 |
+| base.en | 96.5 % (491/509) | 97.1 % (494/509) | 9/10 and 7/10 | 11.7 | 0.8 GB | 0.84 |
+| base.en q5_1 | 97.1 % (494/509) | 97.8 % (498/509) | 9/10 and 9/10 | 11.0 | 0.7 GB | 0.84 |
+| small.en (greedy) | 97.1 % (494/509) | 98.6 % (502/509) | 9/10 and 5/10 | 5.8 | 1.2 GB | 0.89 |
+| small.en | 97.8 % (498/509) | 99.0 % (504/509) | 9/10 and 5/10 | 4.5 | 1.3 GB | 0.88 |
+| small.en q5_1 | 97.1 % (494/509) | 98.2 % (500/509) | 8/10 and 5/10 | 4.6 | 1.1 GB | 0.89 |
+| medium.en (greedy) | 97.6 % (497/509) | 98.4 % (501/509) | 10/10 and 8/10 | 2.1 | 2.4 GB | 0.91 |
+| medium.en | 97.4 % (496/509) | 98.6 % (502/509) | 8/10 and 6/10 | 1.8 | 2.7 GB | 0.90 |
+| medium.en q5_0 | 97.1 % (494/509) | 98.4 % (501/509) | 9/10 and 6/10 | 1.6 | 1.8 GB | 0.90 |
+| large-v3-turbo q8_0 | 97.2 % (495/509) | 99.6 % (507/509) | 10/10 and 9/10 | 1.7 | 1.8 GB | 0.88 |
+| large-v3-turbo q5_0 | 97.1 % (494/509) | 98.8 % (503/509) | 9/10 and 6/10 | 1.3 | 1.5 GB | 0.89 |
+| cloud: Groq large-v3-turbo | 98.0 % (499/509) | 99.2 % (505/509) | 9/10 and 9/10 | network | - | 0.89 |
+<!-- /table:models -->
 
 </details>
 
-Every model catches and fixes the same errors; they differ in what they cost. `tiny.en` is the default because:
+All numbers come from the ten verified episodes in [`tests/known_good/`](tests/known_good/README.md): every model gets the
+same injected errors (10 episodes x 58 scenarios x 15 setups x 2 modes = 17,400 runs). The models differ in what they cost
+and in false alarms, not in what they catch. `tiny.en` (greedy) is the default because:
 
-- **Same result, 5–20× faster.** A 58-minute episode takes about **2 min** (tiny), 12 min (small) or 30–45 min (medium / large-v3-turbo), on 4 CPU threads.
-- **0.6 GB RAM** instead of 1.2–2.7 GB, so it fits an Intel N100.
-- **What it gives up is word accuracy** (F1 0.78 vs 0.88–0.90). The checks compare anchors and timing, which the larger models do not improve: the pass rate is 236–240 of 242 for every local model, with no ranking.
-- **Cloud Whisper (Groq) is not better** (232 of 242) and adds a key, a network dependency and rate limits, so the checks never use it.
+- **It leaves healthy files alone.** All ten verified, untouched episodes come out unflagged in both modes. In full-transcript mode
+  `small.en` flags half of them, `medium.en` and `large-v3-turbo q5_0` four of ten; the block detector is calibrated on `tiny.en` output.
+- **The same result, 5-20x faster.** A 58-minute episode takes about **2 min** (tiny), 10-13 min (small) or 28-45 min (medium / large-v3-turbo) on 4 CPU threads.
+- **0.6 GB RAM** instead of 1.2-2.7 GB, so it fits an Intel N100.
+- **What it gives up is word accuracy** (F1 0.79 against 0.88-0.91), which the timing checks do not use: offsets are fixed in 49-50 of 50 runs by every model, rate errors in 149-159 of 160, wrong episodes and swapped lines are caught by all.
+- **Cloud Whisper (Groq) is not better** (98.0 % handled, one false alarm per mode) and adds a key, a network dependency and rate limits, so the checks never use it.
 
-All thresholds are calibrated on `tiny.en`; other models transcribe differently. Charts, tables and every test sweep on one page: [models and test sweeps](docs/modeller_og_sweeps.md).
+Charts, tables and the caveats: [models and tests](docs/models_and_tests.md).
 
 ## How well it works
 
@@ -149,33 +160,37 @@ All thresholds are calibrated on `tiny.en`; other models transcribe differently.
 
 <details><summary>Data behind the chart</summary>
 
-| Error type | Passed / run | Note |
-|---|---|---|
-| Constant offset (fixed) | 63 / 66 | 3 misses: +0.3 s, just over the 0.25 s bar |
-| Framerate, PAL, drift (fixed) | 66 / 66 | |
-| Mistimed blocks (detected) | 44 / 44 | |
-| Missing middle (detected) | 11 / 11 | |
-| Wrong episode (detected) | 11 / 11 | |
-| Swapped lines (detected) | 11 / 11 | |
-| Drift + swapped lines (detected) | 11 / 11 | |
-| Healthy file, no false alarm | 11 / 11 | |
-| Dropped / duplicated cues | 11 / 11 | |
-| Per-line jitter (nothing to fix) | 8 / 11 | alass chases the noise (all models) |
+<!-- table:errors -->
+| Error type | Passes when | Sampled (production) | Full transcript | Range over all 15 models (sampled) |
+|---|---|---|---|---|
+| Constant offset (0.7 s to 45 s) | fixed (median error <= 0.25 s, 98 % of lines within 1 s) | 50/50 | 50/50 | 49-50 of 50 |
+| Framerate, PAL, drift | fixed, same bar | 159/160 | 159/160 | 152-159 of 160 |
+| Blocks at different offsets | flagged (repair is a bonus) | 194/200 | 199/200 | 190-197 of 200 |
+| Missing stretch (>= 20 dialogue lines) | flagged and left untouched | 36/39 | 36/39 | 33-38 of 39 |
+| Wrong episode | flagged SUSPECT, left untouched | 10/10 | 10/10 | 10 of 10 |
+| Swapped lines | flagged for review | 20/20 | 20/20 | 20 of 20 |
+| Drift + swapped lines | timing fixed and swaps flagged | 10/10 | 10/10 | 9-10 of 10 |
+| Dropped / duplicated cues | left untouched | 10/10 | 10/10 | 10 of 10 |
+| Per-line jitter (nothing to fix) | no worse than injected | 10/10 | 10/10 | 10 of 10 |
+| Healthy file (no false alarm) | left untouched, not flagged | 10/10 | 10/10 | 8-10 of 10 |
+<!-- /table:errors -->
 
 </details>
 
 | Test | What was run | Result |
 |---|---|---|
-| Injected-error matrix | 11 approved episodes (6 *Slow Horses* + 5 other series) × 23 error scenarios × 15 model setups × sampled/full = **7,590 runs** | 0 errors. Production setup: 239 of 242. Every miss is a +0.3 s shift (just above the 0.25 s decision bar) or per-line jitter (nothing to fix) |
-| Healthy files | the same 11 episodes with no error | 11 of 11 left untouched, no false alarms |
-| Real library, read-only | 20 random episodes, two rounds, library mounted read-only, dry run | found and fixed two real bugs (wrong audio track on multi-language files, a song counted as missing lines); the rest ok or correctly flagged |
-| Real flawed episodes | 5 episodes with known problems, judged by a *different* Whisper model (small.en), see below | 4 fixed or correctly left alone, 1 wrong subtitle flagged |
+| Injected-error matrix | 10 verified episodes x 58 error scenarios x 15 model setups x sampled/full = **17,400 runs** | no pipeline errors. The default model fixes every constant offset and 159 of 160 rate errors, flags 194 of 200 block errors in sampled mode (199 in full) and every wrong episode and swap |
+| Healthy files | the same ten episodes with no error | 10 of 10 left untouched and not flagged in both modes |
+| Missing stretches | holes and cut-offs of different size | found once about 20 dialogue lines are gone (82-95 %); smaller holes and cuts inside the first and last two minutes are not judged |
 
-**alass cannot tell on its own whether a subtitle is right.** On four real episodes it fixed none of the problems and caused one: it left Community S03E20 at 62 % of lines more than 2 s off (it sees nothing), made Brooklyn Nine-Nine S01E02 worse (62 % → 90 %), broke the already-correct S.W.A.T. S02E12 (6 % → 60 %), and did nothing for Taskmaster S06E02 (98 % → 98 %). With Verifyarr the same episodes end at 6 %, 8 %, 4 % and 6 %, the correct file untouched, and a fifth episode with a wrong subtitle (My Name Is Earl S03E13) flagged and left alone.
+Anyone can rerun this without any media: the data, the stored Whisper output and the recorded alass answers are in the repo
+([how](tests/known_good/README.md)).
 
 ### Known limits
 
-- Whisper evidence is thin where there is no dialogue (credits, the last minute): an error confined there cannot be judged reliably.
-- Block detection depends on dialogue density; thin-dialogue episodes give fewer anchors.
+- A hole that removes fewer than about 20 dialogue lines is usually not seen (about 1 in 5 for fewer than 10 lines, 36 % for 10-19), and the first and last two minutes are not judged on purpose.
+- Sampled mode can miss a short block error that falls between its clips (6 of 200); the full transcript finds almost all.
+- Whisper evidence is thin where there is no dialogue (credits): an error confined there cannot be judged reliably.
 - A file that alass splits into several blocks is always reported as "fetch a fresh subtitle", even after a verified repair.
-- Tested on English audio, 11 approved episodes for the matrix and 25 real episodes; injected errors are a model of real ones, not a sample.
+- Verified on ten English episodes with injected errors, which model real errors but are not a sample of them. Lines swapped inside a cue are not verified in the reference set (22 lines are flagged across the ten files).
+- With a fixed hash seed the matrix is repeatable; without it 0.1 % of the verdicts differ between runs, so the pipeline has a small order dependence.

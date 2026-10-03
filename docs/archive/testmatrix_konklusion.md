@@ -1,3 +1,5 @@
+> **Archived.** Measured on earlier episode sets (Community, the Slow Horses set and the 11 approved episodes) with earlier code. The current facit is [`tests/known_good/`](../../tests/known_good/README.md) and [models and tests](../models_and_tests.md); numbers here are not quoted anywhere else.
+
 # Test matrix conclusion: 15 models × 10 episodes × 6 scenarios × 2 modes × 2 audio-confirm
 
 Dataset: `tests/e2e_matrix.jsonl` — **3600 rows, 3552 ok, 48 skipped, 0 errors**,

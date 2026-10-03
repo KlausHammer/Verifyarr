@@ -1,3 +1,5 @@
+> **Archived.** Measured on earlier episode sets (Community, the Slow Horses set and the 11 approved episodes) with earlier code. The current facit is [`tests/known_good/`](../../tests/known_good/README.md) and [models and tests](../models_and_tests.md); numbers here are not quoted anywhere else.
+
 # Model choice on approved episodes (2026-09-30)
 
 Approved episodes only: Slow Horses S01E01–E06 (SH) + Known Good (KG): Billions, Blue Mountain State, Bob's Burgers, Breaking Bad, Euphoria. No Community. 14 local models + Groq whisper-large-v3-turbo (cloud). Code: HEAD d85517e (+ `groq-turbo` added in `tests/e2e_matrix.py`). Matrix: 11 episodes × 23 scenarios × full+sampled × audio-confirm off = 506 rows per model. Raw data: `matrixdata/godkendte_2026-09-30/`.

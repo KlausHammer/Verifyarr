@@ -1,3 +1,5 @@
+> **Archived.** Measured on earlier episode sets (Community, the Slow Horses set and the 11 approved episodes) with earlier code. The current facit is [`tests/known_good/`](../../tests/known_good/README.md) and [models and tests](../models_and_tests.md); numbers here are not quoted anywhere else.
+
 # Verifyarr Whisper / Sync / Line-Order Review — 2026-09-13
 
 Produced by an independent Opus-model review agent, from a task brief covering production code,

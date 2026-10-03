@@ -1,3 +1,5 @@
+> **Archived.** Measured on earlier episode sets (Community, the Slow Horses set and the 11 approved episodes) with earlier code. The current facit is [`tests/known_good/`](../../tests/known_good/README.md) and [models and tests](../models_and_tests.md); numbers here are not quoted anywhere else.
+
 # How well do the Whisper models work for sync and detection?
 
 Measured on 52 episodes (Community S02+S03, Slow Horses S01) with large-v3-turbo as
