@@ -77,7 +77,10 @@ class ScreenOrderTests(unittest.TestCase):
 
     def _orig(self, slug=None):
         slug = slug or self.SLUG
-        return M.subs_for(slug, M.fixture(slug))
+        try:
+            return M.subs_for(slug, M.fixture(slug))
+        except FileNotFoundError:
+            self.skipTest(f"no subtitle for {slug} in the local test data")
 
     def test_healthy_file_ends_at_the_screen_and_alass_never_runs(self):
         """The saving that matters on a slow machine: no alass means no full audio extraction."""

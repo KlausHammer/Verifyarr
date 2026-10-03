@@ -30,7 +30,10 @@ _needs_staging = unittest.skipUnless(STAGING_OK, "needs whisper_gpu_staging out/
 def _run_genuine(slug, mode="full"):
     """Genuine subtitle + genuine transcript through the pipeline, fresh DB."""
     fx = M.fixture(slug)
-    subs = M.subs_for(slug, fx)
+    try:
+        subs = M.subs_for(slug, fx)
+    except FileNotFoundError:
+        raise unittest.SkipTest(f"no subtitle for {slug} in the local test data")
     video = M.media_dir(slug) / fx["video_name"]
     if not video.exists():
         raise unittest.SkipTest(f"no video for {slug}")

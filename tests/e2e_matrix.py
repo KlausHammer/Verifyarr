@@ -115,7 +115,8 @@ SWEEP = DATA_ROOT / "whisper_gpu_staging" / "sweep"
 DIRS = {
     "C_S02": DATA_ROOT / "Season 2",
     "C_S03": DATA_ROOT / "Season 3",
-    "SH_S01": DATA_ROOT / "Slow Horse/Season 1",
+    # Slow Horses E01 and E06 now live in Known Good (the other four episodes are no longer in the reference set).
+    "SH_S01": (DATA_ROOT / "Slow Horse/Season 1") if (DATA_ROOT / "Slow Horse/Season 1").is_dir() else DATA_ROOT / "Known Good",
     # User-confirmed correct episodes from other shows (2026-09-27).
     "KG_": DATA_ROOT / "Known Good",
 }
