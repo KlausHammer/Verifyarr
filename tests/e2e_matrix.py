@@ -1515,4 +1515,10 @@ if _os.environ.get("VERIFYARR_KG"):
 
 
 if __name__ == "__main__":
+    # A few places in the pipeline depend on set/dict iteration order, which Python randomises per process: the same row
+    # can give slightly different notes (and, rarely, a different verdict) from one run to the next. A fixed hash seed
+    # makes the matrix repeatable, so rerun this process once with it.
+    if _os.environ.get("PYTHONHASHSEED") != "0":
+        _os.environ["PYTHONHASHSEED"] = "0"
+        _os.execv(sys.executable, [sys.executable] + sys.argv)
     main()

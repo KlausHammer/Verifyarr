@@ -1,0 +1,137 @@
+{
+ "base.en-cpu": {
+  "episodes": 10,
+  "recall": 0.831,
+  "precision": 0.849,
+  "f1": 0.84,
+  "anchors_per_10min": 62.3,
+  "share_anchors_within_0.5s": 0.667,
+  "clips_with_3plus_anchors": 0.686
+ },
+ "base.en-greedy-cpu": {
+  "episodes": 10,
+  "recall": 0.825,
+  "precision": 0.853,
+  "f1": 0.839,
+  "anchors_per_10min": 63.7,
+  "share_anchors_within_0.5s": 0.661,
+  "clips_with_3plus_anchors": 0.695
+ },
+ "base.en-q5_1-cpu": {
+  "episodes": 10,
+  "recall": 0.828,
+  "precision": 0.85,
+  "f1": 0.839,
+  "anchors_per_10min": 61.2,
+  "share_anchors_within_0.5s": 0.652,
+  "clips_with_3plus_anchors": 0.687
+ },
+ "groq-turbo": {
+  "episodes": 10,
+  "recall": 0.89,
+  "precision": 0.883,
+  "f1": 0.887,
+  "anchors_per_10min": 67.5,
+  "share_anchors_within_0.5s": 0.643,
+  "clips_with_3plus_anchors": 0.725
+ },
+ "medium.en": {
+  "episodes": 10,
+  "recall": 0.89,
+  "precision": 0.908,
+  "f1": 0.899,
+  "anchors_per_10min": 68.6,
+  "share_anchors_within_0.5s": 0.67,
+  "clips_with_3plus_anchors": 0.71
+ },
+ "medium.en-greedy": {
+  "episodes": 10,
+  "recall": 0.894,
+  "precision": 0.919,
+  "f1": 0.906,
+  "anchors_per_10min": 70.5,
+  "share_anchors_within_0.5s": 0.676,
+  "clips_with_3plus_anchors": 0.727
+ },
+ "medium.en-q5_0": {
+  "episodes": 10,
+  "recall": 0.893,
+  "precision": 0.911,
+  "f1": 0.902,
+  "anchors_per_10min": 68.6,
+  "share_anchors_within_0.5s": 0.67,
+  "clips_with_3plus_anchors": 0.722
+ },
+ "small.en": {
+  "episodes": 10,
+  "recall": 0.875,
+  "precision": 0.893,
+  "f1": 0.884,
+  "anchors_per_10min": 65.4,
+  "share_anchors_within_0.5s": 0.658,
+  "clips_with_3plus_anchors": 0.7
+ },
+ "small.en-greedy": {
+  "episodes": 10,
+  "recall": 0.875,
+  "precision": 0.9,
+  "f1": 0.887,
+  "anchors_per_10min": 68.1,
+  "share_anchors_within_0.5s": 0.671,
+  "clips_with_3plus_anchors": 0.726
+ },
+ "small.en-q5_1": {
+  "episodes": 10,
+  "recall": 0.872,
+  "precision": 0.898,
+  "f1": 0.885,
+  "anchors_per_10min": 66.4,
+  "share_anchors_within_0.5s": 0.655,
+  "clips_with_3plus_anchors": 0.701
+ },
+ "tiny.en-cpu": {
+  "episodes": 10,
+  "recall": 0.787,
+  "precision": 0.811,
+  "f1": 0.799,
+  "anchors_per_10min": 57.3,
+  "share_anchors_within_0.5s": 0.686,
+  "clips_with_3plus_anchors": 0.635
+ },
+ "tiny.en-greedy-cpu": {
+  "episodes": 10,
+  "recall": 0.778,
+  "precision": 0.802,
+  "f1": 0.79,
+  "anchors_per_10min": 56.9,
+  "share_anchors_within_0.5s": 0.643,
+  "clips_with_3plus_anchors": 0.642
+ },
+ "tiny.en-q5_1-cpu": {
+  "episodes": 10,
+  "recall": 0.783,
+  "precision": 0.814,
+  "f1": 0.798,
+  "anchors_per_10min": 57.5,
+  "share_anchors_within_0.5s": 0.684,
+  "clips_with_3plus_anchors": 0.643
+ },
+ "turbo-q5_0": {
+  "episodes": 10,
+  "recall": 0.899,
+  "precision": 0.871,
+  "f1": 0.885,
+  "anchors_per_10min": 66.4,
+  "share_anchors_within_0.5s": 0.672,
+  "clips_with_3plus_anchors": 0.692
+ },
+ "turbo-q8_0": {
+  "episodes": 10,
+  "recall": 0.9,
+  "precision": 0.868,
+  "f1": 0.884,
+  "anchors_per_10min": 65.8,
+  "share_anchors_within_0.5s": 0.676,
+  "clips_with_3plus_anchors": 0.689
+ }
+}

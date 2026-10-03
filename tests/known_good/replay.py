@@ -51,10 +51,14 @@ def _load_alass(slug):
 
 def _read_entries(p):
     opener = lzma.open if p.suffix == ".xz" else gzip.open
-    with opener(p, "rt", encoding="utf-8") as f:
-        for line in f:
-            if line.strip():
-                yield json.loads(line)
+    try:
+        with opener(p, "rt", encoding="utf-8") as f:
+            for line in f:
+                if line.strip():
+                    yield json.loads(line)
+    except (EOFError, lzma.LZMAError, OSError, ValueError):
+        # A part file another process is still writing: its entries are recomputed (auto) or reported as a miss.
+        return
 
 
 def _flush_new():
@@ -64,9 +68,11 @@ def _flush_new():
             continue
         d.mkdir(parents=True, exist_ok=True)
         out = d / f"{slug}.part{os.getpid()}.jsonl.xz"
-        with lzma.open(out, "wt", encoding="utf-8", preset=6) as f:
+        tmp = d / f"{slug}.part{os.getpid()}.tmp"
+        with lzma.open(tmp, "wt", encoding="utf-8", preset=6) as f:
             for e in entries:
                 f.write(json.dumps(e, ensure_ascii=False, separators=(",", ":")) + "\n")
+        tmp.rename(out)
 
 
 def merge_alass():

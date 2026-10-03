@@ -1,0 +1,4737 @@
+{
+ "models": [
+  "base.en-cpu",
+  "base.en-greedy-cpu",
+  "base.en-q5_1-cpu",
+  "groq-turbo",
+  "medium.en",
+  "medium.en-greedy",
+  "medium.en-q5_0",
+  "small.en",
+  "small.en-greedy",
+  "small.en-q5_1",
+  "tiny.en-cpu",
+  "tiny.en-greedy-cpu",
+  "tiny.en-q5_1-cpu",
+  "turbo-q5_0",
+  "turbo-q8_0"
+ ],
+ "modes": [
+  "full",
+  "sampled"
+ ],
+ "cell": {
+  "tiny.en-greedy-cpu|full|clean": [
+   10,
+   10
+  ],
+  "tiny.en-greedy-cpu|sampled|clean": [
+   10,
+   10
+  ],
+  "tiny.en-greedy-cpu|full|offset": [
+   50,
+   50
+  ],
+  "tiny.en-greedy-cpu|sampled|offset": [
+   50,
+   50
+  ],
+  "tiny.en-greedy-cpu|full|offset_boundary": [
+   7,
+   10
+  ],
+  "tiny.en-greedy-cpu|sampled|offset_boundary": [
+   7,
+   10
+  ],
+  "tiny.en-greedy-cpu|full|rate": [
+   159,
+   160
+  ],
+  "tiny.en-greedy-cpu|sampled|rate": [
+   159,
+   160
+  ],
+  "tiny.en-greedy-cpu|full|blocks": [
+   199,
+   200
+  ],
+  "tiny.en-greedy-cpu|sampled|blocks": [
+   194,
+   200
+  ],
+  "tiny.en-greedy-cpu|full|holes": [
+   36,
+   39
+  ],
+  "tiny.en-greedy-cpu|sampled|holes": [
+   36,
+   39
+  ],
+  "tiny.en-greedy-cpu|full|dropdup": [
+   10,
+   10
+  ],
+  "tiny.en-greedy-cpu|sampled|dropdup": [
+   10,
+   10
+  ],
+  "tiny.en-greedy-cpu|full|jitter": [
+   10,
+   10
+  ],
+  "tiny.en-greedy-cpu|sampled|jitter": [
+   10,
+   10
+  ],
+  "tiny.en-greedy-cpu|full|wrong_episode": [
+   10,
+   10
+  ],
+  "tiny.en-greedy-cpu|sampled|wrong_episode": [
+   10,
+   10
+  ],
+  "tiny.en-greedy-cpu|full|swap": [
+   20,
+   20
+  ],
+  "tiny.en-greedy-cpu|sampled|swap": [
+   20,
+   20
+  ],
+  "tiny.en-greedy-cpu|full|drift_swap": [
+   10,
+   10
+  ],
+  "tiny.en-greedy-cpu|sampled|drift_swap": [
+   10,
+   10
+  ],
+  "tiny.en-greedy-cpu|full|small_holes": [
+   2,
+   11
+  ],
+  "tiny.en-greedy-cpu|sampled|small_holes": [
+   2,
+   11
+  ],
+  "tiny.en-greedy-cpu|full|cut_ends": [
+   15,
+   40
+  ],
+  "tiny.en-greedy-cpu|sampled|cut_ends": [
+   15,
+   40
+  ],
+  "tiny.en-cpu|full|clean": [
+   9,
+   10
+  ],
+  "tiny.en-cpu|sampled|clean": [
+   10,
+   10
+  ],
+  "tiny.en-cpu|full|offset": [
+   50,
+   50
+  ],
+  "tiny.en-cpu|sampled|offset": [
+   50,
+   50
+  ],
+  "tiny.en-cpu|full|offset_boundary": [
+   5,
+   10
+  ],
+  "tiny.en-cpu|sampled|offset_boundary": [
+   4,
+   10
+  ],
+  "tiny.en-cpu|full|rate": [
+   158,
+   160
+  ],
+  "tiny.en-cpu|sampled|rate": [
+   158,
+   160
+  ],
+  "tiny.en-cpu|full|blocks": [
+   199,
+   200
+  ],
+  "tiny.en-cpu|sampled|blocks": [
+   190,
+   200
+  ],
+  "tiny.en-cpu|full|holes": [
+   36,
+   39
+  ],
+  "tiny.en-cpu|sampled|holes": [
+   34,
+   39
+  ],
+  "tiny.en-cpu|full|dropdup": [
+   10,
+   10
+  ],
+  "tiny.en-cpu|sampled|dropdup": [
+   10,
+   10
+  ],
+  "tiny.en-cpu|full|jitter": [
+   10,
+   10
+  ],
+  "tiny.en-cpu|sampled|jitter": [
+   10,
+   10
+  ],
+  "tiny.en-cpu|full|wrong_episode": [
+   10,
+   10
+  ],
+  "tiny.en-cpu|sampled|wrong_episode": [
+   10,
+   10
+  ],
+  "tiny.en-cpu|full|swap": [
+   20,
+   20
+  ],
+  "tiny.en-cpu|sampled|swap": [
+   20,
+   20
+  ],
+  "tiny.en-cpu|full|drift_swap": [
+   10,
+   10
+  ],
+  "tiny.en-cpu|sampled|drift_swap": [
+   10,
+   10
+  ],
+  "tiny.en-cpu|full|small_holes": [
+   2,
+   11
+  ],
+  "tiny.en-cpu|sampled|small_holes": [
+   2,
+   11
+  ],
+  "tiny.en-cpu|full|cut_ends": [
+   17,
+   40
+  ],
+  "tiny.en-cpu|sampled|cut_ends": [
+   13,
+   40
+  ],
+  "tiny.en-q5_1-cpu|full|clean": [
+   9,
+   10
+  ],
+  "tiny.en-q5_1-cpu|sampled|clean": [
+   9,
+   10
+  ],
+  "tiny.en-q5_1-cpu|full|offset": [
+   50,
+   50
+  ],
+  "tiny.en-q5_1-cpu|sampled|offset": [
+   50,
+   50
+  ],
+  "tiny.en-q5_1-cpu|full|offset_boundary": [
+   3,
+   10
+  ],
+  "tiny.en-q5_1-cpu|sampled|offset_boundary": [
+   3,
+   10
+  ],
+  "tiny.en-q5_1-cpu|full|rate": [
+   154,
+   160
+  ],
+  "tiny.en-q5_1-cpu|sampled|rate": [
+   157,
+   160
+  ],
+  "tiny.en-q5_1-cpu|full|blocks": [
+   198,
+   200
+  ],
+  "tiny.en-q5_1-cpu|sampled|blocks": [
+   192,
+   200
+  ],
+  "tiny.en-q5_1-cpu|full|holes": [
+   31,
+   39
+  ],
+  "tiny.en-q5_1-cpu|sampled|holes": [
+   37,
+   39
+  ],
+  "tiny.en-q5_1-cpu|full|dropdup": [
+   10,
+   10
+  ],
+  "tiny.en-q5_1-cpu|sampled|dropdup": [
+   10,
+   10
+  ],
+  "tiny.en-q5_1-cpu|full|jitter": [
+   10,
+   10
+  ],
+  "tiny.en-q5_1-cpu|sampled|jitter": [
+   10,
+   10
+  ],
+  "tiny.en-q5_1-cpu|full|wrong_episode": [
+   10,
+   10
+  ],
+  "tiny.en-q5_1-cpu|sampled|wrong_episode": [
+   10,
+   10
+  ],
+  "tiny.en-q5_1-cpu|full|swap": [
+   20,
+   20
+  ],
+  "tiny.en-q5_1-cpu|sampled|swap": [
+   20,
+   20
+  ],
+  "tiny.en-q5_1-cpu|full|drift_swap": [
+   10,
+   10
+  ],
+  "tiny.en-q5_1-cpu|sampled|drift_swap": [
+   10,
+   10
+  ],
+  "tiny.en-q5_1-cpu|full|small_holes": [
+   2,
+   11
+  ],
+  "tiny.en-q5_1-cpu|sampled|small_holes": [
+   2,
+   11
+  ],
+  "tiny.en-q5_1-cpu|full|cut_ends": [
+   17,
+   40
+  ],
+  "tiny.en-q5_1-cpu|sampled|cut_ends": [
+   16,
+   40
+  ],
+  "base.en-greedy-cpu|full|clean": [
+   8,
+   10
+  ],
+  "base.en-greedy-cpu|sampled|clean": [
+   9,
+   10
+  ],
+  "base.en-greedy-cpu|full|offset": [
+   50,
+   50
+  ],
+  "base.en-greedy-cpu|sampled|offset": [
+   50,
+   50
+  ],
+  "base.en-greedy-cpu|full|offset_boundary": [
+   3,
+   10
+  ],
+  "base.en-greedy-cpu|sampled|offset_boundary": [
+   5,
+   10
+  ],
+  "base.en-greedy-cpu|full|rate": [
+   157,
+   160
+  ],
+  "base.en-greedy-cpu|sampled|rate": [
+   154,
+   160
+  ],
+  "base.en-greedy-cpu|full|blocks": [
+   200,
+   200
+  ],
+  "base.en-greedy-cpu|sampled|blocks": [
+   192,
+   200
+  ],
+  "base.en-greedy-cpu|full|holes": [
+   32,
+   39
+  ],
+  "base.en-greedy-cpu|sampled|holes": [
+   34,
+   39
+  ],
+  "base.en-greedy-cpu|full|dropdup": [
+   10,
+   10
+  ],
+  "base.en-greedy-cpu|sampled|dropdup": [
+   10,
+   10
+  ],
+  "base.en-greedy-cpu|full|jitter": [
+   10,
+   10
+  ],
+  "base.en-greedy-cpu|sampled|jitter": [
+   10,
+   10
+  ],
+  "base.en-greedy-cpu|full|wrong_episode": [
+   10,
+   10
+  ],
+  "base.en-greedy-cpu|sampled|wrong_episode": [
+   10,
+   10
+  ],
+  "base.en-greedy-cpu|full|swap": [
+   20,
+   20
+  ],
+  "base.en-greedy-cpu|sampled|swap": [
+   20,
+   20
+  ],
+  "base.en-greedy-cpu|full|drift_swap": [
+   9,
+   10
+  ],
+  "base.en-greedy-cpu|sampled|drift_swap": [
+   9,
+   10
+  ],
+  "base.en-greedy-cpu|full|small_holes": [
+   2,
+   11
+  ],
+  "base.en-greedy-cpu|sampled|small_holes": [
+   2,
+   11
+  ],
+  "base.en-greedy-cpu|full|cut_ends": [
+   15,
+   40
+  ],
+  "base.en-greedy-cpu|sampled|cut_ends": [
+   13,
+   40
+  ],
+  "base.en-cpu|full|clean": [
+   7,
+   10
+  ],
+  "base.en-cpu|sampled|clean": [
+   9,
+   10
+  ],
+  "base.en-cpu|full|offset": [
+   50,
+   50
+  ],
+  "base.en-cpu|sampled|offset": [
+   50,
+   50
+  ],
+  "base.en-cpu|full|offset_boundary": [
+   5,
+   10
+  ],
+  "base.en-cpu|sampled|offset_boundary": [
+   2,
+   10
+  ],
+  "base.en-cpu|full|rate": [
+   149,
+   160
+  ],
+  "base.en-cpu|sampled|rate": [
+   154,
+   160
+  ],
+  "base.en-cpu|full|blocks": [
+   199,
+   200
+  ],
+  "base.en-cpu|sampled|blocks": [
+   191,
+   200
+  ],
+  "base.en-cpu|full|holes": [
+   36,
+   39
+  ],
+  "base.en-cpu|sampled|holes": [
+   36,
+   39
+  ],
+  "base.en-cpu|full|dropdup": [
+   10,
+   10
+  ],
+  "base.en-cpu|sampled|dropdup": [
+   10,
+   10
+  ],
+  "base.en-cpu|full|jitter": [
+   10,
+   10
+  ],
+  "base.en-cpu|sampled|jitter": [
+   10,
+   10
+  ],
+  "base.en-cpu|full|wrong_episode": [
+   10,
+   10
+  ],
+  "base.en-cpu|sampled|wrong_episode": [
+   10,
+   10
+  ],
+  "base.en-cpu|full|swap": [
+   20,
+   20
+  ],
+  "base.en-cpu|sampled|swap": [
+   20,
+   20
+  ],
+  "base.en-cpu|full|drift_swap": [
+   10,
+   10
+  ],
+  "base.en-cpu|sampled|drift_swap": [
+   10,
+   10
+  ],
+  "base.en-cpu|full|small_holes": [
+   3,
+   11
+  ],
+  "base.en-cpu|sampled|small_holes": [
+   2,
+   11
+  ],
+  "base.en-cpu|full|cut_ends": [
+   20,
+   40
+  ],
+  "base.en-cpu|sampled|cut_ends": [
+   15,
+   40
+  ],
+  "base.en-q5_1-cpu|full|clean": [
+   9,
+   10
+  ],
+  "base.en-q5_1-cpu|sampled|clean": [
+   9,
+   10
+  ],
+  "base.en-q5_1-cpu|full|offset": [
+   50,
+   50
+  ],
+  "base.en-q5_1-cpu|sampled|offset": [
+   50,
+   50
+  ],
+  "base.en-q5_1-cpu|full|offset_boundary": [
+   5,
+   10
+  ],
+  "base.en-q5_1-cpu|sampled|offset_boundary": [
+   3,
+   10
+  ],
+  "base.en-q5_1-cpu|full|rate": [
+   159,
+   160
+  ],
+  "base.en-q5_1-cpu|sampled|rate": [
+   159,
+   160
+  ],
+  "base.en-q5_1-cpu|full|blocks": [
+   199,
+   200
+  ],
+  "base.en-q5_1-cpu|sampled|blocks": [
+   192,
+   200
+  ],
+  "base.en-q5_1-cpu|full|holes": [
+   30,
+   39
+  ],
+  "base.en-q5_1-cpu|sampled|holes": [
+   33,
+   39
+  ],
+  "base.en-q5_1-cpu|full|dropdup": [
+   10,
+   10
+  ],
+  "base.en-q5_1-cpu|sampled|dropdup": [
+   10,
+   10
+  ],
+  "base.en-q5_1-cpu|full|jitter": [
+   10,
+   10
+  ],
+  "base.en-q5_1-cpu|sampled|jitter": [
+   10,
+   10
+  ],
+  "base.en-q5_1-cpu|full|wrong_episode": [
+   10,
+   10
+  ],
+  "base.en-q5_1-cpu|sampled|wrong_episode": [
+   10,
+   10
+  ],
+  "base.en-q5_1-cpu|full|swap": [
+   20,
+   20
+  ],
+  "base.en-q5_1-cpu|sampled|swap": [
+   20,
+   20
+  ],
+  "base.en-q5_1-cpu|full|drift_swap": [
+   10,
+   10
+  ],
+  "base.en-q5_1-cpu|sampled|drift_swap": [
+   10,
+   10
+  ],
+  "base.en-q5_1-cpu|full|small_holes": [
+   2,
+   11
+  ],
+  "base.en-q5_1-cpu|sampled|small_holes": [
+   1,
+   11
+  ],
+  "base.en-q5_1-cpu|full|cut_ends": [
+   14,
+   40
+  ],
+  "base.en-q5_1-cpu|sampled|cut_ends": [
+   14,
+   40
+  ],
+  "small.en-greedy|full|clean": [
+   5,
+   10
+  ],
+  "small.en-greedy|sampled|clean": [
+   9,
+   10
+  ],
+  "small.en-greedy|full|offset": [
+   50,
+   50
+  ],
+  "small.en-greedy|sampled|offset": [
+   50,
+   50
+  ],
+  "small.en-greedy|full|offset_boundary": [
+   5,
+   10
+  ],
+  "small.en-greedy|sampled|offset_boundary": [
+   4,
+   10
+  ],
+  "small.en-greedy|full|rate": [
+   157,
+   160
+  ],
+  "small.en-greedy|sampled|rate": [
+   158,
+   160
+  ],
+  "small.en-greedy|full|blocks": [
+   200,
+   200
+  ],
+  "small.en-greedy|sampled|blocks": [
+   193,
+   200
+  ],
+  "small.en-greedy|full|holes": [
+   36,
+   39
+  ],
+  "small.en-greedy|sampled|holes": [
+   34,
+   39
+  ],
+  "small.en-greedy|full|dropdup": [
+   10,
+   10
+  ],
+  "small.en-greedy|sampled|dropdup": [
+   10,
+   10
+  ],
+  "small.en-greedy|full|jitter": [
+   10,
+   10
+  ],
+  "small.en-greedy|sampled|jitter": [
+   10,
+   10
+  ],
+  "small.en-greedy|full|wrong_episode": [
+   10,
+   10
+  ],
+  "small.en-greedy|sampled|wrong_episode": [
+   10,
+   10
+  ],
+  "small.en-greedy|full|swap": [
+   20,
+   20
+  ],
+  "small.en-greedy|sampled|swap": [
+   20,
+   20
+  ],
+  "small.en-greedy|full|drift_swap": [
+   9,
+   10
+  ],
+  "small.en-greedy|sampled|drift_swap": [
+   9,
+   10
+  ],
+  "small.en-greedy|full|small_holes": [
+   6,
+   11
+  ],
+  "small.en-greedy|sampled|small_holes": [
+   0,
+   11
+  ],
+  "small.en-greedy|full|cut_ends": [
+   27,
+   40
+  ],
+  "small.en-greedy|sampled|cut_ends": [
+   16,
+   40
+  ],
+  "small.en|full|clean": [
+   5,
+   10
+  ],
+  "small.en|sampled|clean": [
+   9,
+   10
+  ],
+  "small.en|full|offset": [
+   50,
+   50
+  ],
+  "small.en|sampled|offset": [
+   50,
+   50
+  ],
+  "small.en|full|offset_boundary": [
+   7,
+   10
+  ],
+  "small.en|sampled|offset_boundary": [
+   4,
+   10
+  ],
+  "small.en|full|rate": [
+   157,
+   160
+  ],
+  "small.en|sampled|rate": [
+   157,
+   160
+  ],
+  "small.en|full|blocks": [
+   200,
+   200
+  ],
+  "small.en|sampled|blocks": [
+   195,
+   200
+  ],
+  "small.en|full|holes": [
+   37,
+   39
+  ],
+  "small.en|sampled|holes": [
+   36,
+   39
+  ],
+  "small.en|full|dropdup": [
+   10,
+   10
+  ],
+  "small.en|sampled|dropdup": [
+   10,
+   10
+  ],
+  "small.en|full|jitter": [
+   10,
+   10
+  ],
+  "small.en|sampled|jitter": [
+   10,
+   10
+  ],
+  "small.en|full|wrong_episode": [
+   10,
+   10
+  ],
+  "small.en|sampled|wrong_episode": [
+   10,
+   10
+  ],
+  "small.en|full|swap": [
+   20,
+   20
+  ],
+  "small.en|sampled|swap": [
+   20,
+   20
+  ],
+  "small.en|full|drift_swap": [
+   10,
+   10
+  ],
+  "small.en|sampled|drift_swap": [
+   10,
+   10
+  ],
+  "small.en|full|small_holes": [
+   6,
+   11
+  ],
+  "small.en|sampled|small_holes": [
+   1,
+   11
+  ],
+  "small.en|full|cut_ends": [
+   29,
+   40
+  ],
+  "small.en|sampled|cut_ends": [
+   16,
+   40
+  ],
+  "small.en-q5_1|full|clean": [
+   5,
+   10
+  ],
+  "small.en-q5_1|sampled|clean": [
+   8,
+   10
+  ],
+  "small.en-q5_1|full|offset": [
+   49,
+   50
+  ],
+  "small.en-q5_1|sampled|offset": [
+   49,
+   50
+  ],
+  "small.en-q5_1|full|offset_boundary": [
+   6,
+   10
+  ],
+  "small.en-q5_1|sampled|offset_boundary": [
+   5,
+   10
+  ],
+  "small.en-q5_1|full|rate": [
+   153,
+   160
+  ],
+  "small.en-q5_1|sampled|rate": [
+   155,
+   160
+  ],
+  "small.en-q5_1|full|blocks": [
+   200,
+   200
+  ],
+  "small.en-q5_1|sampled|blocks": [
+   193,
+   200
+  ],
+  "small.en-q5_1|full|holes": [
+   38,
+   39
+  ],
+  "small.en-q5_1|sampled|holes": [
+   37,
+   39
+  ],
+  "small.en-q5_1|full|dropdup": [
+   10,
+   10
+  ],
+  "small.en-q5_1|sampled|dropdup": [
+   10,
+   10
+  ],
+  "small.en-q5_1|full|jitter": [
+   10,
+   10
+  ],
+  "small.en-q5_1|sampled|jitter": [
+   10,
+   10
+  ],
+  "small.en-q5_1|full|wrong_episode": [
+   10,
+   10
+  ],
+  "small.en-q5_1|sampled|wrong_episode": [
+   10,
+   10
+  ],
+  "small.en-q5_1|full|swap": [
+   20,
+   20
+  ],
+  "small.en-q5_1|sampled|swap": [
+   20,
+   20
+  ],
+  "small.en-q5_1|full|drift_swap": [
+   10,
+   10
+  ],
+  "small.en-q5_1|sampled|drift_swap": [
+   10,
+   10
+  ],
+  "small.en-q5_1|full|small_holes": [
+   7,
+   11
+  ],
+  "small.en-q5_1|sampled|small_holes": [
+   4,
+   11
+  ],
+  "small.en-q5_1|full|cut_ends": [
+   28,
+   40
+  ],
+  "small.en-q5_1|sampled|cut_ends": [
+   17,
+   40
+  ],
+  "medium.en-greedy|full|clean": [
+   8,
+   10
+  ],
+  "medium.en-greedy|sampled|clean": [
+   10,
+   10
+  ],
+  "medium.en-greedy|full|offset": [
+   49,
+   50
+  ],
+  "medium.en-greedy|sampled|offset": [
+   50,
+   50
+  ],
+  "medium.en-greedy|full|offset_boundary": [
+   6,
+   10
+  ],
+  "medium.en-greedy|sampled|offset_boundary": [
+   5,
+   10
+  ],
+  "medium.en-greedy|full|rate": [
+   159,
+   160
+  ],
+  "medium.en-greedy|sampled|rate": [
+   159,
+   160
+  ],
+  "medium.en-greedy|full|blocks": [
+   200,
+   200
+  ],
+  "medium.en-greedy|sampled|blocks": [
+   194,
+   200
+  ],
+  "medium.en-greedy|full|holes": [
+   33,
+   39
+  ],
+  "medium.en-greedy|sampled|holes": [
+   34,
+   39
+  ],
+  "medium.en-greedy|full|dropdup": [
+   10,
+   10
+  ],
+  "medium.en-greedy|sampled|dropdup": [
+   10,
+   10
+  ],
+  "medium.en-greedy|full|jitter": [
+   10,
+   10
+  ],
+  "medium.en-greedy|sampled|jitter": [
+   10,
+   10
+  ],
+  "medium.en-greedy|full|wrong_episode": [
+   10,
+   10
+  ],
+  "medium.en-greedy|sampled|wrong_episode": [
+   10,
+   10
+  ],
+  "medium.en-greedy|full|swap": [
+   20,
+   20
+  ],
+  "medium.en-greedy|sampled|swap": [
+   20,
+   20
+  ],
+  "medium.en-greedy|full|drift_swap": [
+   10,
+   10
+  ],
+  "medium.en-greedy|sampled|drift_swap": [
+   10,
+   10
+  ],
+  "medium.en-greedy|full|small_holes": [
+   3,
+   11
+  ],
+  "medium.en-greedy|sampled|small_holes": [
+   0,
+   11
+  ],
+  "medium.en-greedy|full|cut_ends": [
+   19,
+   40
+  ],
+  "medium.en-greedy|sampled|cut_ends": [
+   14,
+   40
+  ],
+  "medium.en|full|clean": [
+   6,
+   10
+  ],
+  "medium.en|sampled|clean": [
+   8,
+   10
+  ],
+  "medium.en|full|offset": [
+   50,
+   50
+  ],
+  "medium.en|sampled|offset": [
+   50,
+   50
+  ],
+  "medium.en|full|offset_boundary": [
+   5,
+   10
+  ],
+  "medium.en|sampled|offset_boundary": [
+   5,
+   10
+  ],
+  "medium.en|full|rate": [
+   158,
+   160
+  ],
+  "medium.en|sampled|rate": [
+   156,
+   160
+  ],
+  "medium.en|full|blocks": [
+   200,
+   200
+  ],
+  "medium.en|sampled|blocks": [
+   197,
+   200
+  ],
+  "medium.en|full|holes": [
+   34,
+   39
+  ],
+  "medium.en|sampled|holes": [
+   34,
+   39
+  ],
+  "medium.en|full|dropdup": [
+   10,
+   10
+  ],
+  "medium.en|sampled|dropdup": [
+   10,
+   10
+  ],
+  "medium.en|full|jitter": [
+   10,
+   10
+  ],
+  "medium.en|sampled|jitter": [
+   10,
+   10
+  ],
+  "medium.en|full|wrong_episode": [
+   10,
+   10
+  ],
+  "medium.en|sampled|wrong_episode": [
+   10,
+   10
+  ],
+  "medium.en|full|swap": [
+   20,
+   20
+  ],
+  "medium.en|sampled|swap": [
+   20,
+   20
+  ],
+  "medium.en|full|drift_swap": [
+   10,
+   10
+  ],
+  "medium.en|sampled|drift_swap": [
+   9,
+   10
+  ],
+  "medium.en|full|small_holes": [
+   4,
+   11
+  ],
+  "medium.en|sampled|small_holes": [
+   1,
+   11
+  ],
+  "medium.en|full|cut_ends": [
+   27,
+   40
+  ],
+  "medium.en|sampled|cut_ends": [
+   20,
+   40
+  ],
+  "medium.en-q5_0|full|clean": [
+   6,
+   10
+  ],
+  "medium.en-q5_0|sampled|clean": [
+   9,
+   10
+  ],
+  "medium.en-q5_0|full|offset": [
+   50,
+   50
+  ],
+  "medium.en-q5_0|sampled|offset": [
+   50,
+   50
+  ],
+  "medium.en-q5_0|full|offset_boundary": [
+   6,
+   10
+  ],
+  "medium.en-q5_0|sampled|offset_boundary": [
+   3,
+   10
+  ],
+  "medium.en-q5_0|full|rate": [
+   155,
+   160
+  ],
+  "medium.en-q5_0|sampled|rate": [
+   155,
+   160
+  ],
+  "medium.en-q5_0|full|blocks": [
+   200,
+   200
+  ],
+  "medium.en-q5_0|sampled|blocks": [
+   193,
+   200
+  ],
+  "medium.en-q5_0|full|holes": [
+   36,
+   39
+  ],
+  "medium.en-q5_0|sampled|holes": [
+   36,
+   39
+  ],
+  "medium.en-q5_0|full|dropdup": [
+   10,
+   10
+  ],
+  "medium.en-q5_0|sampled|dropdup": [
+   10,
+   10
+  ],
+  "medium.en-q5_0|full|jitter": [
+   10,
+   10
+  ],
+  "medium.en-q5_0|sampled|jitter": [
+   10,
+   10
+  ],
+  "medium.en-q5_0|full|wrong_episode": [
+   10,
+   10
+  ],
+  "medium.en-q5_0|sampled|wrong_episode": [
+   10,
+   10
+  ],
+  "medium.en-q5_0|full|swap": [
+   20,
+   20
+  ],
+  "medium.en-q5_0|sampled|swap": [
+   20,
+   20
+  ],
+  "medium.en-q5_0|full|drift_swap": [
+   10,
+   10
+  ],
+  "medium.en-q5_0|sampled|drift_swap": [
+   10,
+   10
+  ],
+  "medium.en-q5_0|full|small_holes": [
+   7,
+   11
+  ],
+  "medium.en-q5_0|sampled|small_holes": [
+   4,
+   11
+  ],
+  "medium.en-q5_0|full|cut_ends": [
+   24,
+   40
+  ],
+  "medium.en-q5_0|sampled|cut_ends": [
+   15,
+   40
+  ],
+  "turbo-q8_0|full|clean": [
+   9,
+   10
+  ],
+  "turbo-q8_0|sampled|clean": [
+   10,
+   10
+  ],
+  "turbo-q8_0|full|offset": [
+   50,
+   50
+  ],
+  "turbo-q8_0|sampled|offset": [
+   50,
+   50
+  ],
+  "turbo-q8_0|full|offset_boundary": [
+   7,
+   10
+  ],
+  "turbo-q8_0|sampled|offset_boundary": [
+   7,
+   10
+  ],
+  "turbo-q8_0|full|rate": [
+   158,
+   160
+  ],
+  "turbo-q8_0|sampled|rate": [
+   152,
+   160
+  ],
+  "turbo-q8_0|full|blocks": [
+   200,
+   200
+  ],
+  "turbo-q8_0|sampled|blocks": [
+   195,
+   200
+  ],
+  "turbo-q8_0|full|holes": [
+   39,
+   39
+  ],
+  "turbo-q8_0|sampled|holes": [
+   38,
+   39
+  ],
+  "turbo-q8_0|full|dropdup": [
+   10,
+   10
+  ],
+  "turbo-q8_0|sampled|dropdup": [
+   10,
+   10
+  ],
+  "turbo-q8_0|full|jitter": [
+   10,
+   10
+  ],
+  "turbo-q8_0|sampled|jitter": [
+   10,
+   10
+  ],
+  "turbo-q8_0|full|wrong_episode": [
+   10,
+   10
+  ],
+  "turbo-q8_0|sampled|wrong_episode": [
+   10,
+   10
+  ],
+  "turbo-q8_0|full|swap": [
+   20,
+   20
+  ],
+  "turbo-q8_0|sampled|swap": [
+   20,
+   20
+  ],
+  "turbo-q8_0|full|drift_swap": [
+   10,
+   10
+  ],
+  "turbo-q8_0|sampled|drift_swap": [
+   10,
+   10
+  ],
+  "turbo-q8_0|full|small_holes": [
+   6,
+   11
+  ],
+  "turbo-q8_0|sampled|small_holes": [
+   5,
+   11
+  ],
+  "turbo-q8_0|full|cut_ends": [
+   23,
+   40
+  ],
+  "turbo-q8_0|sampled|cut_ends": [
+   20,
+   40
+  ],
+  "turbo-q5_0|full|clean": [
+   6,
+   10
+  ],
+  "turbo-q5_0|sampled|clean": [
+   9,
+   10
+  ],
+  "turbo-q5_0|full|offset": [
+   50,
+   50
+  ],
+  "turbo-q5_0|sampled|offset": [
+   50,
+   50
+  ],
+  "turbo-q5_0|full|offset_boundary": [
+   7,
+   10
+  ],
+  "turbo-q5_0|sampled|offset_boundary": [
+   7,
+   10
+  ],
+  "turbo-q5_0|full|rate": [
+   154,
+   160
+  ],
+  "turbo-q5_0|sampled|rate": [
+   156,
+   160
+  ],
+  "turbo-q5_0|full|blocks": [
+   200,
+   200
+  ],
+  "turbo-q5_0|sampled|blocks": [
+   190,
+   200
+  ],
+  "turbo-q5_0|full|holes": [
+   39,
+   39
+  ],
+  "turbo-q5_0|sampled|holes": [
+   38,
+   39
+  ],
+  "turbo-q5_0|full|dropdup": [
+   10,
+   10
+  ],
+  "turbo-q5_0|sampled|dropdup": [
+   10,
+   10
+  ],
+  "turbo-q5_0|full|jitter": [
+   10,
+   10
+  ],
+  "turbo-q5_0|sampled|jitter": [
+   10,
+   10
+  ],
+  "turbo-q5_0|full|wrong_episode": [
+   10,
+   10
+  ],
+  "turbo-q5_0|sampled|wrong_episode": [
+   10,
+   10
+  ],
+  "turbo-q5_0|full|swap": [
+   20,
+   20
+  ],
+  "turbo-q5_0|sampled|swap": [
+   20,
+   20
+  ],
+  "turbo-q5_0|full|drift_swap": [
+   10,
+   10
+  ],
+  "turbo-q5_0|sampled|drift_swap": [
+   10,
+   10
+  ],
+  "turbo-q5_0|full|small_holes": [
+   8,
+   11
+  ],
+  "turbo-q5_0|sampled|small_holes": [
+   7,
+   11
+  ],
+  "turbo-q5_0|full|cut_ends": [
+   28,
+   40
+  ],
+  "turbo-q5_0|sampled|cut_ends": [
+   22,
+   40
+  ],
+  "groq-turbo|full|clean": [
+   9,
+   10
+  ],
+  "groq-turbo|sampled|clean": [
+   9,
+   10
+  ],
+  "groq-turbo|full|offset": [
+   50,
+   50
+  ],
+  "groq-turbo|sampled|offset": [
+   50,
+   50
+  ],
+  "groq-turbo|full|offset_boundary": [
+   7,
+   10
+  ],
+  "groq-turbo|sampled|offset_boundary": [
+   7,
+   10
+  ],
+  "groq-turbo|full|rate": [
+   156,
+   160
+  ],
+  "groq-turbo|sampled|rate": [
+   158,
+   160
+  ],
+  "groq-turbo|full|blocks": [
+   200,
+   200
+  ],
+  "groq-turbo|sampled|blocks": [
+   193,
+   200
+  ],
+  "groq-turbo|full|holes": [
+   39,
+   39
+  ],
+  "groq-turbo|sampled|holes": [
+   38,
+   39
+  ],
+  "groq-turbo|full|dropdup": [
+   10,
+   10
+  ],
+  "groq-turbo|sampled|dropdup": [
+   10,
+   10
+  ],
+  "groq-turbo|full|jitter": [
+   10,
+   10
+  ],
+  "groq-turbo|sampled|jitter": [
+   10,
+   10
+  ],
+  "groq-turbo|full|wrong_episode": [
+   10,
+   10
+  ],
+  "groq-turbo|sampled|wrong_episode": [
+   10,
+   10
+  ],
+  "groq-turbo|full|swap": [
+   20,
+   20
+  ],
+  "groq-turbo|sampled|swap": [
+   20,
+   20
+  ],
+  "groq-turbo|full|drift_swap": [
+   10,
+   10
+  ],
+  "groq-turbo|sampled|drift_swap": [
+   10,
+   10
+  ],
+  "groq-turbo|full|small_holes": [
+   5,
+   11
+  ],
+  "groq-turbo|sampled|small_holes": [
+   5,
+   11
+  ],
+  "groq-turbo|full|cut_ends": [
+   20,
+   40
+  ],
+  "groq-turbo|sampled|cut_ends": [
+   20,
+   40
+  ]
+ },
+ "fails": {
+  "tiny.en-greedy-cpu|full|small_holes": [
+   "KG_BB_S01E01:hole_rand1",
+   "KG_BB_S01E01:hole_rand3",
+   "KG_PB_S05E01:hole_rand0",
+   "KG_SHAM_S05E06:hole_rand1",
+   "KG_BOYS_S01E01:hole_rand2",
+   "KG_BOYS_S01E01:hole_rand3",
+   "SH_S01E01:hole_rand0",
+   "SH_S01E01:hole_rand1",
+   "SH_S01E01:hole_rand2"
+  ],
+  "tiny.en-greedy-cpu|sampled|small_holes": [
+   "KG_BB_S01E01:hole_rand1",
+   "KG_BB_S01E01:hole_rand3",
+   "KG_PB_S05E01:hole_rand0",
+   "KG_SHAM_S05E06:hole_rand1",
+   "KG_BOYS_S01E01:hole_rand2",
+   "KG_BOYS_S01E01:hole_rand3",
+   "SH_S01E01:hole_rand0",
+   "SH_S01E01:hole_rand1",
+   "SH_S01E01:hole_rand2"
+  ],
+  "tiny.en-greedy-cpu|full|cut_ends": [
+   "KG_BB_S01E01:trunc_start_rand1",
+   "KG_BB_S01E01:trunc_end_rand0",
+   "KG_BB_S01E01:trunc_end_rand1",
+   "KG_BIL_S01E01:trunc_start_rand1",
+   "KG_BIL_S01E01:trunc_end_rand0",
+   "KG_BIL_S01E01:trunc_end_rand1",
+   "KG_BMS_S01E01:trunc_end_rand1",
+   "KG_BOB_S15E01:trunc_end_rand0",
+   "KG_BOB_S15E01:trunc_end_rand1",
+   "KG_EUP_S01E01:trunc_start_rand0",
+   "KG_EUP_S01E01:trunc_end_rand0",
+   "KG_EUP_S01E01:trunc_end_rand1",
+   "KG_PB_S05E01:trunc_start_rand0",
+   "KG_PB_S05E01:trunc_start_rand1",
+   "KG_PB_S05E01:trunc_end_rand0",
+   "KG_SHAM_S05E06:trunc_start_rand0",
+   "KG_SHAM_S05E06:trunc_start_rand1",
+   "KG_SHAM_S05E06:trunc_end_rand0",
+   "KG_SHAM_S05E06:trunc_end_rand1",
+   "KG_BOYS_S01E01:trunc_end_rand0",
+   "SH_S01E01:trunc_start_rand0",
+   "SH_S01E01:trunc_start_rand1",
+   "SH_S01E06:trunc_start_rand0",
+   "SH_S01E06:trunc_end_rand0",
+   "SH_S01E06:trunc_end_rand1"
+  ],
+  "tiny.en-greedy-cpu|sampled|cut_ends": [
+   "KG_BB_S01E01:trunc_start_rand1",
+   "KG_BB_S01E01:trunc_end_rand0",
+   "KG_BB_S01E01:trunc_end_rand1",
+   "KG_BIL_S01E01:trunc_start_rand1",
+   "KG_BIL_S01E01:trunc_end_rand0",
+   "KG_BMS_S01E01:trunc_start_rand1",
+   "KG_BMS_S01E01:trunc_end_rand1",
+   "KG_BOB_S15E01:trunc_end_rand0",
+   "KG_BOB_S15E01:trunc_end_rand1",
+   "KG_EUP_S01E01:trunc_start_rand0",
+   "KG_EUP_S01E01:trunc_end_rand0",
+   "KG_EUP_S01E01:trunc_end_rand1",
+   "KG_PB_S05E01:trunc_start_rand0",
+   "KG_PB_S05E01:trunc_start_rand1",
+   "KG_PB_S05E01:trunc_end_rand0",
+   "KG_SHAM_S05E06:trunc_start_rand0",
+   "KG_SHAM_S05E06:trunc_start_rand1",
+   "KG_SHAM_S05E06:trunc_end_rand0",
+   "KG_SHAM_S05E06:trunc_end_rand1",
+   "KG_BOYS_S01E01:trunc_end_rand0",
+   "SH_S01E01:trunc_start_rand0",
+   "SH_S01E01:trunc_start_rand1",
+   "SH_S01E06:trunc_start_rand0",
+   "SH_S01E06:trunc_end_rand0",
+   "SH_S01E06:trunc_end_rand1"
+  ],
+  "tiny.en-cpu|full|offset_boundary": [
+   "KG_BB_S01E01:uniform_p03",
+   "KG_BMS_S01E01:uniform_p03",
+   "KG_BOB_S15E01:uniform_p03",
+   "KG_PB_S05E01:uniform_p03",
+   "SH_S01E01:uniform_p03"
+  ],
+  "tiny.en-cpu|sampled|offset_boundary": [
+   "KG_BB_S01E01:uniform_p03",
+   "KG_BIL_S01E01:uniform_p03",
+   "KG_BMS_S01E01:uniform_p03",
+   "KG_BOB_S15E01:uniform_p03",
+   "KG_PB_S05E01:uniform_p03",
+   "KG_SHAM_S05E06:uniform_p03"
+  ],
+  "tiny.en-cpu|sampled|blocks": [
+   "KG_BB_S01E01:block_rand1",
+   "KG_BIL_S01E01:block_rand1",
+   "KG_BMS_S01E01:block_rand3",
+   "KG_BMS_S01E01:blocks_rand1",
+   "KG_BMS_S01E01:cutsteps_rand2",
+   "KG_PB_S05E01:blocks_rand1",
+   "KG_BOYS_S01E01:block_rand0",
+   "KG_BOYS_S01E01:blocks_rand1",
+   "SH_S01E01:block_rand2",
+   "SH_S01E01:block_rand3"
+  ],
+  "tiny.en-cpu|full|small_holes": [
+   "KG_BB_S01E01:hole_rand1",
+   "KG_BB_S01E01:hole_rand3",
+   "KG_PB_S05E01:hole_rand0",
+   "KG_SHAM_S05E06:hole_rand1",
+   "KG_BOYS_S01E01:hole_rand2",
+   "KG_BOYS_S01E01:hole_rand3",
+   "SH_S01E01:hole_rand0",
+   "SH_S01E01:hole_rand1",
+   "SH_S01E01:hole_rand2"
+  ],
+  "tiny.en-cpu|sampled|small_holes": [
+   "KG_BB_S01E01:hole_rand1",
+   "KG_BB_S01E01:hole_rand3",
+   "KG_PB_S05E01:hole_rand0",
+   "KG_SHAM_S05E06:hole_rand1",
+   "KG_BOYS_S01E01:hole_rand2",
+   "KG_BOYS_S01E01:hole_rand3",
+   "SH_S01E01:hole_rand0",
+   "SH_S01E01:hole_rand1",
+   "SH_S01E01:hole_rand2"
+  ],
+  "tiny.en-cpu|full|cut_ends": [
+   "KG_BB_S01E01:trunc_start_rand0",
+   "KG_BB_S01E01:trunc_start_rand1",
+   "KG_BB_S01E01:trunc_end_rand0",
+   "KG_BB_S01E01:trunc_end_rand1",
+   "KG_BIL_S01E01:trunc_start_rand1",
+   "KG_BIL_S01E01:trunc_end_rand0",
+   "KG_BIL_S01E01:trunc_end_rand1",
+   "KG_BMS_S01E01:trunc_end_rand0",
+   "KG_BMS_S01E01:trunc_end_rand1",
+   "KG_BOB_S15E01:trunc_end_rand0",
+   "KG_BOB_S15E01:trunc_end_rand1",
+   "KG_PB_S05E01:trunc_start_rand0",
+   "KG_PB_S05E01:trunc_start_rand1",
+   "KG_PB_S05E01:trunc_end_rand0",
+   "KG_SHAM_S05E06:trunc_start_rand0",
+   "KG_SHAM_S05E06:trunc_start_rand1",
+   "KG_SHAM_S05E06:trunc_end_rand0",
+   "KG_SHAM_S05E06:trunc_end_rand1",
+   "KG_BOYS_S01E01:trunc_end_rand0",
+   "KG_BOYS_S01E01:trunc_end_rand1",
+   "SH_S01E06:trunc_start_rand0",
+   "SH_S01E06:trunc_end_rand0",
+   "SH_S01E06:trunc_end_rand1"
+  ],
+  "tiny.en-cpu|sampled|cut_ends": [
+   "KG_BB_S01E01:trunc_start_rand0",
+   "KG_BB_S01E01:trunc_start_rand1",
+   "KG_BB_S01E01:trunc_end_rand0",
+   "KG_BB_S01E01:trunc_end_rand1",
+   "KG_BIL_S01E01:trunc_start_rand1",
+   "KG_BIL_S01E01:trunc_end_rand0",
+   "KG_BIL_S01E01:trunc_end_rand1",
+   "KG_BMS_S01E01:trunc_start_rand0",
+   "KG_BMS_S01E01:trunc_end_rand0",
+   "KG_BMS_S01E01:trunc_end_rand1",
+   "KG_BOB_S15E01:trunc_end_rand0",
+   "KG_BOB_S15E01:trunc_end_rand1",
+   "KG_EUP_S01E01:trunc_start_rand0",
+   "KG_EUP_S01E01:trunc_end_rand0",
+   "KG_EUP_S01E01:trunc_end_rand1",
+   "KG_PB_S05E01:trunc_start_rand0",
+   "KG_PB_S05E01:trunc_start_rand1",
+   "KG_PB_S05E01:trunc_end_rand0",
+   "KG_SHAM_S05E06:trunc_start_rand0",
+   "KG_SHAM_S05E06:trunc_start_rand1",
+   "KG_SHAM_S05E06:trunc_end_rand0",
+   "KG_SHAM_S05E06:trunc_end_rand1",
+   "SH_S01E01:trunc_start_rand0",
+   "SH_S01E01:trunc_start_rand1",
+   "SH_S01E06:trunc_start_rand0",
+   "SH_S01E06:trunc_end_rand0",
+   "SH_S01E06:trunc_end_rand1"
+  ],
+  "tiny.en-q5_1-cpu|full|offset_boundary": [
+   "KG_BB_S01E01:uniform_p03",
+   "KG_BIL_S01E01:uniform_p03",
+   "KG_BMS_S01E01:uniform_p03",
+   "KG_BOB_S15E01:uniform_p03",
+   "KG_EUP_S01E01:uniform_p03",
+   "KG_PB_S05E01:uniform_p03",
+   "KG_SHAM_S05E06:uniform_p03"
+  ],
+  "tiny.en-q5_1-cpu|sampled|offset_boundary": [
+   "KG_BB_S01E01:uniform_p03",
+   "KG_BIL_S01E01:uniform_p03",
+   "KG_BMS_S01E01:uniform_p03",
+   "KG_BOB_S15E01:uniform_p03",
+   "KG_EUP_S01E01:uniform_p03",
+   "KG_PB_S05E01:uniform_p03",
+   "KG_SHAM_S05E06:uniform_p03"
+  ],
+  "tiny.en-q5_1-cpu|sampled|blocks": [
+   "KG_BB_S01E01:block_rand1",
+   "KG_BMS_S01E01:block_rand2",
+   "KG_BMS_S01E01:block_rand3",
+   "KG_BMS_S01E01:cutsteps_rand2",
+   "KG_EUP_S01E01:blocks_rand0",
+   "KG_PB_S05E01:blocks_rand1",
+   "SH_S01E01:block_rand2",
+   "SH_S01E01:block_rand3"
+  ],
+  "tiny.en-q5_1-cpu|full|holes": [
+   "KG_BB_S01E01:hole_rand0",
+   "KG_BMS_S01E01:hole_rand1",
+   "KG_PB_S05E01:hole_rand1",
+   "KG_PB_S05E01:hole_rand3",
+   "KG_SHAM_S05E06:hole_rand2",
+   "KG_SHAM_S05E06:hole_rand3",
+   "KG_BOYS_S01E01:hole_rand1",
+   "SH_S01E06:hole_rand0"
+  ],
+  "tiny.en-q5_1-cpu|full|small_holes": [
+   "KG_BB_S01E01:hole_rand1",
+   "KG_BB_S01E01:hole_rand3",
+   "KG_PB_S05E01:hole_rand0",
+   "KG_SHAM_S05E06:hole_rand1",
+   "KG_BOYS_S01E01:hole_rand2",
+   "KG_BOYS_S01E01:hole_rand3",
+   "SH_S01E01:hole_rand0",
+   "SH_S01E01:hole_rand1",
+   "SH_S01E01:hole_rand2"
+  ],
+  "tiny.en-q5_1-cpu|sampled|small_holes": [
+   "KG_BB_S01E01:hole_rand1",
+   "KG_BB_S01E01:hole_rand3",
+   "KG_PB_S05E01:hole_rand0",
+   "KG_SHAM_S05E06:hole_rand1",
+   "KG_BOYS_S01E01:hole_rand2",
+   "KG_BOYS_S01E01:hole_rand3",
+   "SH_S01E01:hole_rand0",
+   "SH_S01E01:hole_rand1",
+   "SH_S01E01:hole_rand2"
+  ],
+  "tiny.en-q5_1-cpu|full|cut_ends": [
+   "KG_BB_S01E01:trunc_start_rand0",
+   "KG_BB_S01E01:trunc_start_rand1",
+   "KG_BB_S01E01:trunc_end_rand0",
+   "KG_BB_S01E01:trunc_end_rand1",
+   "KG_BMS_S01E01:trunc_end_rand1",
+   "KG_BOB_S15E01:trunc_end_rand0",
+   "KG_BOB_S15E01:trunc_end_rand1",
+   "KG_EUP_S01E01:trunc_start_rand0",
+   "KG_EUP_S01E01:trunc_end_rand0",
+   "KG_EUP_S01E01:trunc_end_rand1",
+   "KG_PB_S05E01:trunc_start_rand0",
+   "KG_PB_S05E01:trunc_start_rand1",
+   "KG_PB_S05E01:trunc_end_rand0",
+   "KG_PB_S05E01:trunc_end_rand1",
+   "KG_SHAM_S05E06:trunc_start_rand0",
+   "KG_SHAM_S05E06:trunc_start_rand1",
+   "KG_SHAM_S05E06:trunc_end_rand0",
+   "KG_SHAM_S05E06:trunc_end_rand1",
+   "KG_BOYS_S01E01:trunc_end_rand0",
+   "SH_S01E01:trunc_start_rand0",
+   "SH_S01E06:trunc_start_rand0",
+   "SH_S01E06:trunc_end_rand0",
+   "SH_S01E06:trunc_end_rand1"
+  ],
+  "tiny.en-q5_1-cpu|sampled|cut_ends": [
+   "KG_BB_S01E01:trunc_start_rand0",
+   "KG_BB_S01E01:trunc_start_rand1",
+   "KG_BB_S01E01:trunc_end_rand0",
+   "KG_BB_S01E01:trunc_end_rand1",
+   "KG_BMS_S01E01:trunc_start_rand0",
+   "KG_BMS_S01E01:trunc_end_rand1",
+   "KG_BOB_S15E01:trunc_end_rand0",
+   "KG_BOB_S15E01:trunc_end_rand1",
+   "KG_EUP_S01E01:trunc_start_rand0",
+   "KG_EUP_S01E01:trunc_end_rand0",
+   "KG_EUP_S01E01:trunc_end_rand1",
+   "KG_PB_S05E01:trunc_start_rand0",
+   "KG_PB_S05E01:trunc_start_rand1",
+   "KG_PB_S05E01:trunc_end_rand0",
+   "KG_SHAM_S05E06:trunc_start_rand0",
+   "KG_SHAM_S05E06:trunc_start_rand1",
+   "KG_SHAM_S05E06:trunc_end_rand0",
+   "KG_SHAM_S05E06:trunc_end_rand1",
+   "KG_BOYS_S01E01:trunc_end_rand0",
+   "SH_S01E01:trunc_start_rand0",
+   "SH_S01E01:trunc_start_rand1",
+   "SH_S01E06:trunc_start_rand0",
+   "SH_S01E06:trunc_end_rand0",
+   "SH_S01E06:trunc_end_rand1"
+  ],
+  "base.en-greedy-cpu|sampled|offset_boundary": [
+   "KG_BB_S01E01:uniform_p03",
+   "KG_BMS_S01E01:uniform_p03",
+   "KG_BOB_S15E01:uniform_p03",
+   "KG_EUP_S01E01:uniform_p03",
+   "KG_PB_S05E01:uniform_p03"
+  ],
+  "base.en-greedy-cpu|sampled|blocks": [
+   "KG_BB_S01E01:block_rand1",
+   "KG_BIL_S01E01:block_rand1",
+   "KG_BMS_S01E01:block_rand2",
+   "KG_BMS_S01E01:block_rand3",
+   "KG_BMS_S01E01:cutsteps_rand2",
+   "KG_BOYS_S01E01:blocks_rand1",
+   "SH_S01E01:block_rand2",
+   "SH_S01E01:block_rand3"
+  ],
+  "base.en-greedy-cpu|full|holes": [
+   "KG_BB_S01E01:hole_rand0",
+   "KG_BMS_S01E01:hole_rand1",
+   "KG_EUP_S01E01:missing_middle",
+   "KG_PB_S05E01:hole_rand3",
+   "KG_SHAM_S05E06:hole_rand3",
+   "KG_BOYS_S01E01:hole_rand0",
+   "KG_BOYS_S01E01:hole_rand1"
+  ],
+  "base.en-greedy-cpu|full|small_holes": [
+   "KG_BB_S01E01:hole_rand1",
+   "KG_BB_S01E01:hole_rand3",
+   "KG_EUP_S01E01:hole_rand2",
+   "KG_EUP_S01E01:hole_rand3",
+   "KG_BOYS_S01E01:hole_rand2",
+   "KG_BOYS_S01E01:hole_rand3",
+   "SH_S01E01:hole_rand0",
+   "SH_S01E01:hole_rand1",
+   "SH_S01E01:hole_rand2"
+  ],
+  "base.en-greedy-cpu|sampled|small_holes": [
+   "KG_BB_S01E01:hole_rand1",
+   "KG_BB_S01E01:hole_rand3",
+   "KG_EUP_S01E01:hole_rand2",
+   "KG_EUP_S01E01:hole_rand3",
+   "KG_BOYS_S01E01:hole_rand2",
+   "KG_BOYS_S01E01:hole_rand3",
+   "SH_S01E01:hole_rand0",
+   "SH_S01E01:hole_rand1",
+   "SH_S01E01:hole_rand2"
+  ],
+  "base.en-greedy-cpu|full|cut_ends": [
+   "KG_BB_S01E01:trunc_start_rand0",
+   "KG_BB_S01E01:trunc_start_rand1",
+   "KG_BB_S01E01:trunc_end_rand0",
+   "KG_BB_S01E01:trunc_end_rand1",
+   "KG_BMS_S01E01:trunc_start_rand0",
+   "KG_BMS_S01E01:trunc_end_rand0",
+   "KG_BMS_S01E01:trunc_end_rand1",
+   "KG_BOB_S15E01:trunc_end_rand0",
+   "KG_BOB_S15E01:trunc_end_rand1",
+   "KG_EUP_S01E01:trunc_start_rand0",
+   "KG_EUP_S01E01:trunc_end_rand0",
+   "KG_EUP_S01E01:trunc_end_rand1",
+   "KG_SHAM_S05E06:trunc_start_rand0",
+   "KG_SHAM_S05E06:trunc_start_rand1",
+   "KG_SHAM_S05E06:trunc_end_rand0",
+   "KG_SHAM_S05E06:trunc_end_rand1",
+   "KG_BOYS_S01E01:trunc_start_rand0",
+   "KG_BOYS_S01E01:trunc_end_rand0",
+   "KG_BOYS_S01E01:trunc_end_rand1",
+   "SH_S01E01:trunc_start_rand0",
+   "SH_S01E01:trunc_start_rand1",
+   "SH_S01E06:trunc_start_rand0",
+   "SH_S01E06:trunc_start_rand1",
+   "SH_S01E06:trunc_end_rand0",
+   "SH_S01E06:trunc_end_rand1"
+  ],
+  "base.en-greedy-cpu|sampled|cut_ends": [
+   "KG_BB_S01E01:trunc_start_rand0",
+   "KG_BB_S01E01:trunc_start_rand1",
+   "KG_BB_S01E01:trunc_end_rand0",
+   "KG_BB_S01E01:trunc_end_rand1",
+   "KG_BIL_S01E01:trunc_start_rand1",
+   "KG_BIL_S01E01:trunc_end_rand0",
+   "KG_BIL_S01E01:trunc_end_rand1",
+   "KG_BMS_S01E01:trunc_start_rand0",
+   "KG_BMS_S01E01:trunc_end_rand0",
+   "KG_BMS_S01E01:trunc_end_rand1",
+   "KG_BOB_S15E01:trunc_end_rand0",
+   "KG_BOB_S15E01:trunc_end_rand1",
+   "KG_EUP_S01E01:trunc_start_rand0",
+   "KG_EUP_S01E01:trunc_end_rand0",
+   "KG_EUP_S01E01:trunc_end_rand1",
+   "KG_SHAM_S05E06:trunc_start_rand0",
+   "KG_SHAM_S05E06:trunc_start_rand1",
+   "KG_SHAM_S05E06:trunc_end_rand0",
+   "KG_SHAM_S05E06:trunc_end_rand1",
+   "KG_BOYS_S01E01:trunc_start_rand0",
+   "KG_BOYS_S01E01:trunc_end_rand0",
+   "KG_BOYS_S01E01:trunc_end_rand1",
+   "SH_S01E01:trunc_start_rand0",
+   "SH_S01E01:trunc_start_rand1",
+   "SH_S01E06:trunc_start_rand0",
+   "SH_S01E06:trunc_end_rand0",
+   "SH_S01E06:trunc_end_rand1"
+  ],
+  "base.en-cpu|full|offset_boundary": [
+   "KG_BB_S01E01:uniform_p03",
+   "KG_BMS_S01E01:uniform_p03",
+   "KG_BOB_S15E01:uniform_p03",
+   "KG_PB_S05E01:uniform_p03",
+   "KG_SHAM_S05E06:uniform_p03"
+  ],
+  "base.en-cpu|sampled|offset_boundary": [
+   "KG_BB_S01E01:uniform_p03",
+   "KG_BIL_S01E01:uniform_p03",
+   "KG_BMS_S01E01:uniform_p03",
+   "KG_BOB_S15E01:uniform_p03",
+   "KG_EUP_S01E01:uniform_p03",
+   "KG_PB_S05E01:uniform_p03",
+   "KG_SHAM_S05E06:uniform_p03",
+   "SH_S01E06:uniform_p03"
+  ],
+  "base.en-cpu|sampled|blocks": [
+   "KG_BB_S01E01:block_rand1",
+   "KG_BIL_S01E01:block_rand1",
+   "KG_BMS_S01E01:block_rand3",
+   "KG_BOB_S15E01:cutsteps_rand9",
+   "KG_PB_S05E01:blocks_rand1",
+   "KG_BOYS_S01E01:block_rand1",
+   "KG_BOYS_S01E01:blocks_rand1",
+   "SH_S01E01:block_rand2",
+   "SH_S01E01:block_rand3"
+  ],
+  "base.en-cpu|full|small_holes": [
+   "KG_BB_S01E01:hole_rand1",
+   "KG_BB_S01E01:hole_rand3",
+   "KG_PB_S05E01:hole_rand0",
+   "KG_BOYS_S01E01:hole_rand2",
+   "KG_BOYS_S01E01:hole_rand3",
+   "SH_S01E01:hole_rand0",
+   "SH_S01E01:hole_rand1",
+   "SH_S01E01:hole_rand2"
+  ],
+  "base.en-cpu|sampled|small_holes": [
+   "KG_BB_S01E01:hole_rand1",
+   "KG_BB_S01E01:hole_rand3",
+   "KG_PB_S05E01:hole_rand0",
+   "KG_SHAM_S05E06:hole_rand1",
+   "KG_BOYS_S01E01:hole_rand2",
+   "KG_BOYS_S01E01:hole_rand3",
+   "SH_S01E01:hole_rand0",
+   "SH_S01E01:hole_rand1",
+   "SH_S01E01:hole_rand2"
+  ],
+  "base.en-cpu|full|cut_ends": [
+   "KG_BB_S01E01:trunc_start_rand0",
+   "KG_BB_S01E01:trunc_start_rand1",
+   "KG_BB_S01E01:trunc_end_rand0",
+   "KG_BB_S01E01:trunc_end_rand1",
+   "KG_BIL_S01E01:trunc_start_rand1",
+   "KG_BIL_S01E01:trunc_end_rand0",
+   "KG_BIL_S01E01:trunc_end_rand1",
+   "KG_BMS_S01E01:trunc_start_rand0",
+   "KG_BMS_S01E01:trunc_end_rand0",
+   "KG_BMS_S01E01:trunc_end_rand1",
+   "KG_BOB_S15E01:trunc_end_rand0",
+   "KG_BOB_S15E01:trunc_end_rand1",
+   "KG_PB_S05E01:trunc_start_rand0",
+   "KG_PB_S05E01:trunc_start_rand1",
+   "KG_PB_S05E01:trunc_end_rand0",
+   "KG_SHAM_S05E06:trunc_start_rand0",
+   "KG_SHAM_S05E06:trunc_start_rand1",
+   "KG_BOYS_S01E01:trunc_start_rand0",
+   "SH_S01E01:trunc_start_rand0",
+   "SH_S01E01:trunc_start_rand1"
+  ],
+  "base.en-cpu|sampled|cut_ends": [
+   "KG_BB_S01E01:trunc_start_rand0",
+   "KG_BB_S01E01:trunc_start_rand1",
+   "KG_BB_S01E01:trunc_end_rand0",
+   "KG_BB_S01E01:trunc_end_rand1",
+   "KG_BIL_S01E01:trunc_start_rand1",
+   "KG_BIL_S01E01:trunc_end_rand0",
+   "KG_BIL_S01E01:trunc_end_rand1",
+   "KG_BMS_S01E01:trunc_start_rand0",
+   "KG_BMS_S01E01:trunc_end_rand0",
+   "KG_BMS_S01E01:trunc_end_rand1",
+   "KG_BOB_S15E01:trunc_end_rand0",
+   "KG_BOB_S15E01:trunc_end_rand1",
+   "KG_PB_S05E01:trunc_start_rand0",
+   "KG_PB_S05E01:trunc_start_rand1",
+   "KG_PB_S05E01:trunc_end_rand0",
+   "KG_SHAM_S05E06:trunc_start_rand0",
+   "KG_SHAM_S05E06:trunc_start_rand1",
+   "KG_SHAM_S05E06:trunc_end_rand0",
+   "KG_SHAM_S05E06:trunc_end_rand1",
+   "KG_BOYS_S01E01:trunc_start_rand0",
+   "SH_S01E01:trunc_start_rand0",
+   "SH_S01E01:trunc_start_rand1",
+   "SH_S01E06:trunc_start_rand0",
+   "SH_S01E06:trunc_end_rand0",
+   "SH_S01E06:trunc_end_rand1"
+  ],
+  "base.en-q5_1-cpu|sampled|offset_boundary": [
+   "KG_BB_S01E01:uniform_p03",
+   "KG_BMS_S01E01:uniform_p03",
+   "KG_BOB_S15E01:uniform_p03",
+   "KG_EUP_S01E01:uniform_p03",
+   "KG_PB_S05E01:uniform_p03",
+   "KG_SHAM_S05E06:uniform_p03",
+   "SH_S01E06:uniform_p03"
+  ],
+  "base.en-q5_1-cpu|full|holes": [
+   "KG_BB_S01E01:hole_rand0",
+   "KG_BMS_S01E01:hole_rand1",
+   "KG_BOB_S15E01:hole_rand0",
+   "KG_EUP_S01E01:missing_middle",
+   "KG_PB_S05E01:hole_rand1",
+   "KG_SHAM_S05E06:hole_rand2",
+   "KG_SHAM_S05E06:hole_rand3",
+   "KG_BOYS_S01E01:hole_rand0",
+   "KG_BOYS_S01E01:hole_rand1"
+  ],
+  "base.en-q5_1-cpu|full|small_holes": [
+   "KG_BB_S01E01:hole_rand3",
+   "KG_EUP_S01E01:hole_rand2",
+   "KG_EUP_S01E01:hole_rand3",
+   "KG_PB_S05E01:hole_rand0",
+   "KG_BOYS_S01E01:hole_rand2",
+   "KG_BOYS_S01E01:hole_rand3",
+   "SH_S01E01:hole_rand0",
+   "SH_S01E01:hole_rand1",
+   "SH_S01E01:hole_rand2"
+  ],
+  "base.en-q5_1-cpu|sampled|small_holes": [
+   "KG_BB_S01E01:hole_rand3",
+   "KG_EUP_S01E01:hole_rand2",
+   "KG_EUP_S01E01:hole_rand3",
+   "KG_PB_S05E01:hole_rand0",
+   "KG_SHAM_S05E06:hole_rand1",
+   "KG_BOYS_S01E01:hole_rand2",
+   "KG_BOYS_S01E01:hole_rand3",
+   "SH_S01E01:hole_rand0",
+   "SH_S01E01:hole_rand1",
+   "SH_S01E01:hole_rand2"
+  ],
+  "base.en-q5_1-cpu|full|cut_ends": [
+   "KG_BB_S01E01:trunc_start_rand0",
+   "KG_BB_S01E01:trunc_start_rand1",
+   "KG_BB_S01E01:trunc_end_rand0",
+   "KG_BB_S01E01:trunc_end_rand1",
+   "KG_BIL_S01E01:trunc_start_rand1",
+   "KG_BIL_S01E01:trunc_end_rand0",
+   "KG_BIL_S01E01:trunc_end_rand1",
+   "KG_BMS_S01E01:trunc_start_rand0",
+   "KG_BMS_S01E01:trunc_end_rand0",
+   "KG_BMS_S01E01:trunc_end_rand1",
+   "KG_BOB_S15E01:trunc_end_rand0",
+   "KG_BOB_S15E01:trunc_end_rand1",
+   "KG_EUP_S01E01:trunc_start_rand0",
+   "KG_EUP_S01E01:trunc_end_rand0",
+   "KG_EUP_S01E01:trunc_end_rand1",
+   "KG_PB_S05E01:trunc_start_rand0",
+   "KG_PB_S05E01:trunc_start_rand1",
+   "KG_PB_S05E01:trunc_end_rand0",
+   "KG_SHAM_S05E06:trunc_start_rand0",
+   "KG_SHAM_S05E06:trunc_start_rand1",
+   "KG_SHAM_S05E06:trunc_end_rand0",
+   "KG_SHAM_S05E06:trunc_end_rand1",
+   "KG_BOYS_S01E01:trunc_end_rand0",
+   "KG_BOYS_S01E01:trunc_end_rand1",
+   "SH_S01E01:trunc_start_rand0",
+   "SH_S01E01:trunc_start_rand1"
+  ],
+  "base.en-q5_1-cpu|sampled|cut_ends": [
+   "KG_BB_S01E01:trunc_start_rand0",
+   "KG_BB_S01E01:trunc_start_rand1",
+   "KG_BB_S01E01:trunc_end_rand0",
+   "KG_BB_S01E01:trunc_end_rand1",
+   "KG_BIL_S01E01:trunc_start_rand1",
+   "KG_BIL_S01E01:trunc_end_rand0",
+   "KG_BIL_S01E01:trunc_end_rand1",
+   "KG_BMS_S01E01:trunc_start_rand0",
+   "KG_BMS_S01E01:trunc_end_rand0",
+   "KG_BMS_S01E01:trunc_end_rand1",
+   "KG_BOB_S15E01:trunc_end_rand0",
+   "KG_BOB_S15E01:trunc_end_rand1",
+   "KG_EUP_S01E01:trunc_start_rand0",
+   "KG_EUP_S01E01:trunc_end_rand0",
+   "KG_EUP_S01E01:trunc_end_rand1",
+   "KG_PB_S05E01:trunc_start_rand0",
+   "KG_PB_S05E01:trunc_start_rand1",
+   "KG_PB_S05E01:trunc_end_rand0",
+   "KG_SHAM_S05E06:trunc_start_rand0",
+   "KG_SHAM_S05E06:trunc_start_rand1",
+   "KG_SHAM_S05E06:trunc_end_rand0",
+   "KG_SHAM_S05E06:trunc_end_rand1",
+   "KG_BOYS_S01E01:trunc_end_rand0",
+   "KG_BOYS_S01E01:trunc_end_rand1",
+   "SH_S01E01:trunc_start_rand0",
+   "SH_S01E01:trunc_start_rand1"
+  ],
+  "small.en-greedy|full|clean": [
+   "KG_BB_S01E01:clean",
+   "KG_BIL_S01E01:clean",
+   "KG_EUP_S01E01:clean",
+   "KG_PB_S05E01:clean",
+   "KG_SHAM_S05E06:clean"
+  ],
+  "small.en-greedy|full|offset_boundary": [
+   "KG_BB_S01E01:uniform_p03",
+   "KG_BMS_S01E01:uniform_p03",
+   "KG_BOB_S15E01:uniform_p03",
+   "KG_EUP_S01E01:uniform_p03",
+   "KG_PB_S05E01:uniform_p03"
+  ],
+  "small.en-greedy|sampled|offset_boundary": [
+   "KG_BB_S01E01:uniform_p03",
+   "KG_BMS_S01E01:uniform_p03",
+   "KG_BOB_S15E01:uniform_p03",
+   "KG_EUP_S01E01:uniform_p03",
+   "KG_PB_S05E01:uniform_p03",
+   "KG_SHAM_S05E06:uniform_p03"
+  ],
+  "small.en-greedy|sampled|blocks": [
+   "KG_BB_S01E01:block_rand1",
+   "KG_BMS_S01E01:block_rand3",
+   "KG_PB_S05E01:blocks_rand1",
+   "KG_BOYS_S01E01:blocks_rand1",
+   "SH_S01E01:block_rand2",
+   "SH_S01E01:block_rand3",
+   "SH_S01E06:cutsteps_rand2"
+  ],
+  "small.en-greedy|sampled|small_holes": [
+   "KG_BB_S01E01:hole_rand1",
+   "KG_BB_S01E01:hole_rand3",
+   "KG_EUP_S01E01:hole_rand2",
+   "KG_EUP_S01E01:hole_rand3",
+   "KG_PB_S05E01:hole_rand0",
+   "KG_SHAM_S05E06:hole_rand1",
+   "KG_BOYS_S01E01:hole_rand2",
+   "KG_BOYS_S01E01:hole_rand3",
+   "SH_S01E01:hole_rand0",
+   "SH_S01E01:hole_rand1",
+   "SH_S01E01:hole_rand2"
+  ],
+  "small.en-greedy|sampled|cut_ends": [
+   "KG_BB_S01E01:trunc_start_rand1",
+   "KG_BB_S01E01:trunc_end_rand0",
+   "KG_BB_S01E01:trunc_end_rand1",
+   "KG_BMS_S01E01:trunc_start_rand0",
+   "KG_BMS_S01E01:trunc_start_rand1",
+   "KG_BMS_S01E01:trunc_end_rand0",
+   "KG_BMS_S01E01:trunc_end_rand1",
+   "KG_BOB_S15E01:trunc_end_rand0",
+   "KG_BOB_S15E01:trunc_end_rand1",
+   "KG_EUP_S01E01:trunc_start_rand0",
+   "KG_EUP_S01E01:trunc_end_rand0",
+   "KG_EUP_S01E01:trunc_end_rand1",
+   "KG_PB_S05E01:trunc_start_rand0",
+   "KG_PB_S05E01:trunc_start_rand1",
+   "KG_SHAM_S05E06:trunc_start_rand0",
+   "KG_SHAM_S05E06:trunc_start_rand1",
+   "KG_SHAM_S05E06:trunc_end_rand0",
+   "KG_SHAM_S05E06:trunc_end_rand1",
+   "KG_BOYS_S01E01:trunc_start_rand0",
+   "SH_S01E01:trunc_start_rand0",
+   "SH_S01E01:trunc_start_rand1",
+   "SH_S01E06:trunc_start_rand0",
+   "SH_S01E06:trunc_end_rand0",
+   "SH_S01E06:trunc_end_rand1"
+  ],
+  "small.en|full|clean": [
+   "KG_BB_S01E01:clean",
+   "KG_BIL_S01E01:clean",
+   "KG_EUP_S01E01:clean",
+   "KG_SHAM_S05E06:clean",
+   "SH_S01E06:clean"
+  ],
+  "small.en|sampled|blocks": [
+   "KG_BB_S01E01:block_rand1",
+   "KG_BMS_S01E01:block_rand3",
+   "KG_BMS_S01E01:cutsteps_rand2",
+   "KG_BOYS_S01E01:blocks_rand1",
+   "SH_S01E06:cutsteps_rand2"
+  ],
+  "small.en|sampled|small_holes": [
+   "KG_BB_S01E01:hole_rand1",
+   "KG_BB_S01E01:hole_rand3",
+   "KG_EUP_S01E01:hole_rand2",
+   "KG_EUP_S01E01:hole_rand3",
+   "KG_PB_S05E01:hole_rand0",
+   "KG_BOYS_S01E01:hole_rand2",
+   "KG_BOYS_S01E01:hole_rand3",
+   "SH_S01E01:hole_rand0",
+   "SH_S01E01:hole_rand1",
+   "SH_S01E01:hole_rand2"
+  ],
+  "small.en|sampled|cut_ends": [
+   "KG_BB_S01E01:trunc_start_rand0",
+   "KG_BB_S01E01:trunc_start_rand1",
+   "KG_BB_S01E01:trunc_end_rand0",
+   "KG_BB_S01E01:trunc_end_rand1",
+   "KG_BMS_S01E01:trunc_start_rand0",
+   "KG_BMS_S01E01:trunc_start_rand1",
+   "KG_BMS_S01E01:trunc_end_rand1",
+   "KG_BOB_S15E01:trunc_end_rand0",
+   "KG_BOB_S15E01:trunc_end_rand1",
+   "KG_EUP_S01E01:trunc_start_rand0",
+   "KG_EUP_S01E01:trunc_end_rand0",
+   "KG_EUP_S01E01:trunc_end_rand1",
+   "KG_PB_S05E01:trunc_start_rand0",
+   "KG_PB_S05E01:trunc_start_rand1",
+   "KG_PB_S05E01:trunc_end_rand0",
+   "KG_SHAM_S05E06:trunc_start_rand0",
+   "KG_SHAM_S05E06:trunc_start_rand1",
+   "KG_SHAM_S05E06:trunc_end_rand0",
+   "KG_SHAM_S05E06:trunc_end_rand1",
+   "SH_S01E01:trunc_start_rand0",
+   "SH_S01E01:trunc_start_rand1",
+   "SH_S01E06:trunc_start_rand0",
+   "SH_S01E06:trunc_end_rand0",
+   "SH_S01E06:trunc_end_rand1"
+  ],
+  "small.en-q5_1|full|clean": [
+   "KG_BB_S01E01:clean",
+   "KG_BIL_S01E01:clean",
+   "KG_PB_S05E01:clean",
+   "KG_SHAM_S05E06:clean",
+   "KG_BOYS_S01E01:clean"
+  ],
+  "small.en-q5_1|sampled|blocks": [
+   "KG_BB_S01E01:block_rand1",
+   "KG_BIL_S01E01:block_rand1",
+   "KG_BMS_S01E01:block_rand2",
+   "KG_BMS_S01E01:block_rand3",
+   "KG_BMS_S01E01:cutsteps_rand2",
+   "SH_S01E01:block_rand2",
+   "SH_S01E01:block_rand3"
+  ],
+  "small.en-q5_1|sampled|small_holes": [
+   "KG_BB_S01E01:hole_rand1",
+   "KG_BB_S01E01:hole_rand3",
+   "KG_EUP_S01E01:hole_rand3",
+   "KG_SHAM_S05E06:hole_rand1",
+   "SH_S01E01:hole_rand0",
+   "SH_S01E01:hole_rand1",
+   "SH_S01E01:hole_rand2"
+  ],
+  "small.en-q5_1|sampled|cut_ends": [
+   "KG_BB_S01E01:trunc_start_rand1",
+   "KG_BB_S01E01:trunc_end_rand0",
+   "KG_BB_S01E01:trunc_end_rand1",
+   "KG_BIL_S01E01:trunc_start_rand1",
+   "KG_BIL_S01E01:trunc_end_rand0",
+   "KG_BIL_S01E01:trunc_end_rand1",
+   "KG_BMS_S01E01:trunc_start_rand0",
+   "KG_BMS_S01E01:trunc_start_rand1",
+   "KG_BMS_S01E01:trunc_end_rand1",
+   "KG_BOB_S15E01:trunc_end_rand0",
+   "KG_BOB_S15E01:trunc_end_rand1",
+   "KG_EUP_S01E01:trunc_start_rand0",
+   "KG_EUP_S01E01:trunc_end_rand0",
+   "KG_EUP_S01E01:trunc_end_rand1",
+   "KG_SHAM_S05E06:trunc_start_rand0",
+   "KG_SHAM_S05E06:trunc_start_rand1",
+   "KG_SHAM_S05E06:trunc_end_rand0",
+   "KG_SHAM_S05E06:trunc_end_rand1",
+   "SH_S01E01:trunc_start_rand0",
+   "SH_S01E01:trunc_start_rand1",
+   "SH_S01E06:trunc_start_rand0",
+   "SH_S01E06:trunc_end_rand0",
+   "SH_S01E06:trunc_end_rand1"
+  ],
+  "medium.en-greedy|sampled|offset_boundary": [
+   "KG_BB_S01E01:uniform_p03",
+   "KG_BMS_S01E01:uniform_p03",
+   "KG_BOB_S15E01:uniform_p03",
+   "KG_PB_S05E01:uniform_p03",
+   "KG_SHAM_S05E06:uniform_p03"
+  ],
+  "medium.en-greedy|sampled|blocks": [
+   "KG_BB_S01E01:block_rand1",
+   "KG_BIL_S01E01:block_rand1",
+   "KG_BMS_S01E01:block_rand3",
+   "KG_BOYS_S01E01:blocks_rand1",
+   "SH_S01E01:block_rand2",
+   "SH_S01E01:block_rand3"
+  ],
+  "medium.en-greedy|full|small_holes": [
+   "KG_BB_S01E01:hole_rand1",
+   "KG_BB_S01E01:hole_rand3",
+   "KG_EUP_S01E01:hole_rand2",
+   "KG_EUP_S01E01:hole_rand3",
+   "KG_PB_S05E01:hole_rand0",
+   "KG_SHAM_S05E06:hole_rand1",
+   "KG_BOYS_S01E01:hole_rand2",
+   "KG_BOYS_S01E01:hole_rand3"
+  ],
+  "medium.en-greedy|sampled|small_holes": [
+   "KG_BB_S01E01:hole_rand1",
+   "KG_BB_S01E01:hole_rand3",
+   "KG_EUP_S01E01:hole_rand2",
+   "KG_EUP_S01E01:hole_rand3",
+   "KG_PB_S05E01:hole_rand0",
+   "KG_SHAM_S05E06:hole_rand1",
+   "KG_BOYS_S01E01:hole_rand2",
+   "KG_BOYS_S01E01:hole_rand3",
+   "SH_S01E01:hole_rand0",
+   "SH_S01E01:hole_rand1",
+   "SH_S01E01:hole_rand2"
+  ],
+  "medium.en-greedy|full|cut_ends": [
+   "KG_BB_S01E01:trunc_start_rand1",
+   "KG_BB_S01E01:trunc_end_rand0",
+   "KG_BB_S01E01:trunc_end_rand1",
+   "KG_BIL_S01E01:trunc_start_rand1",
+   "KG_BIL_S01E01:trunc_end_rand0",
+   "KG_BIL_S01E01:trunc_end_rand1",
+   "KG_BMS_S01E01:trunc_start_rand0",
+   "KG_BMS_S01E01:trunc_end_rand0",
+   "KG_BMS_S01E01:trunc_end_rand1",
+   "KG_BOB_S15E01:trunc_end_rand0",
+   "KG_BOB_S15E01:trunc_end_rand1",
+   "KG_EUP_S01E01:trunc_start_rand0",
+   "KG_EUP_S01E01:trunc_end_rand0",
+   "KG_EUP_S01E01:trunc_end_rand1",
+   "KG_PB_S05E01:trunc_start_rand0",
+   "KG_PB_S05E01:trunc_start_rand1",
+   "KG_PB_S05E01:trunc_end_rand0",
+   "KG_SHAM_S05E06:trunc_start_rand0",
+   "KG_SHAM_S05E06:trunc_start_rand1",
+   "KG_SHAM_S05E06:trunc_end_rand0",
+   "KG_SHAM_S05E06:trunc_end_rand1"
+  ],
+  "medium.en-greedy|sampled|cut_ends": [
+   "KG_BB_S01E01:trunc_start_rand1",
+   "KG_BB_S01E01:trunc_end_rand0",
+   "KG_BB_S01E01:trunc_end_rand1",
+   "KG_BIL_S01E01:trunc_start_rand1",
+   "KG_BIL_S01E01:trunc_end_rand0",
+   "KG_BIL_S01E01:trunc_end_rand1",
+   "KG_BMS_S01E01:trunc_start_rand0",
+   "KG_BMS_S01E01:trunc_end_rand0",
+   "KG_BMS_S01E01:trunc_end_rand1",
+   "KG_BOB_S15E01:trunc_end_rand0",
+   "KG_BOB_S15E01:trunc_end_rand1",
+   "KG_EUP_S01E01:trunc_start_rand0",
+   "KG_EUP_S01E01:trunc_end_rand0",
+   "KG_EUP_S01E01:trunc_end_rand1",
+   "KG_PB_S05E01:trunc_start_rand0",
+   "KG_PB_S05E01:trunc_start_rand1",
+   "KG_PB_S05E01:trunc_end_rand0",
+   "KG_SHAM_S05E06:trunc_start_rand0",
+   "KG_SHAM_S05E06:trunc_start_rand1",
+   "KG_SHAM_S05E06:trunc_end_rand0",
+   "KG_SHAM_S05E06:trunc_end_rand1",
+   "SH_S01E01:trunc_start_rand0",
+   "SH_S01E01:trunc_start_rand1",
+   "SH_S01E06:trunc_start_rand0",
+   "SH_S01E06:trunc_end_rand0",
+   "SH_S01E06:trunc_end_rand1"
+  ],
+  "medium.en|full|clean": [
+   "KG_BB_S01E01:clean",
+   "KG_BIL_S01E01:clean",
+   "KG_PB_S05E01:clean",
+   "KG_SHAM_S05E06:clean"
+  ],
+  "medium.en|sampled|blocks": [
+   "KG_BB_S01E01:block_rand1",
+   "KG_BMS_S01E01:block_rand3",
+   "KG_PB_S05E01:blocks_rand1"
+  ],
+  "medium.en|sampled|small_holes": [
+   "KG_BB_S01E01:hole_rand1",
+   "KG_BB_S01E01:hole_rand3",
+   "KG_EUP_S01E01:hole_rand2",
+   "KG_EUP_S01E01:hole_rand3",
+   "KG_PB_S05E01:hole_rand0",
+   "KG_BOYS_S01E01:hole_rand2",
+   "KG_BOYS_S01E01:hole_rand3",
+   "SH_S01E01:hole_rand0",
+   "SH_S01E01:hole_rand1",
+   "SH_S01E01:hole_rand2"
+  ],
+  "medium.en|sampled|cut_ends": [
+   "KG_BB_S01E01:trunc_start_rand1",
+   "KG_BB_S01E01:trunc_end_rand0",
+   "KG_BB_S01E01:trunc_end_rand1",
+   "KG_BMS_S01E01:trunc_start_rand0",
+   "KG_BMS_S01E01:trunc_start_rand1",
+   "KG_BMS_S01E01:trunc_end_rand0",
+   "KG_BMS_S01E01:trunc_end_rand1",
+   "KG_BOB_S15E01:trunc_end_rand0",
+   "KG_BOB_S15E01:trunc_end_rand1",
+   "KG_EUP_S01E01:trunc_start_rand0",
+   "KG_EUP_S01E01:trunc_end_rand0",
+   "KG_EUP_S01E01:trunc_end_rand1",
+   "KG_PB_S05E01:trunc_start_rand0",
+   "KG_PB_S05E01:trunc_start_rand1",
+   "KG_PB_S05E01:trunc_end_rand0",
+   "SH_S01E01:trunc_start_rand0",
+   "SH_S01E01:trunc_start_rand1",
+   "SH_S01E06:trunc_start_rand0",
+   "SH_S01E06:trunc_end_rand0",
+   "SH_S01E06:trunc_end_rand1"
+  ],
+  "medium.en-q5_0|full|clean": [
+   "KG_BB_S01E01:clean",
+   "KG_PB_S05E01:clean",
+   "SH_S01E01:clean",
+   "SH_S01E06:clean"
+  ],
+  "medium.en-q5_0|sampled|offset_boundary": [
+   "KG_BB_S01E01:uniform_p03",
+   "KG_BIL_S01E01:uniform_p03",
+   "KG_BMS_S01E01:uniform_p03",
+   "KG_BOB_S15E01:uniform_p03",
+   "KG_PB_S05E01:uniform_p03",
+   "SH_S01E01:uniform_p03",
+   "SH_S01E06:uniform_p03"
+  ],
+  "medium.en-q5_0|sampled|blocks": [
+   "KG_BB_S01E01:block_rand1",
+   "KG_BIL_S01E01:block_rand1",
+   "KG_BMS_S01E01:block_rand3",
+   "KG_BMS_S01E01:cutsteps_rand2",
+   "KG_EUP_S01E01:blocks_rand0",
+   "KG_PB_S05E01:blocks_rand1",
+   "KG_SHAM_S05E06:block_rand3"
+  ],
+  "medium.en-q5_0|sampled|small_holes": [
+   "KG_BB_S01E01:hole_rand1",
+   "KG_BB_S01E01:hole_rand3",
+   "KG_EUP_S01E01:hole_rand2",
+   "KG_EUP_S01E01:hole_rand3",
+   "KG_PB_S05E01:hole_rand0",
+   "KG_BOYS_S01E01:hole_rand2",
+   "KG_BOYS_S01E01:hole_rand3"
+  ],
+  "medium.en-q5_0|sampled|cut_ends": [
+   "KG_BB_S01E01:trunc_start_rand0",
+   "KG_BB_S01E01:trunc_start_rand1",
+   "KG_BB_S01E01:trunc_end_rand0",
+   "KG_BB_S01E01:trunc_end_rand1",
+   "KG_BIL_S01E01:trunc_start_rand1",
+   "KG_BIL_S01E01:trunc_end_rand0",
+   "KG_BIL_S01E01:trunc_end_rand1",
+   "KG_BMS_S01E01:trunc_start_rand0",
+   "KG_BMS_S01E01:trunc_end_rand0",
+   "KG_BMS_S01E01:trunc_end_rand1",
+   "KG_BOB_S15E01:trunc_end_rand0",
+   "KG_BOB_S15E01:trunc_end_rand1",
+   "KG_EUP_S01E01:trunc_start_rand0",
+   "KG_EUP_S01E01:trunc_end_rand0",
+   "KG_EUP_S01E01:trunc_end_rand1",
+   "KG_PB_S05E01:trunc_start_rand0",
+   "KG_PB_S05E01:trunc_start_rand1",
+   "KG_SHAM_S05E06:trunc_start_rand0",
+   "KG_SHAM_S05E06:trunc_start_rand1",
+   "KG_SHAM_S05E06:trunc_end_rand0",
+   "KG_SHAM_S05E06:trunc_end_rand1",
+   "KG_BOYS_S01E01:trunc_start_rand0",
+   "SH_S01E06:trunc_start_rand0",
+   "SH_S01E06:trunc_end_rand0",
+   "SH_S01E06:trunc_end_rand1"
+  ],
+  "turbo-q8_0|full|clean": [
+   "KG_BB_S01E01:clean"
+  ],
+  "turbo-q8_0|sampled|rate": [
+   "KG_BB_S01E01:drift_offset",
+   "KG_BB_S01E01:drift_rand0",
+   "KG_BB_S01E01:drift_rand1",
+   "KG_BB_S01E01:drift_rand5",
+   "KG_BOB_S15E01:drift_rand4",
+   "KG_EUP_S01E01:drift_rand1",
+   "KG_EUP_S01E01:drift_rand5",
+   "KG_PB_S05E01:drift_rand2"
+  ],
+  "turbo-q8_0|sampled|blocks": [
+   "KG_BB_S01E01:block_rand1",
+   "KG_BIL_S01E01:block_rand1",
+   "KG_BMS_S01E01:block_rand3",
+   "KG_PB_S05E01:block_rand1",
+   "KG_BOYS_S01E01:blocks_rand1"
+  ],
+  "turbo-q8_0|sampled|small_holes": [
+   "KG_BB_S01E01:hole_rand1",
+   "KG_PB_S05E01:hole_rand0",
+   "KG_BOYS_S01E01:hole_rand2",
+   "KG_BOYS_S01E01:hole_rand3",
+   "SH_S01E01:hole_rand0",
+   "SH_S01E01:hole_rand1"
+  ],
+  "turbo-q8_0|sampled|cut_ends": [
+   "KG_BB_S01E01:trunc_start_rand1",
+   "KG_BB_S01E01:trunc_end_rand0",
+   "KG_BB_S01E01:trunc_end_rand1",
+   "KG_BIL_S01E01:trunc_start_rand1",
+   "KG_BIL_S01E01:trunc_end_rand0",
+   "KG_BMS_S01E01:trunc_start_rand0",
+   "KG_BMS_S01E01:trunc_end_rand1",
+   "KG_BOB_S15E01:trunc_end_rand0",
+   "KG_BOB_S15E01:trunc_end_rand1",
+   "KG_EUP_S01E01:trunc_start_rand0",
+   "KG_EUP_S01E01:trunc_end_rand0",
+   "KG_EUP_S01E01:trunc_end_rand1",
+   "KG_PB_S05E01:trunc_start_rand0",
+   "KG_SHAM_S05E06:trunc_start_rand0",
+   "KG_SHAM_S05E06:trunc_start_rand1",
+   "SH_S01E01:trunc_start_rand0",
+   "SH_S01E01:trunc_start_rand1",
+   "SH_S01E06:trunc_start_rand0",
+   "SH_S01E06:trunc_end_rand0",
+   "SH_S01E06:trunc_end_rand1"
+  ],
+  "turbo-q5_0|sampled|blocks": [
+   "KG_BB_S01E01:block_rand1",
+   "KG_BB_S01E01:blocks_rand1",
+   "KG_BIL_S01E01:block_rand1",
+   "KG_BMS_S01E01:block_rand2",
+   "KG_BMS_S01E01:block_rand3",
+   "KG_BMS_S01E01:cutsteps_rand2",
+   "KG_PB_S05E01:blocks_rand1",
+   "KG_BOYS_S01E01:blocks_rand1",
+   "SH_S01E01:block_rand2",
+   "SH_S01E01:block_rand3"
+  ],
+  "turbo-q5_0|full|small_holes": [
+   "KG_BB_S01E01:hole_rand3",
+   "KG_BOYS_S01E01:hole_rand2",
+   "KG_BOYS_S01E01:hole_rand3"
+  ],
+  "turbo-q5_0|sampled|small_holes": [
+   "KG_BB_S01E01:hole_rand3",
+   "KG_BOYS_S01E01:hole_rand2",
+   "KG_BOYS_S01E01:hole_rand3",
+   "SH_S01E01:hole_rand1"
+  ],
+  "turbo-q5_0|full|cut_ends": [
+   "KG_BB_S01E01:trunc_start_rand1",
+   "KG_BB_S01E01:trunc_end_rand0",
+   "KG_BB_S01E01:trunc_end_rand1",
+   "KG_BIL_S01E01:trunc_start_rand1",
+   "KG_BIL_S01E01:trunc_end_rand0",
+   "KG_BMS_S01E01:trunc_start_rand0",
+   "KG_BMS_S01E01:trunc_end_rand1",
+   "KG_BOB_S15E01:trunc_end_rand0",
+   "KG_BOB_S15E01:trunc_end_rand1",
+   "SH_S01E06:trunc_start_rand0",
+   "SH_S01E06:trunc_end_rand0",
+   "SH_S01E06:trunc_end_rand1"
+  ],
+  "turbo-q5_0|sampled|cut_ends": [
+   "KG_BB_S01E01:trunc_start_rand1",
+   "KG_BB_S01E01:trunc_end_rand0",
+   "KG_BB_S01E01:trunc_end_rand1",
+   "KG_BIL_S01E01:trunc_start_rand1",
+   "KG_BIL_S01E01:trunc_end_rand0",
+   "KG_BMS_S01E01:trunc_start_rand0",
+   "KG_BMS_S01E01:trunc_end_rand1",
+   "KG_BOB_S15E01:trunc_end_rand0",
+   "KG_BOB_S15E01:trunc_end_rand1",
+   "KG_EUP_S01E01:trunc_start_rand0",
+   "KG_EUP_S01E01:trunc_end_rand0",
+   "KG_EUP_S01E01:trunc_end_rand1",
+   "KG_PB_S05E01:trunc_start_rand0",
+   "SH_S01E01:trunc_start_rand0",
+   "SH_S01E01:trunc_start_rand1",
+   "SH_S01E06:trunc_start_rand0",
+   "SH_S01E06:trunc_end_rand0",
+   "SH_S01E06:trunc_end_rand1"
+  ],
+  "groq-turbo|full|rate": [
+   "KG_BB_S01E01:drift_offset",
+   "KG_BB_S01E01:drift_rand1",
+   "KG_BB_S01E01:ratio_rand0",
+   "SH_S01E01:drift_rand3"
+  ],
+  "groq-turbo|sampled|blocks": [
+   "KG_BB_S01E01:block_rand1",
+   "KG_BIL_S01E01:block_rand1",
+   "KG_BMS_S01E01:block_rand3",
+   "KG_BMS_S01E01:cutsteps_rand2",
+   "KG_EUP_S01E01:block_rand1",
+   "KG_BOYS_S01E01:blocks_rand1",
+   "SH_S01E06:cutsteps_rand2"
+  ],
+  "groq-turbo|full|small_holes": [
+   "KG_BB_S01E01:hole_rand3",
+   "KG_PB_S05E01:hole_rand0",
+   "KG_BOYS_S01E01:hole_rand2",
+   "KG_BOYS_S01E01:hole_rand3",
+   "SH_S01E01:hole_rand0",
+   "SH_S01E01:hole_rand1"
+  ],
+  "groq-turbo|sampled|small_holes": [
+   "KG_BB_S01E01:hole_rand3",
+   "KG_PB_S05E01:hole_rand0",
+   "KG_BOYS_S01E01:hole_rand2",
+   "KG_BOYS_S01E01:hole_rand3",
+   "SH_S01E01:hole_rand0",
+   "SH_S01E01:hole_rand1"
+  ],
+  "groq-turbo|full|cut_ends": [
+   "KG_BB_S01E01:trunc_start_rand0",
+   "KG_BB_S01E01:trunc_start_rand1",
+   "KG_BB_S01E01:trunc_end_rand0",
+   "KG_BB_S01E01:trunc_end_rand1",
+   "KG_BIL_S01E01:trunc_start_rand1",
+   "KG_BIL_S01E01:trunc_end_rand0",
+   "KG_BMS_S01E01:trunc_start_rand0",
+   "KG_BMS_S01E01:trunc_end_rand1",
+   "KG_BOB_S15E01:trunc_end_rand0",
+   "KG_BOB_S15E01:trunc_end_rand1",
+   "KG_EUP_S01E01:trunc_start_rand0",
+   "KG_EUP_S01E01:trunc_end_rand0",
+   "KG_EUP_S01E01:trunc_end_rand1",
+   "KG_PB_S05E01:trunc_start_rand0",
+   "KG_PB_S05E01:trunc_end_rand0",
+   "SH_S01E01:trunc_start_rand0",
+   "SH_S01E01:trunc_start_rand1",
+   "SH_S01E06:trunc_start_rand0",
+   "SH_S01E06:trunc_end_rand0",
+   "SH_S01E06:trunc_end_rand1"
+  ],
+  "groq-turbo|sampled|cut_ends": [
+   "KG_BB_S01E01:trunc_start_rand0",
+   "KG_BB_S01E01:trunc_start_rand1",
+   "KG_BB_S01E01:trunc_end_rand0",
+   "KG_BB_S01E01:trunc_end_rand1",
+   "KG_BIL_S01E01:trunc_start_rand1",
+   "KG_BIL_S01E01:trunc_end_rand0",
+   "KG_BMS_S01E01:trunc_start_rand0",
+   "KG_BMS_S01E01:trunc_end_rand1",
+   "KG_BOB_S15E01:trunc_end_rand0",
+   "KG_BOB_S15E01:trunc_end_rand1",
+   "KG_EUP_S01E01:trunc_start_rand0",
+   "KG_EUP_S01E01:trunc_end_rand0",
+   "KG_EUP_S01E01:trunc_end_rand1",
+   "KG_PB_S05E01:trunc_start_rand0",
+   "KG_PB_S05E01:trunc_end_rand0",
+   "SH_S01E01:trunc_start_rand0",
+   "SH_S01E01:trunc_start_rand1",
+   "SH_S01E06:trunc_start_rand0",
+   "SH_S01E06:trunc_end_rand0",
+   "SH_S01E06:trunc_end_rand1"
+  ],
+  "groq-turbo|sampled|rate": [
+   "KG_BB_S01E01:drift_rand0",
+   "SH_S01E01:drift_rand3"
+  ],
+  "tiny.en-greedy-cpu|sampled|blocks": [
+   "KG_BIL_S01E01:block_rand1",
+   "KG_BMS_S01E01:block_rand2",
+   "KG_BMS_S01E01:block_rand3",
+   "KG_PB_S05E01:blocks_rand1",
+   "SH_S01E01:block_rand2",
+   "SH_S01E01:block_rand3"
+  ],
+  "tiny.en-q5_1-cpu|full|clean": [
+   "KG_BIL_S01E01:clean"
+  ],
+  "tiny.en-q5_1-cpu|sampled|clean": [
+   "KG_BIL_S01E01:clean"
+  ],
+  "base.en-greedy-cpu|full|clean": [
+   "KG_BIL_S01E01:clean",
+   "KG_PB_S05E01:clean"
+  ],
+  "base.en-greedy-cpu|full|offset_boundary": [
+   "KG_BIL_S01E01:uniform_p03",
+   "KG_BMS_S01E01:uniform_p03",
+   "KG_BOB_S15E01:uniform_p03",
+   "KG_EUP_S01E01:uniform_p03",
+   "KG_PB_S05E01:uniform_p03",
+   "SH_S01E01:uniform_p03",
+   "SH_S01E06:uniform_p03"
+  ],
+  "base.en-q5_1-cpu|sampled|blocks": [
+   "KG_BIL_S01E01:block_rand1",
+   "KG_BMS_S01E01:block_rand2",
+   "KG_BMS_S01E01:block_rand3",
+   "KG_BMS_S01E01:cutsteps_rand2",
+   "KG_SHAM_S05E06:blocks_rand1",
+   "KG_BOYS_S01E01:blocks_rand1",
+   "SH_S01E01:block_rand2",
+   "SH_S01E01:block_rand3"
+  ],
+  "small.en-greedy|sampled|clean": [
+   "KG_BIL_S01E01:clean"
+  ],
+  "small.en|sampled|clean": [
+   "KG_BIL_S01E01:clean"
+  ],
+  "medium.en|sampled|clean": [
+   "KG_BIL_S01E01:clean",
+   "KG_SHAM_S05E06:clean"
+  ],
+  "medium.en|sampled|rate": [
+   "KG_BIL_S01E01:drift_rand3",
+   "KG_PB_S05E01:drift",
+   "KG_PB_S05E01:drift_offset",
+   "KG_PB_S05E01:drift_rand2"
+  ],
+  "medium.en-q5_0|full|cut_ends": [
+   "KG_BIL_S01E01:trunc_start_rand1",
+   "KG_BIL_S01E01:trunc_end_rand0",
+   "KG_BIL_S01E01:trunc_end_rand1",
+   "KG_BMS_S01E01:trunc_start_rand0",
+   "KG_BMS_S01E01:trunc_end_rand0",
+   "KG_BMS_S01E01:trunc_end_rand1",
+   "KG_BOB_S15E01:trunc_end_rand0",
+   "KG_BOB_S15E01:trunc_end_rand1",
+   "KG_EUP_S01E01:trunc_start_rand0",
+   "KG_EUP_S01E01:trunc_end_rand0",
+   "KG_EUP_S01E01:trunc_end_rand1",
+   "KG_SHAM_S05E06:trunc_start_rand0",
+   "KG_SHAM_S05E06:trunc_start_rand1",
+   "KG_SHAM_S05E06:trunc_end_rand0",
+   "KG_SHAM_S05E06:trunc_end_rand1",
+   "KG_BOYS_S01E01:trunc_start_rand0"
+  ],
+  "turbo-q8_0|full|cut_ends": [
+   "KG_BIL_S01E01:trunc_start_rand1",
+   "KG_BIL_S01E01:trunc_end_rand0",
+   "KG_BMS_S01E01:trunc_start_rand0",
+   "KG_BMS_S01E01:trunc_end_rand1",
+   "KG_BOB_S15E01:trunc_end_rand0",
+   "KG_BOB_S15E01:trunc_end_rand1",
+   "KG_EUP_S01E01:trunc_start_rand0",
+   "KG_EUP_S01E01:trunc_end_rand0",
+   "KG_EUP_S01E01:trunc_end_rand1",
+   "KG_PB_S05E01:trunc_start_rand0",
+   "KG_SHAM_S05E06:trunc_start_rand0",
+   "KG_SHAM_S05E06:trunc_start_rand1",
+   "SH_S01E01:trunc_start_rand0",
+   "SH_S01E01:trunc_start_rand1",
+   "SH_S01E06:trunc_start_rand0",
+   "SH_S01E06:trunc_end_rand0",
+   "SH_S01E06:trunc_end_rand1"
+  ],
+  "tiny.en-greedy-cpu|full|offset_boundary": [
+   "KG_BMS_S01E01:uniform_p03",
+   "KG_EUP_S01E01:uniform_p03",
+   "KG_PB_S05E01:uniform_p03"
+  ],
+  "tiny.en-greedy-cpu|sampled|offset_boundary": [
+   "KG_BMS_S01E01:uniform_p03",
+   "KG_BOB_S15E01:uniform_p03",
+   "KG_PB_S05E01:uniform_p03"
+  ],
+  "tiny.en-greedy-cpu|full|holes": [
+   "KG_BMS_S01E01:hole_rand1",
+   "KG_PB_S05E01:hole_rand1",
+   "KG_BOYS_S01E01:hole_rand1"
+  ],
+  "tiny.en-greedy-cpu|sampled|holes": [
+   "KG_BMS_S01E01:hole_rand1",
+   "KG_EUP_S01E01:hole_rand0",
+   "KG_BOYS_S01E01:hole_rand1"
+  ],
+  "tiny.en-cpu|full|holes": [
+   "KG_BMS_S01E01:hole_rand1",
+   "KG_SHAM_S05E06:hole_rand2",
+   "KG_BOYS_S01E01:hole_rand1"
+  ],
+  "tiny.en-cpu|sampled|holes": [
+   "KG_BMS_S01E01:hole_rand1",
+   "KG_EUP_S01E01:hole_rand0",
+   "KG_EUP_S01E01:hole_rand1",
+   "KG_SHAM_S05E06:hole_rand2",
+   "KG_BOYS_S01E01:hole_rand1"
+  ],
+  "tiny.en-q5_1-cpu|sampled|holes": [
+   "KG_BMS_S01E01:hole_rand1",
+   "KG_BOYS_S01E01:hole_rand1"
+  ],
+  "base.en-greedy-cpu|sampled|holes": [
+   "KG_BMS_S01E01:hole_rand1",
+   "KG_EUP_S01E01:missing_middle",
+   "KG_PB_S05E01:hole_rand3",
+   "KG_BOYS_S01E01:hole_rand0",
+   "KG_BOYS_S01E01:hole_rand1"
+  ],
+  "base.en-cpu|full|holes": [
+   "KG_BMS_S01E01:hole_rand1",
+   "KG_PB_S05E01:hole_rand1",
+   "KG_BOYS_S01E01:hole_rand1"
+  ],
+  "base.en-cpu|sampled|holes": [
+   "KG_BMS_S01E01:hole_rand1",
+   "KG_PB_S05E01:hole_rand1",
+   "KG_BOYS_S01E01:hole_rand1"
+  ],
+  "base.en-q5_1-cpu|full|offset_boundary": [
+   "KG_BMS_S01E01:uniform_p03",
+   "KG_BOB_S15E01:uniform_p03",
+   "KG_EUP_S01E01:uniform_p03",
+   "KG_PB_S05E01:uniform_p03",
+   "KG_SHAM_S05E06:uniform_p03"
+  ],
+  "base.en-q5_1-cpu|sampled|holes": [
+   "KG_BMS_S01E01:hole_rand1",
+   "KG_BOB_S15E01:hole_rand0",
+   "KG_EUP_S01E01:missing_middle",
+   "KG_PB_S05E01:hole_rand1",
+   "KG_BOYS_S01E01:hole_rand0",
+   "KG_BOYS_S01E01:hole_rand1"
+  ],
+  "small.en-greedy|full|holes": [
+   "KG_BMS_S01E01:hole_rand1",
+   "KG_BOYS_S01E01:hole_rand0",
+   "KG_BOYS_S01E01:hole_rand1"
+  ],
+  "small.en-greedy|sampled|holes": [
+   "KG_BMS_S01E01:hole_rand1",
+   "KG_EUP_S01E01:missing_middle",
+   "KG_SHAM_S05E06:hole_rand0",
+   "KG_BOYS_S01E01:hole_rand0",
+   "KG_BOYS_S01E01:hole_rand1"
+  ],
+  "small.en-greedy|full|cut_ends": [
+   "KG_BMS_S01E01:trunc_start_rand0",
+   "KG_BMS_S01E01:trunc_end_rand0",
+   "KG_BMS_S01E01:trunc_end_rand1",
+   "KG_BOB_S15E01:trunc_end_rand0",
+   "KG_BOB_S15E01:trunc_end_rand1",
+   "KG_SHAM_S05E06:trunc_start_rand0",
+   "KG_SHAM_S05E06:trunc_start_rand1",
+   "KG_BOYS_S01E01:trunc_start_rand0",
+   "SH_S01E01:trunc_start_rand0",
+   "SH_S01E01:trunc_start_rand1",
+   "SH_S01E06:trunc_start_rand0",
+   "SH_S01E06:trunc_end_rand0",
+   "SH_S01E06:trunc_end_rand1"
+  ],
+  "small.en|full|offset_boundary": [
+   "KG_BMS_S01E01:uniform_p03",
+   "KG_BOB_S15E01:uniform_p03",
+   "KG_PB_S05E01:uniform_p03"
+  ],
+  "small.en|sampled|offset_boundary": [
+   "KG_BMS_S01E01:uniform_p03",
+   "KG_BOB_S15E01:uniform_p03",
+   "KG_PB_S05E01:uniform_p03",
+   "KG_SHAM_S05E06:uniform_p03",
+   "SH_S01E01:uniform_p03",
+   "SH_S01E06:uniform_p03"
+  ],
+  "small.en|full|holes": [
+   "KG_BMS_S01E01:hole_rand1",
+   "KG_PB_S05E01:hole_rand1"
+  ],
+  "small.en|sampled|holes": [
+   "KG_BMS_S01E01:hole_rand1",
+   "KG_PB_S05E01:hole_rand1",
+   "KG_BOYS_S01E01:hole_rand1"
+  ],
+  "small.en|full|cut_ends": [
+   "KG_BMS_S01E01:trunc_start_rand0",
+   "KG_BMS_S01E01:trunc_end_rand1",
+   "KG_BOB_S15E01:trunc_end_rand0",
+   "KG_BOB_S15E01:trunc_end_rand1",
+   "KG_PB_S05E01:trunc_start_rand0",
+   "KG_PB_S05E01:trunc_start_rand1",
+   "KG_PB_S05E01:trunc_end_rand0",
+   "KG_SHAM_S05E06:trunc_start_rand0",
+   "KG_SHAM_S05E06:trunc_start_rand1",
+   "SH_S01E01:trunc_start_rand0",
+   "SH_S01E01:trunc_start_rand1"
+  ],
+  "small.en-q5_1|full|offset_boundary": [
+   "KG_BMS_S01E01:uniform_p03",
+   "KG_BOB_S15E01:uniform_p03",
+   "KG_EUP_S01E01:uniform_p03",
+   "KG_PB_S05E01:uniform_p03"
+  ],
+  "small.en-q5_1|sampled|offset_boundary": [
+   "KG_BMS_S01E01:uniform_p03",
+   "KG_BOB_S15E01:uniform_p03",
+   "KG_EUP_S01E01:uniform_p03",
+   "KG_PB_S05E01:uniform_p03",
+   "KG_SHAM_S05E06:uniform_p03"
+  ],
+  "small.en-q5_1|full|holes": [
+   "KG_BMS_S01E01:hole_rand1"
+  ],
+  "small.en-q5_1|sampled|holes": [
+   "KG_BMS_S01E01:hole_rand1",
+   "KG_BOB_S15E01:missing_middle"
+  ],
+  "small.en-q5_1|full|cut_ends": [
+   "KG_BMS_S01E01:trunc_start_rand0",
+   "KG_BMS_S01E01:trunc_end_rand1",
+   "KG_BOB_S15E01:trunc_end_rand0",
+   "KG_BOB_S15E01:trunc_end_rand1",
+   "KG_EUP_S01E01:trunc_start_rand0",
+   "KG_EUP_S01E01:trunc_end_rand0",
+   "KG_EUP_S01E01:trunc_end_rand1",
+   "SH_S01E01:trunc_start_rand0",
+   "SH_S01E01:trunc_start_rand1",
+   "SH_S01E06:trunc_start_rand0",
+   "SH_S01E06:trunc_end_rand0",
+   "SH_S01E06:trunc_end_rand1"
+  ],
+  "medium.en-greedy|full|offset_boundary": [
+   "KG_BMS_S01E01:uniform_p03",
+   "KG_BOB_S15E01:uniform_p03",
+   "KG_PB_S05E01:uniform_p03",
+   "KG_SHAM_S05E06:uniform_p03"
+  ],
+  "medium.en-greedy|full|holes": [
+   "KG_BMS_S01E01:hole_rand1",
+   "KG_EUP_S01E01:missing_middle",
+   "KG_PB_S05E01:hole_rand1",
+   "KG_SHAM_S05E06:hole_rand0",
+   "KG_BOYS_S01E01:hole_rand0",
+   "KG_BOYS_S01E01:hole_rand1"
+  ],
+  "medium.en-greedy|sampled|holes": [
+   "KG_BMS_S01E01:hole_rand1",
+   "KG_BOB_S15E01:missing_middle",
+   "KG_EUP_S01E01:missing_middle",
+   "KG_BOYS_S01E01:hole_rand0",
+   "KG_BOYS_S01E01:hole_rand1"
+  ],
+  "medium.en|full|offset_boundary": [
+   "KG_BMS_S01E01:uniform_p03",
+   "KG_BOB_S15E01:uniform_p03",
+   "KG_EUP_S01E01:uniform_p03",
+   "KG_PB_S05E01:uniform_p03",
+   "KG_SHAM_S05E06:uniform_p03"
+  ],
+  "medium.en|sampled|offset_boundary": [
+   "KG_BMS_S01E01:uniform_p03",
+   "KG_BOB_S15E01:uniform_p03",
+   "KG_EUP_S01E01:uniform_p03",
+   "KG_PB_S05E01:uniform_p03",
+   "KG_SHAM_S05E06:uniform_p03"
+  ],
+  "medium.en|full|holes": [
+   "KG_BMS_S01E01:hole_rand1",
+   "KG_BOB_S15E01:hole_rand0",
+   "KG_EUP_S01E01:missing_middle",
+   "KG_BOYS_S01E01:hole_rand0",
+   "KG_BOYS_S01E01:hole_rand1"
+  ],
+  "medium.en|sampled|holes": [
+   "KG_BMS_S01E01:hole_rand1",
+   "KG_BOB_S15E01:hole_rand0",
+   "KG_EUP_S01E01:missing_middle",
+   "KG_BOYS_S01E01:hole_rand0",
+   "KG_BOYS_S01E01:hole_rand1"
+  ],
+  "medium.en|full|cut_ends": [
+   "KG_BMS_S01E01:trunc_start_rand0",
+   "KG_BMS_S01E01:trunc_end_rand0",
+   "KG_BMS_S01E01:trunc_end_rand1",
+   "KG_BOB_S15E01:trunc_end_rand0",
+   "KG_BOB_S15E01:trunc_end_rand1",
+   "KG_EUP_S01E01:trunc_start_rand0",
+   "KG_EUP_S01E01:trunc_end_rand0",
+   "KG_EUP_S01E01:trunc_end_rand1",
+   "SH_S01E01:trunc_start_rand0",
+   "SH_S01E01:trunc_start_rand1",
+   "SH_S01E06:trunc_start_rand0",
+   "SH_S01E06:trunc_end_rand0",
+   "SH_S01E06:trunc_end_rand1"
+  ],
+  "medium.en-q5_0|full|offset_boundary": [
+   "KG_BMS_S01E01:uniform_p03",
+   "KG_BOB_S15E01:uniform_p03",
+   "KG_EUP_S01E01:uniform_p03",
+   "KG_PB_S05E01:uniform_p03"
+  ],
+  "medium.en-q5_0|full|holes": [
+   "KG_BMS_S01E01:hole_rand1",
+   "KG_EUP_S01E01:missing_middle",
+   "KG_BOYS_S01E01:hole_rand1"
+  ],
+  "medium.en-q5_0|sampled|holes": [
+   "KG_BMS_S01E01:hole_rand1",
+   "KG_EUP_S01E01:missing_middle",
+   "KG_BOYS_S01E01:hole_rand1"
+  ],
+  "turbo-q8_0|full|offset_boundary": [
+   "KG_BMS_S01E01:uniform_p03",
+   "KG_BOB_S15E01:uniform_p03",
+   "KG_PB_S05E01:uniform_p03"
+  ],
+  "turbo-q8_0|sampled|offset_boundary": [
+   "KG_BMS_S01E01:uniform_p03",
+   "KG_BOB_S15E01:uniform_p03",
+   "KG_PB_S05E01:uniform_p03"
+  ],
+  "turbo-q5_0|full|offset_boundary": [
+   "KG_BMS_S01E01:uniform_p03",
+   "KG_BOB_S15E01:uniform_p03",
+   "KG_PB_S05E01:uniform_p03"
+  ],
+  "groq-turbo|full|offset_boundary": [
+   "KG_BMS_S01E01:uniform_p03",
+   "KG_BOB_S15E01:uniform_p03",
+   "KG_PB_S05E01:uniform_p03"
+  ],
+  "groq-turbo|sampled|offset_boundary": [
+   "KG_BMS_S01E01:uniform_p03",
+   "KG_BOB_S15E01:uniform_p03",
+   "KG_PB_S05E01:uniform_p03"
+  ],
+  "turbo-q5_0|sampled|offset_boundary": [
+   "KG_BOB_S15E01:uniform_p03",
+   "KG_EUP_S01E01:uniform_p03",
+   "KG_PB_S05E01:uniform_p03"
+  ],
+  "turbo-q5_0|sampled|rate": [
+   "KG_BOB_S15E01:drift_rand4",
+   "KG_EUP_S01E01:drift_rand3",
+   "KG_EUP_S01E01:drift_rand5",
+   "KG_PB_S05E01:drift_offset"
+  ],
+  "tiny.en-cpu|full|clean": [
+   "KG_EUP_S01E01:clean"
+  ],
+  "tiny.en-cpu|full|rate": [
+   "KG_EUP_S01E01:drift_rand5",
+   "KG_PB_S05E01:drift_rand2"
+  ],
+  "tiny.en-cpu|sampled|rate": [
+   "KG_EUP_S01E01:drift_rand5",
+   "KG_PB_S05E01:drift_rand2"
+  ],
+  "tiny.en-q5_1-cpu|full|blocks": [
+   "KG_EUP_S01E01:blocks_rand0",
+   "KG_PB_S05E01:blocks_rand1"
+  ],
+  "tiny.en-q5_1-cpu|full|rate": [
+   "KG_EUP_S01E01:drift_rand0",
+   "KG_EUP_S01E01:drift_rand1",
+   "KG_EUP_S01E01:drift_rand3",
+   "KG_EUP_S01E01:drift_rand4",
+   "KG_EUP_S01E01:drift_rand5",
+   "KG_PB_S05E01:drift_rand2"
+  ],
+  "tiny.en-q5_1-cpu|sampled|rate": [
+   "KG_EUP_S01E01:drift_rand3",
+   "KG_EUP_S01E01:drift_rand5",
+   "KG_PB_S05E01:drift_rand2"
+  ],
+  "base.en-cpu|full|clean": [
+   "KG_EUP_S01E01:clean",
+   "KG_SHAM_S05E06:clean",
+   "SH_S01E06:clean"
+  ],
+  "base.en-cpu|sampled|clean": [
+   "KG_EUP_S01E01:clean"
+  ],
+  "base.en-cpu|full|rate": [
+   "KG_EUP_S01E01:fps_late",
+   "KG_EUP_S01E01:drift_rand0",
+   "KG_EUP_S01E01:drift_rand2",
+   "KG_EUP_S01E01:drift_rand3",
+   "KG_EUP_S01E01:drift_rand5",
+   "KG_EUP_S01E01:ratio_rand1",
+   "KG_EUP_S01E01:ratio_rand2",
+   "KG_PB_S05E01:pal_late",
+   "KG_PB_S05E01:drift_rand2",
+   "KG_PB_S05E01:ratio_rand3",
+   "SH_S01E06:drift_rand0"
+  ],
+  "base.en-cpu|sampled|rate": [
+   "KG_EUP_S01E01:fps_late",
+   "KG_EUP_S01E01:drift_rand0",
+   "KG_EUP_S01E01:drift_rand3",
+   "KG_EUP_S01E01:drift_rand5",
+   "KG_EUP_S01E01:ratio_rand1",
+   "KG_EUP_S01E01:ratio_rand2"
+  ],
+  "small.en|sampled|rate": [
+   "KG_EUP_S01E01:pal_early",
+   "KG_PB_S05E01:pal_early",
+   "KG_PB_S05E01:ratio_rand1"
+  ],
+  "small.en|full|rate": [
+   "KG_EUP_S01E01:drift_rand3",
+   "KG_PB_S05E01:drift_rand2",
+   "KG_BOYS_S01E01:pal_early"
+  ],
+  "small.en-q5_1|full|small_holes": [
+   "KG_EUP_S01E01:hole_rand3",
+   "SH_S01E01:hole_rand0",
+   "SH_S01E01:hole_rand1",
+   "SH_S01E01:hole_rand2"
+  ],
+  "medium.en|full|small_holes": [
+   "KG_EUP_S01E01:hole_rand2",
+   "KG_EUP_S01E01:hole_rand3",
+   "KG_BOYS_S01E01:hole_rand2",
+   "KG_BOYS_S01E01:hole_rand3",
+   "SH_S01E01:hole_rand0",
+   "SH_S01E01:hole_rand1",
+   "SH_S01E01:hole_rand2"
+  ],
+  "medium.en-q5_0|full|small_holes": [
+   "KG_EUP_S01E01:hole_rand2",
+   "KG_EUP_S01E01:hole_rand3",
+   "KG_BOYS_S01E01:hole_rand2",
+   "KG_BOYS_S01E01:hole_rand3"
+  ],
+  "turbo-q8_0|sampled|holes": [
+   "KG_EUP_S01E01:hole_rand0"
+  ],
+  "turbo-q8_0|full|rate": [
+   "KG_EUP_S01E01:drift_rand3",
+   "KG_PB_S05E01:drift_rand2"
+  ],
+  "turbo-q5_0|full|clean": [
+   "KG_EUP_S01E01:clean",
+   "KG_PB_S05E01:clean",
+   "KG_SHAM_S05E06:clean",
+   "SH_S01E01:clean"
+  ],
+  "turbo-q5_0|sampled|holes": [
+   "KG_EUP_S01E01:hole_rand0"
+  ],
+  "turbo-q5_0|full|rate": [
+   "KG_EUP_S01E01:drift_rand3",
+   "KG_PB_S05E01:drift_offset",
+   "KG_PB_S05E01:drift_rand2",
+   "SH_S01E01:drift_rand3",
+   "SH_S01E01:ratio_rand0",
+   "SH_S01E06:pal_late"
+  ],
+  "groq-turbo|sampled|holes": [
+   "KG_EUP_S01E01:hole_rand0"
+  ],
+  "tiny.en-greedy-cpu|full|blocks": [
+   "KG_PB_S05E01:blocks_rand1"
+  ],
+  "tiny.en-greedy-cpu|full|rate": [
+   "KG_PB_S05E01:drift_rand2"
+  ],
+  "tiny.en-greedy-cpu|sampled|rate": [
+   "KG_PB_S05E01:drift_rand2"
+  ],
+  "tiny.en-cpu|full|blocks": [
+   "KG_PB_S05E01:blocks_rand1"
+  ],
+  "base.en-greedy-cpu|sampled|clean": [
+   "KG_PB_S05E01:clean"
+  ],
+  "base.en-greedy-cpu|full|rate": [
+   "KG_PB_S05E01:drift",
+   "KG_PB_S05E01:drift_offset",
+   "KG_PB_S05E01:drift_rand2"
+  ],
+  "base.en-greedy-cpu|sampled|rate": [
+   "KG_PB_S05E01:drift",
+   "KG_PB_S05E01:drift_offset",
+   "KG_PB_S05E01:drift_rand0",
+   "KG_PB_S05E01:drift_rand1",
+   "KG_PB_S05E01:drift_rand2",
+   "KG_PB_S05E01:drift_rand4"
+  ],
+  "base.en-greedy-cpu|full|drift_swap": [
+   "KG_PB_S05E01:drift_swap"
+  ],
+  "base.en-greedy-cpu|sampled|drift_swap": [
+   "KG_PB_S05E01:drift_swap"
+  ],
+  "base.en-cpu|full|blocks": [
+   "KG_PB_S05E01:blocks_rand1"
+  ],
+  "small.en-greedy|full|rate": [
+   "KG_PB_S05E01:drift",
+   "KG_PB_S05E01:drift_offset",
+   "KG_PB_S05E01:drift_rand2"
+  ],
+  "small.en-greedy|sampled|rate": [
+   "KG_PB_S05E01:drift",
+   "KG_PB_S05E01:drift_offset"
+  ],
+  "small.en-greedy|full|drift_swap": [
+   "KG_PB_S05E01:drift_swap"
+  ],
+  "small.en-greedy|sampled|drift_swap": [
+   "KG_PB_S05E01:drift_swap"
+  ],
+  "small.en|full|small_holes": [
+   "KG_PB_S05E01:hole_rand0",
+   "KG_BOYS_S01E01:hole_rand3",
+   "SH_S01E01:hole_rand0",
+   "SH_S01E01:hole_rand1",
+   "SH_S01E01:hole_rand2"
+  ],
+  "small.en-q5_1|sampled|clean": [
+   "KG_PB_S05E01:clean",
+   "KG_BOYS_S01E01:clean"
+  ],
+  "small.en-q5_1|full|rate": [
+   "KG_PB_S05E01:drift_offset",
+   "KG_PB_S05E01:drift_rand2",
+   "KG_SHAM_S05E06:drift_offset",
+   "KG_SHAM_S05E06:drift_rand0",
+   "KG_SHAM_S05E06:drift_rand4",
+   "KG_SHAM_S05E06:drift_rand5",
+   "SH_S01E06:ratio_rand1"
+  ],
+  "small.en-q5_1|sampled|rate": [
+   "KG_PB_S05E01:drift_offset",
+   "KG_PB_S05E01:drift_rand2",
+   "KG_SHAM_S05E06:drift_rand0",
+   "KG_SHAM_S05E06:drift_rand4",
+   "KG_SHAM_S05E06:drift_rand5"
+  ],
+  "medium.en-greedy|full|rate": [
+   "KG_PB_S05E01:drift_rand2"
+  ],
+  "medium.en|full|rate": [
+   "KG_PB_S05E01:drift_offset",
+   "KG_PB_S05E01:drift_rand2"
+  ],
+  "medium.en|sampled|drift_swap": [
+   "KG_PB_S05E01:drift_swap"
+  ],
+  "medium.en-q5_0|full|rate": [
+   "KG_PB_S05E01:drift_offset",
+   "KG_PB_S05E01:drift_rand2",
+   "KG_PB_S05E01:drift_rand4",
+   "KG_PB_S05E01:ratio_rand3",
+   "SH_S01E01:fps_late"
+  ],
+  "medium.en-q5_0|sampled|rate": [
+   "KG_PB_S05E01:drift_offset",
+   "KG_PB_S05E01:pal_late",
+   "KG_PB_S05E01:drift_rand2",
+   "KG_PB_S05E01:ratio_rand3",
+   "SH_S01E01:fps_late"
+  ],
+  "turbo-q8_0|full|small_holes": [
+   "KG_PB_S05E01:hole_rand0",
+   "KG_BOYS_S01E01:hole_rand2",
+   "KG_BOYS_S01E01:hole_rand3",
+   "SH_S01E01:hole_rand0",
+   "SH_S01E01:hole_rand1"
+  ],
+  "base.en-q5_1-cpu|full|blocks": [
+   "KG_SHAM_S05E06:blocks_rand1"
+  ],
+  "base.en-q5_1-cpu|full|rate": [
+   "KG_SHAM_S05E06:ratio_rand1"
+  ],
+  "turbo-q5_0|sampled|clean": [
+   "KG_SHAM_S05E06:clean"
+  ],
+  "groq-turbo|full|clean": [
+   "KG_SHAM_S05E06:clean"
+  ],
+  "groq-turbo|sampled|clean": [
+   "KG_SHAM_S05E06:clean"
+  ],
+  "small.en-greedy|full|small_holes": [
+   "KG_BOYS_S01E01:hole_rand2",
+   "KG_BOYS_S01E01:hole_rand3",
+   "SH_S01E01:hole_rand0",
+   "SH_S01E01:hole_rand1",
+   "SH_S01E01:hole_rand2"
+  ],
+  "small.en-q5_1|full|offset": [
+   "KG_BOYS_S01E01:uniform_m5"
+  ],
+  "small.en-q5_1|sampled|offset": [
+   "KG_BOYS_S01E01:uniform_m5"
+  ],
+  "medium.en-greedy|full|offset": [
+   "KG_BOYS_S01E01:uniform_neg"
+  ],
+  "base.en-q5_1-cpu|sampled|rate": [
+   "SH_S01E01:drift_rand5"
+  ],
+  "medium.en-greedy|full|clean": [
+   "SH_S01E01:clean",
+   "SH_S01E06:clean"
+  ],
+  "medium.en-greedy|sampled|rate": [
+   "SH_S01E01:drift_rand5"
+  ],
+  "medium.en-q5_0|sampled|clean": [
+   "SH_S01E01:clean"
+  ],
+  "base.en-q5_1-cpu|full|clean": [
+   "SH_S01E06:clean"
+  ],
+  "base.en-q5_1-cpu|sampled|clean": [
+   "SH_S01E06:clean"
+  ]
+ },
+ "by_scenario": {
+  "full|clean": [
+   111,
+   150
+  ],
+  "sampled|clean": [
+   137,
+   150
+  ],
+  "full|uniform": [
+   150,
+   150
+  ],
+  "sampled|uniform": [
+   150,
+   150
+  ],
+  "full|uniform_neg": [
+   149,
+   150
+  ],
+  "sampled|uniform_neg": [
+   150,
+   150
+  ],
+  "full|uniform_p03": [
+   84,
+   150
+  ],
+  "sampled|uniform_p03": [
+   71,
+   150
+  ],
+  "full|uniform_m07": [
+   150,
+   150
+  ],
+  "sampled|uniform_m07": [
+   150,
+   150
+  ],
+  "full|uniform_p15": [
+   150,
+   150
+  ],
+  "sampled|uniform_p15": [
+   150,
+   150
+  ],
+  "full|uniform_m5": [
+   149,
+   150
+  ],
+  "sampled|uniform_m5": [
+   149,
+   150
+  ],
+  "full|fps_late": [
+   148,
+   150
+  ],
+  "sampled|fps_late": [
+   148,
+   150
+  ],
+  "full|fps_early": [
+   150,
+   150
+  ],
+  "sampled|fps_early": [
+   150,
+   150
+  ],
+  "full|drift": [
+   148,
+   150
+  ],
+  "sampled|drift": [
+   147,
+   150
+  ],
+  "full|drift_offset": [
+   142,
+   150
+  ],
+  "sampled|drift_offset": [
+   143,
+   150
+  ],
+  "full|pal_late": [
+   148,
+   150
+  ],
+  "sampled|pal_late": [
+   149,
+   150
+  ],
+  "full|pal_early": [
+   149,
+   150
+  ],
+  "sampled|pal_early": [
+   148,
+   150
+  ],
+  "full|piecewise": [
+   150,
+   150
+  ],
+  "sampled|piecewise": [
+   150,
+   150
+  ],
+  "full|piecewise_b": [
+   150,
+   150
+  ],
+  "sampled|piecewise_b": [
+   150,
+   150
+  ],
+  "full|piecewise_c": [
+   150,
+   150
+  ],
+  "sampled|piecewise_c": [
+   150,
+   150
+  ],
+  "full|cut_version": [
+   150,
+   150
+  ],
+  "sampled|cut_version": [
+   150,
+   150
+  ],
+  "full|missing_middle": [
+   145,
+   150
+  ],
+  "sampled|missing_middle": [
+   142,
+   150
+  ],
+  "full|dropdup": [
+   150,
+   150
+  ],
+  "sampled|dropdup": [
+   150,
+   150
+  ],
+  "full|jitter": [
+   150,
+   150
+  ],
+  "sampled|jitter": [
+   150,
+   150
+  ],
+  "full|wrong_episode": [
+   150,
+   150
+  ],
+  "sampled|wrong_episode": [
+   150,
+   150
+  ],
+  "full|swap": [
+   150,
+   150
+  ],
+  "sampled|swap": [
+   150,
+   150
+  ],
+  "full|drift_swap": [
+   148,
+   150
+  ],
+  "sampled|drift_swap": [
+   147,
+   150
+  ],
+  "full|block_rand0": [
+   150,
+   150
+  ],
+  "sampled|block_rand0": [
+   149,
+   150
+  ],
+  "full|block_rand1": [
+   150,
+   150
+  ],
+  "sampled|block_rand1": [
+   123,
+   150
+  ],
+  "full|block_rand2": [
+   150,
+   150
+  ],
+  "sampled|block_rand2": [
+   134,
+   150
+  ],
+  "full|block_rand3": [
+   150,
+   150
+  ],
+  "sampled|block_rand3": [
+   124,
+   150
+  ],
+  "full|blocks_rand0": [
+   149,
+   150
+  ],
+  "sampled|blocks_rand0": [
+   148,
+   150
+  ],
+  "full|blocks_rand1": [
+   145,
+   150
+  ],
+  "sampled|blocks_rand1": [
+   129,
+   150
+  ],
+  "full|cutsteps_rand0": [
+   150,
+   150
+  ],
+  "sampled|cutsteps_rand0": [
+   150,
+   150
+  ],
+  "full|cutsteps_rand1": [
+   150,
+   150
+  ],
+  "sampled|cutsteps_rand1": [
+   150,
+   150
+  ],
+  "full|cutsteps_rand2": [
+   150,
+   150
+  ],
+  "sampled|cutsteps_rand2": [
+   138,
+   150
+  ],
+  "full|cutsteps_rand3": [
+   150,
+   150
+  ],
+  "sampled|cutsteps_rand3": [
+   150,
+   150
+  ],
+  "full|cutsteps_rand4": [
+   150,
+   150
+  ],
+  "sampled|cutsteps_rand4": [
+   150,
+   150
+  ],
+  "full|cutsteps_rand5": [
+   150,
+   150
+  ],
+  "sampled|cutsteps_rand5": [
+   150,
+   150
+  ],
+  "full|cutsteps_rand6": [
+   150,
+   150
+  ],
+  "sampled|cutsteps_rand6": [
+   150,
+   150
+  ],
+  "full|cutsteps_rand7": [
+   150,
+   150
+  ],
+  "sampled|cutsteps_rand7": [
+   150,
+   150
+  ],
+  "full|cutsteps_rand8": [
+   150,
+   150
+  ],
+  "sampled|cutsteps_rand8": [
+   150,
+   150
+  ],
+  "full|cutsteps_rand9": [
+   150,
+   150
+  ],
+  "sampled|cutsteps_rand9": [
+   149,
+   150
+  ],
+  "full|hole_rand0": [
+   117,
+   150
+  ],
+  "sampled|hole_rand0": [
+   112,
+   150
+  ],
+  "full|hole_rand1": [
+   100,
+   150
+  ],
+  "sampled|hole_rand1": [
+   89,
+   150
+  ],
+  "full|hole_rand2": [
+   119,
+   150
+  ],
+  "sampled|hole_rand2": [
+   117,
+   150
+  ],
+  "full|hole_rand3": [
+   116,
+   150
+  ],
+  "sampled|hole_rand3": [
+   113,
+   150
+  ],
+  "full|trunc_start_rand0": [
+   77,
+   150
+  ],
+  "sampled|trunc_start_rand0": [
+   57,
+   150
+  ],
+  "full|trunc_start_rand1": [
+   103,
+   150
+  ],
+  "sampled|trunc_start_rand1": [
+   83,
+   150
+  ],
+  "full|trunc_end_rand0": [
+   69,
+   150
+  ],
+  "sampled|trunc_end_rand0": [
+   49,
+   150
+  ],
+  "full|trunc_end_rand1": [
+   74,
+   150
+  ],
+  "sampled|trunc_end_rand1": [
+   57,
+   150
+  ],
+  "full|drift_rand0": [
+   146,
+   150
+  ],
+  "sampled|drift_rand0": [
+   145,
+   150
+  ],
+  "full|drift_rand1": [
+   148,
+   150
+  ],
+  "sampled|drift_rand1": [
+   147,
+   150
+  ],
+  "full|drift_rand2": [
+   136,
+   150
+  ],
+  "sampled|drift_rand2": [
+   142,
+   150
+  ],
+  "full|drift_rand3": [
+   143,
+   150
+  ],
+  "sampled|drift_rand3": [
+   145,
+   150
+  ],
+  "full|drift_rand4": [
+   147,
+   150
+  ],
+  "sampled|drift_rand4": [
+   146,
+   150
+  ],
+  "full|drift_rand5": [
+   146,
+   150
+  ],
+  "sampled|drift_rand5": [
+   141,
+   150
+  ],
+  "full|ratio_rand0": [
+   148,
+   150
+  ],
+  "sampled|ratio_rand0": [
+   150,
+   150
+  ],
+  "full|ratio_rand1": [
+   147,
+   150
+  ],
+  "sampled|ratio_rand1": [
+   148,
+   150
+  ],
+  "full|ratio_rand2": [
+   149,
+   150
+  ],
+  "sampled|ratio_rand2": [
+   149,
+   150
+  ],
+  "full|ratio_rand3": [
+   148,
+   150
+  ],
+  "sampled|ratio_rand3": [
+   149,
+   150
+  ],
+  "full|many_swaps": [
+   150,
+   150
+  ],
+  "sampled|many_swaps": [
+   150,
+   150
+  ]
+ },
+ "blocks_also_repaired": {
+  "tiny.en-greedy-cpu|full": [
+   46,
+   200
+  ],
+  "tiny.en-greedy-cpu|sampled": [
+   49,
+   200
+  ],
+  "tiny.en-cpu|full": [
+   45,
+   200
+  ],
+  "tiny.en-cpu|sampled": [
+   42,
+   200
+  ],
+  "tiny.en-q5_1-cpu|full": [
+   40,
+   200
+  ],
+  "tiny.en-q5_1-cpu|sampled": [
+   42,
+   200
+  ],
+  "base.en-greedy-cpu|full": [
+   41,
+   200
+  ],
+  "base.en-greedy-cpu|sampled": [
+   40,
+   200
+  ],
+  "base.en-cpu|full": [
+   36,
+   200
+  ],
+  "base.en-cpu|sampled": [
+   41,
+   200
+  ],
+  "base.en-q5_1-cpu|full": [
+   33,
+   200
+  ],
+  "base.en-q5_1-cpu|sampled": [
+   28,
+   200
+  ],
+  "small.en-greedy|full": [
+   36,
+   200
+  ],
+  "small.en-greedy|sampled": [
+   33,
+   200
+  ],
+  "small.en|full": [
+   38,
+   200
+  ],
+  "small.en|sampled": [
+   30,
+   200
+  ],
+  "small.en-q5_1|full": [
+   47,
+   200
+  ],
+  "small.en-q5_1|sampled": [
+   46,
+   200
+  ],
+  "medium.en-greedy|full": [
+   40,
+   200
+  ],
+  "medium.en-greedy|sampled": [
+   37,
+   200
+  ],
+  "medium.en|full": [
+   41,
+   200
+  ],
+  "medium.en|sampled": [
+   40,
+   200
+  ],
+  "medium.en-q5_0|full": [
+   32,
+   200
+  ],
+  "medium.en-q5_0|sampled": [
+   35,
+   200
+  ],
+  "turbo-q8_0|full": [
+   42,
+   200
+  ],
+  "turbo-q8_0|sampled": [
+   40,
+   200
+  ],
+  "turbo-q5_0|full": [
+   41,
+   200
+  ],
+  "turbo-q5_0|sampled": [
+   37,
+   200
+  ],
+  "groq-turbo|full": [
+   48,
+   200
+  ],
+  "groq-turbo|sampled": [
+   39,
+   200
+  ]
+ },
+ "hole_detection_by_removed_dialogue_lines": {
+  "40+": [
+   771,
+   810
+  ],
+  "10-19": [
+   87,
+   240
+  ],
+  "0-9": [
+   16,
+   90
+  ],
+  "20-39": [
+   296,
+   360
+  ]
+ },
+ "cut_end_detection_by_cut_length": {
+  "150-250 s": [
+   191,
+   330
+  ],
+  "< 150 s": [
+   136,
+   570
+  ],
+  ">= 250 s": [
+   242,
+   300
+  ]
+ },
+ "clean_false_positives": [
+  {
+   "model": "small.en-greedy",
+   "mode": "full",
+   "slug": "KG_BB_S01E01",
+   "flag": "SUSPECT",
+   "reason": "partly_out_of_sync",
+   "sync": "already in sync"
+  },
+  {
+   "model": "small.en",
+   "mode": "full",
+   "slug": "KG_BB_S01E01",
+   "flag": "SUSPECT",
+   "reason": "partly_out_of_sync",
+   "sync": "already in sync"
+  },
+  {
+   "model": "small.en-q5_1",
+   "mode": "full",
+   "slug": "KG_BB_S01E01",
+   "flag": "SUSPECT",
+   "reason": "partly_out_of_sync",
+   "sync": "already in sync"
+  },
+  {
+   "model": "medium.en",
+   "mode": "full",
+   "slug": "KG_BB_S01E01",
+   "flag": "SUSPECT",
+   "reason": "partly_out_of_sync",
+   "sync": "already in sync"
+  },
+  {
+   "model": "medium.en-q5_0",
+   "mode": "full",
+   "slug": "KG_BB_S01E01",
+   "flag": "SUSPECT",
+   "reason": "partly_out_of_sync",
+   "sync": "already in sync"
+  },
+  {
+   "model": "turbo-q8_0",
+   "mode": "full",
+   "slug": "KG_BB_S01E01",
+   "flag": "SUSPECT",
+   "reason": "partly_out_of_sync",
+   "sync": "already in sync"
+  },
+  {
+   "model": "tiny.en-q5_1-cpu",
+   "mode": "full",
+   "slug": "KG_BIL_S01E01",
+   "flag": "SUSPECT",
+   "reason": "partly_out_of_sync",
+   "sync": "already in sync"
+  },
+  {
+   "model": "tiny.en-q5_1-cpu",
+   "mode": "sampled",
+   "slug": "KG_BIL_S01E01",
+   "flag": "SUSPECT",
+   "reason": "partly_out_of_sync",
+   "sync": "already in sync"
+  },
+  {
+   "model": "base.en-greedy-cpu",
+   "mode": "full",
+   "slug": "KG_BIL_S01E01",
+   "flag": "SUSPECT",
+   "reason": "partly_out_of_sync",
+   "sync": "already in sync"
+  },
+  {
+   "model": "small.en-greedy",
+   "mode": "full",
+   "slug": "KG_BIL_S01E01",
+   "flag": "SUSPECT",
+   "reason": "partly_out_of_sync",
+   "sync": "already in sync"
+  },
+  {
+   "model": "small.en-greedy",
+   "mode": "sampled",
+   "slug": "KG_BIL_S01E01",
+   "flag": "SUSPECT",
+   "reason": "partly_out_of_sync",
+   "sync": "already in sync"
+  },
+  {
+   "model": "small.en",
+   "mode": "full",
+   "slug": "KG_BIL_S01E01",
+   "flag": "SUSPECT",
+   "reason": "partly_out_of_sync",
+   "sync": "already in sync"
+  },
+  {
+   "model": "small.en",
+   "mode": "sampled",
+   "slug": "KG_BIL_S01E01",
+   "flag": "SUSPECT",
+   "reason": "partly_out_of_sync",
+   "sync": "already in sync"
+  },
+  {
+   "model": "small.en-q5_1",
+   "mode": "full",
+   "slug": "KG_BIL_S01E01",
+   "flag": "SUSPECT",
+   "reason": "partly_out_of_sync",
+   "sync": "already in sync"
+  },
+  {
+   "model": "medium.en",
+   "mode": "full",
+   "slug": "KG_BIL_S01E01",
+   "flag": "SUSPECT",
+   "reason": "partly_out_of_sync",
+   "sync": "already in sync"
+  },
+  {
+   "model": "medium.en",
+   "mode": "sampled",
+   "slug": "KG_BIL_S01E01",
+   "flag": "SUSPECT",
+   "reason": "partly_out_of_sync",
+   "sync": "already in sync"
+  },
+  {
+   "model": "tiny.en-cpu",
+   "mode": "full",
+   "slug": "KG_EUP_S01E01",
+   "flag": "SUSPECT",
+   "reason": "partly_out_of_sync",
+   "sync": "already in sync"
+  },
+  {
+   "model": "base.en-cpu",
+   "mode": "full",
+   "slug": "KG_EUP_S01E01",
+   "flag": "SUSPECT",
+   "reason": "partly_out_of_sync",
+   "sync": "already in sync"
+  },
+  {
+   "model": "base.en-cpu",
+   "mode": "sampled",
+   "slug": "KG_EUP_S01E01",
+   "flag": "SUSPECT",
+   "reason": "partly_out_of_sync",
+   "sync": "already in sync"
+  },
+  {
+   "model": "small.en-greedy",
+   "mode": "full",
+   "slug": "KG_EUP_S01E01",
+   "flag": "SUSPECT",
+   "reason": "partly_out_of_sync",
+   "sync": "already in sync"
+  },
+  {
+   "model": "small.en",
+   "mode": "full",
+   "slug": "KG_EUP_S01E01",
+   "flag": "SUSPECT",
+   "reason": "partly_out_of_sync",
+   "sync": "already in sync"
+  },
+  {
+   "model": "turbo-q5_0",
+   "mode": "full",
+   "slug": "KG_EUP_S01E01",
+   "flag": "SUSPECT",
+   "reason": "partly_out_of_sync",
+   "sync": "already in sync"
+  },
+  {
+   "model": "base.en-greedy-cpu",
+   "mode": "full",
+   "slug": "KG_PB_S05E01",
+   "flag": "SUSPECT",
+   "reason": "partly_out_of_sync",
+   "sync": "already in sync"
+  },
+  {
+   "model": "base.en-greedy-cpu",
+   "mode": "sampled",
+   "slug": "KG_PB_S05E01",
+   "flag": "SUSPECT",
+   "reason": "partly_out_of_sync",
+   "sync": "already in sync"
+  },
+  {
+   "model": "small.en-greedy",
+   "mode": "full",
+   "slug": "KG_PB_S05E01",
+   "flag": "SUSPECT",
+   "reason": "partly_out_of_sync",
+   "sync": "already in sync"
+  },
+  {
+   "model": "small.en-q5_1",
+   "mode": "full",
+   "slug": "KG_PB_S05E01",
+   "flag": "SUSPECT",
+   "reason": "partly_out_of_sync",
+   "sync": "already in sync"
+  },
+  {
+   "model": "small.en-q5_1",
+   "mode": "sampled",
+   "slug": "KG_PB_S05E01",
+   "flag": "SUSPECT",
+   "reason": "partly_out_of_sync",
+   "sync": "already in sync"
+  },
+  {
+   "model": "medium.en",
+   "mode": "full",
+   "slug": "KG_PB_S05E01",
+   "flag": "SUSPECT",
+   "reason": "partly_out_of_sync",
+   "sync": "already in sync"
+  },
+  {
+   "model": "medium.en-q5_0",
+   "mode": "full",
+   "slug": "KG_PB_S05E01",
+   "flag": "SUSPECT",
+   "reason": "partly_out_of_sync",
+   "sync": "already in sync"
+  },
+  {
+   "model": "turbo-q5_0",
+   "mode": "full",
+   "slug": "KG_PB_S05E01",
+   "flag": "SUSPECT",
+   "reason": "partly_out_of_sync",
+   "sync": "already in sync"
+  },
+  {
+   "model": "base.en-cpu",
+   "mode": "full",
+   "slug": "KG_SHAM_S05E06",
+   "flag": "SUSPECT",
+   "reason": "partly_out_of_sync",
+   "sync": "already in sync"
+  },
+  {
+   "model": "small.en-greedy",
+   "mode": "full",
+   "slug": "KG_SHAM_S05E06",
+   "flag": "SUSPECT",
+   "reason": "partly_out_of_sync",
+   "sync": "already in sync"
+  },
+  {
+   "model": "small.en",
+   "mode": "full",
+   "slug": "KG_SHAM_S05E06",
+   "flag": "SUSPECT",
+   "reason": "partly_out_of_sync",
+   "sync": "already in sync"
+  },
+  {
+   "model": "small.en-q5_1",
+   "mode": "full",
+   "slug": "KG_SHAM_S05E06",
+   "flag": "SUSPECT",
+   "reason": "partly_out_of_sync",
+   "sync": "already in sync"
+  },
+  {
+   "model": "medium.en",
+   "mode": "full",
+   "slug": "KG_SHAM_S05E06",
+   "flag": "SUSPECT",
+   "reason": "partly_out_of_sync",
+   "sync": "already in sync"
+  },
+  {
+   "model": "medium.en",
+   "mode": "sampled",
+   "slug": "KG_SHAM_S05E06",
+   "flag": "SUSPECT",
+   "reason": "partly_out_of_sync",
+   "sync": "already in sync"
+  },
+  {
+   "model": "turbo-q5_0",
+   "mode": "full",
+   "slug": "KG_SHAM_S05E06",
+   "flag": "SUSPECT",
+   "reason": "missing_lines",
+   "sync": "already in sync"
+  },
+  {
+   "model": "turbo-q5_0",
+   "mode": "sampled",
+   "slug": "KG_SHAM_S05E06",
+   "flag": "SUSPECT",
+   "reason": "missing_lines",
+   "sync": "already in sync"
+  },
+  {
+   "model": "groq-turbo",
+   "mode": "full",
+   "slug": "KG_SHAM_S05E06",
+   "flag": "SUSPECT",
+   "reason": "missing_lines",
+   "sync": "already in sync"
+  },
+  {
+   "model": "groq-turbo",
+   "mode": "sampled",
+   "slug": "KG_SHAM_S05E06",
+   "flag": "SUSPECT",
+   "reason": "missing_lines",
+   "sync": "already in sync"
+  },
+  {
+   "model": "small.en-q5_1",
+   "mode": "full",
+   "slug": "KG_BOYS_S01E01",
+   "flag": "SUSPECT",
+   "reason": "partly_out_of_sync",
+   "sync": "already in sync"
+  },
+  {
+   "model": "small.en-q5_1",
+   "mode": "sampled",
+   "slug": "KG_BOYS_S01E01",
+   "flag": "SUSPECT",
+   "reason": "partly_out_of_sync",
+   "sync": "already in sync"
+  },
+  {
+   "model": "medium.en-greedy",
+   "mode": "full",
+   "slug": "SH_S01E01",
+   "flag": "SUSPECT",
+   "reason": "partly_out_of_sync",
+   "sync": "already in sync"
+  },
+  {
+   "model": "medium.en-q5_0",
+   "mode": "full",
+   "slug": "SH_S01E01",
+   "flag": "SUSPECT",
+   "reason": "partly_out_of_sync",
+   "sync": "already in sync"
+  },
+  {
+   "model": "medium.en-q5_0",
+   "mode": "sampled",
+   "slug": "SH_S01E01",
+   "flag": "SUSPECT",
+   "reason": "partly_out_of_sync",
+   "sync": "already in sync"
+  },
+  {
+   "model": "turbo-q5_0",
+   "mode": "full",
+   "slug": "SH_S01E01",
+   "flag": "SUSPECT",
+   "reason": "partly_out_of_sync",
+   "sync": "already in sync"
+  },
+  {
+   "model": "base.en-cpu",
+   "mode": "full",
+   "slug": "SH_S01E06",
+   "flag": "SUSPECT",
+   "reason": "partly_out_of_sync",
+   "sync": "already in sync"
+  },
+  {
+   "model": "base.en-q5_1-cpu",
+   "mode": "full",
+   "slug": "SH_S01E06",
+   "flag": "SUSPECT",
+   "reason": "partly_out_of_sync",
+   "sync": "already in sync"
+  },
+  {
+   "model": "base.en-q5_1-cpu",
+   "mode": "sampled",
+   "slug": "SH_S01E06",
+   "flag": "SUSPECT",
+   "reason": "partly_out_of_sync",
+   "sync": "already in sync"
+  },
+  {
+   "model": "small.en",
+   "mode": "full",
+   "slug": "SH_S01E06",
+   "flag": "SUSPECT",
+   "reason": "partly_out_of_sync",
+   "sync": "already in sync"
+  },
+  {
+   "model": "medium.en-greedy",
+   "mode": "full",
+   "slug": "SH_S01E06",
+   "flag": "SUSPECT",
+   "reason": "partly_out_of_sync",
+   "sync": "already in sync"
+  },
+  {
+   "model": "medium.en-q5_0",
+   "mode": "full",
+   "slug": "SH_S01E06",
+   "flag": "SUSPECT",
+   "reason": "partly_out_of_sync",
+   "sync": "already in sync"
+  }
+ ],
+ "clean_swap_candidates": {
+  "KG_BB_S01E01": [
+   1,
+   1,
+   1,
+   1,
+   1,
+   1,
+   1,
+   1,
+   1,
+   1,
+   1,
+   1,
+   1,
+   1,
+   1,
+   1,
+   1,
+   1,
+   1,
+   1,
+   1,
+   1,
+   1,
+   1,
+   1,
+   1,
+   1,
+   1,
+   1,
+   1
+  ],
+  "KG_BIL_S01E01": [
+   4,
+   4,
+   4,
+   4,
+   4,
+   4,
+   4,
+   4,
+   4,
+   4,
+   4,
+   4,
+   4,
+   4,
+   4,
+   4,
+   4,
+   4,
+   4,
+   4,
+   4,
+   4,
+   4,
+   4,
+   4,
+   4,
+   4,
+   4,
+   4,
+   4
+  ],
+  "KG_BMS_S01E01": [
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0,
+   0
+  ],
+  "KG_BOB_S15E01": [
+   4,
+   4,
+   4,
+   4,
+   4,
+   4,
+   4,
+   4,
+   4,
+   4,
+   4,
+   4,
+   4,
+   4,
+   4,
+   4,
+   4,
+   4,
+   4,
+   4,
+   4,
+   4,
+   4,
+   4,
+   4,
+   4,
+   4,
+   4,
+   4,
+   4
+  ],
+  "KG_EUP_S01E01": [
+   1,
+   1,
+   1,
+   1,
+   1,
+   1,
+   1,
+   1,
+   1,
+   1,
+   1,
+   1,
+   1,
+   1,
+   1,
+   1,
+   1,
+   1,
+   1,
+   1,
+   1,
+   1,
+   1,
+   1,
+   1,
+   1,
+   1,
+   1,
+   1,
+   1
+  ],
+  "KG_PB_S05E01": [
+   1,
+   1,
+   1,
+   1,
+   1,
+   1,
+   1,
+   1,
+   1,
+   1,
+   1,
+   1,
+   1,
+   1,
+   1,
+   1,
+   1,
+   1,
+   1,
+   1,
+   1,
+   1,
+   1,
+   1,
+   1,
+   1,
+   1,
+   1,
+   1,
+   1
+  ],
+  "KG_SHAM_S05E06": [
+   1,
+   1,
+   1,
+   1,
+   1,
+   1,
+   1,
+   1,
+   1,
+   1,
+   1,
+   1,
+   1,
+   1,
+   1,
+   1,
+   1,
+   1,
+   1,
+   1,
+   1,
+   1,
+   1,
+   1,
+   1,
+   1,
+   1,
+   1,
+   1,
+   1
+  ],
+  "KG_BOYS_S01E01": [
+   5,
+   5,
+   5,
+   5,
+   5,
+   5,
+   5,
+   5,
+   5,
+   5,
+   5,
+   5,
+   5,
+   5,
+   5,
+   5,
+   5,
+   5,
+   5,
+   5,
+   5,
+   5,
+   5,
+   5,
+   5,
+   5,
+   5,
+   5,
+   5,
+   5
+  ],
+  "SH_S01E01": [
+   1,
+   1,
+   1,
+   1,
+   1,
+   1,
+   1,
+   1,
+   1,
+   1,
+   1,
+   1,
+   1,
+   1,
+   1,
+   1,
+   1,
+   1,
+   1,
+   1,
+   1,
+   1,
+   1,
+   1,
+   1,
+   1,
+   1,
+   1,
+   1,
+   1
+  ],
+  "SH_S01E06": [
+   4,
+   4,
+   4,
+   4,
+   4,
+   4,
+   4,
+   4,
+   4,
+   4,
+   4,
+   4,
+   4,
+   4,
+   4,
+   4,
+   4,
+   4,
+   4,
+   4,
+   4,
+   4,
+   4,
+   4,
+   4,
+   4,
+   4,
+   4,
+   4,
+   4
+  ]
+ },
+ "rows": 17400,
+ "ok_rows": 17400
+}

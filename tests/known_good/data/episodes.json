@@ -1,0 +1,92 @@
+{
+ "KG_BB_S01E01": {
+  "series": "Breaking Bad",
+  "video_name": "Breaking Bad - S01E01 - Pilot Bluray-1080p.mp4",
+  "subtitle_source": "Breaking Bad - S01E01 - Pilot Bluray-1080p.en.hi.srt",
+  "hearing_impaired": true,
+  "duration_seconds": 3486.53,
+  "language": "en",
+  "verified_good": true
+ },
+ "KG_BIL_S01E01": {
+  "series": "Billions",
+  "video_name": "Billions - S01 E01 - Pilot (720p HDTV).mkv",
+  "subtitle_source": "Billions - S01 E01 - Pilot (720p HDTV).en.srt",
+  "hearing_impaired": false,
+  "duration_seconds": 3553.73,
+  "language": "en",
+  "verified_good": true
+ },
+ "KG_BMS_S01E01": {
+  "series": "Blue Mountain State",
+  "video_name": "Blue Mountain State - S01E01 - It's Called Hazing, Look It Up Bluray-1080p.mkv",
+  "subtitle_source": "Blue Mountain State - S01E01 - It's Called Hazing, Look It Up Bluray-1080p.en.hi.srt",
+  "hearing_impaired": true,
+  "duration_seconds": 1716.77,
+  "language": "en",
+  "verified_good": true
+ },
+ "KG_BOB_S15E01": {
+  "series": "Bob's Burgers",
+  "video_name": "Bob's Burgers - S15E01 - The Tina Table - The Tables Have Tina-Ed WEBDL-1080p.mp4",
+  "subtitle_source": "Bob's Burgers - S15E01 - The Tina Table - The Tables Have Tina-Ed WEBDL-1080p.en.hi.srt",
+  "hearing_impaired": true,
+  "duration_seconds": 1297.94,
+  "language": "en",
+  "verified_good": true
+ },
+ "KG_EUP_S01E01": {
+  "series": "Euphoria (US)",
+  "video_name": "Euphoria (US) - S01E01 - Pilot WEBDL-1080p Proper.mkv",
+  "subtitle_source": "Euphoria (US) - S01E01 - Pilot WEBDL-1080p Proper.en.hi.srt",
+  "hearing_impaired": true,
+  "duration_seconds": 3233.25,
+  "language": "en",
+  "verified_good": true
+ },
+ "KG_PB_S05E01": {
+  "series": "Peaky Blinders",
+  "video_name": "Peaky Blinders - S05E01 - Black Tuesday Bluray-1080p.mp4",
+  "subtitle_source": "Peaky Blinders - S05E01 - Black Tuesday Bluray-1080p.en.hi.srt",
+  "hearing_impaired": true,
+  "duration_seconds": 3397.01,
+  "language": "en",
+  "verified_good": true
+ },
+ "KG_SHAM_S05E06": {
+  "series": "Shameless (US)",
+  "video_name": "Shameless (US) - S05E06 - Crazy Love Bluray-1080p.mp4",
+  "subtitle_source": "Shameless (US) - S05E06 - Crazy Love Bluray-1080p.en.srt",
+  "hearing_impaired": false,
+  "duration_seconds": 3422.42,
+  "language": "en",
+  "verified_good": true
+ },
+ "KG_BOYS_S01E01": {
+  "series": "The Boys",
+  "video_name": "The Boys - S01E01 - The Name of the Game Bluray-1080p.mp4",
+  "subtitle_source": "The Boys - S01E01 - The Name of the Game Bluray-1080p.en.hi.srt",
+  "hearing_impaired": true,
+  "duration_seconds": 3598.06,
+  "language": "en",
+  "verified_good": true
+ },
+ "SH_S01E01": {
+  "series": "Slow Horses",
+  "video_name": "Slow Horses - S01E01 - Failure's Contagious WEBDL-1080p.mkv",
+  "subtitle_source": "Slow Horses - S01E01 - Failure's Contagious WEBDL-1080p.en.srt",
+  "hearing_impaired": false,
+  "duration_seconds": 3231.84,
+  "language": "en",
+  "verified_good": true
+ },
+ "SH_S01E06": {
+  "series": "Slow Horses",
+  "video_name": "Slow Horses - S01E06 - Follies WEBDL-1080p.mkv",
+  "subtitle_source": "Slow Horses - S01E06 - Follies WEBDL-1080p.en.srt",
+  "hearing_impaired": false,
+  "duration_seconds": 3236.38,
+  "language": "en",
+  "verified_good": true
+ }
+}
