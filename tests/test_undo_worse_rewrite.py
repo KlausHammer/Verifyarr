@@ -59,6 +59,19 @@ class UndoWorseRewriteTests(unittest.TestCase):
                     P._undo_rewrite_that_made_it_worse(None, Path("v.mkv"), path, CFG, row, original)
             self.assertEqual((row["correctness_flag"], row["reason"]), (tmp_row["correctness_flag"], tmp_row["reason"]))
 
+    def test_rate_rewrite_on_a_wrong_subtitle_file_is_undone(self):
+        original, written = _subs(1.0), _subs(2.0)
+        for reason, ratio, restored in (("wrong_subtitle", "25/23.976", True), ("partly_out_of_sync", "25/23.976", False),
+                                        ("wrong_subtitle", None, False)):
+            with tempfile.TemporaryDirectory() as d:
+                path = Path(d) / "s.srt"
+                written.save(str(path))
+                row = {"sync_status": "fixed (rate 25/23.976, up to 9.0s)", "note": "",
+                       "correctness_flag": "SUSPECT", "reason": reason, "fps_ratio": ratio}
+                with mock.patch.object(P, "_dense_pool", side_effect=_pool_for({1.0: 0.8, 2.0: 0.7})):
+                    P._undo_rewrite_that_made_it_worse(None, Path("v.mkv"), path, CFG, row, original)
+                self.assertEqual(pysubs2.load(str(path))[0].start == 1000, restored, (reason, ratio))
+
     def test_real_improvement_is_kept(self):
         row, start = _run(0.8, 0.05)
         self.assertEqual(start, 2000)

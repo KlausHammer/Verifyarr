@@ -2043,21 +2043,30 @@ def _undo_rewrite_that_made_it_worse(conn: sqlite3.Connection, video_path: Path,
     if (original is None or cfg.dry_run
             or not (row.get("sync_status") or "").startswith("fixed")):
         return
-    before_pts = _dense_pool(conn, video_path, original, cfg)
-    before = _share_off(before_pts)
-    if before is None:
-        return
-    span = (min(a for a, _ in before_pts), max(a for a, _ in before_pts))
-    try:
-        after = _share_off(_dense_pool(conn, video_path, load_subs(subtitle_path), cfg), span)
-    except Exception:
-        return
-    if after is None or after <= before + REWRITE_WORSE_MARGIN:
-        return
+    # A rate fit on a file judged the wrong subtitle explained nothing: cut steps read as a rate,
+    # the fit only matches the lines it kept (Bob's Burgers, error 54 s -> 110 s). The pool cannot
+    # see that, it drops the lines that no longer match, so the verdict is the evidence.
+    suspect_rate = bool(row.get("fps_ratio")) and row.get("reason") == REASON_WRONG_SUBTITLE
+    if not suspect_rate:
+        before_pts = _dense_pool(conn, video_path, original, cfg)
+        before = _share_off(before_pts)
+        if before is None:
+            return
+        span = (min(a for a, _ in before_pts), max(a for a, _ in before_pts))
+        try:
+            after = _share_off(_dense_pool(conn, video_path, load_subs(subtitle_path), cfg), span)
+        except Exception:
+            return
+        if after is None or after <= before + REWRITE_WORSE_MARGIN:
+            return
     original.save(str(subtitle_path))
-    log.warning("rewrite of %s undone: %.0f%% of lines >%.1fs off afterwards, %.0f%% before",
-                subtitle_path.name, after * 100, ANCHOR_SUSPECT_THRESHOLD_S, before * 100)
-    row["sync_status"] = "left unchanged (the rewrite made the file worse -- undone)"
+    if suspect_rate:
+        log.warning("rate rewrite of %s undone: judged the wrong subtitle", subtitle_path.name)
+    else:
+        log.warning("rewrite of %s undone: %.0f%% of lines >%.1fs off afterwards, %.0f%% before",
+                    subtitle_path.name, after * 100, ANCHOR_SUSPECT_THRESHOLD_S, before * 100)
+    row["sync_status"] = ("left unchanged (rate fit on a wrong-subtitle file -- undone)" if suspect_rate
+                          else "left unchanged (the rewrite made the file worse -- undone)")
     row["sync_max_shift_s"] = None
     row["sync_split_blocks"] = None
     row["sync_block_spread_s"] = None
@@ -2066,8 +2075,9 @@ def _undo_rewrite_that_made_it_worse(conn: sqlite3.Connection, video_path: Path,
     row["line_order_cache_key"] = None
     row["line_order_cache_json"] = None
     row["line_order_fixed"] = 0
-    row["note"] = (row.get("note", "") + f" Rewrite undone: {after:.0%} of lines were more than "
-                   f"{ANCHOR_SUSPECT_THRESHOLD_S:.1f}s off afterwards against {before:.0%} before.").strip()
+    row["note"] = (row.get("note", "") + (" Rate rewrite undone: the file is judged the wrong subtitle." if suspect_rate else
+                   f" Rewrite undone: {after:.0%} of lines were more than "
+                   f"{ANCHOR_SUSPECT_THRESHOLD_S:.1f}s off afterwards against {before:.0%} before.")).strip()
 
 
 # A whole file sitting one steady offset off, read from the dense pool. alass can miss a

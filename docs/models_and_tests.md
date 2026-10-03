@@ -18,7 +18,7 @@ false positive, and every injected error is known exactly.
 | Model | Errors handled, sampled | Errors handled, full | Healthy files left alone, sampled / full | Speed (x real time) | RAM | Word F1 |
 |---|---|---|---|---|---|---|
 | **tiny.en (greedy) — default** | 98.0 % (499/509) | 99.0 % (504/509) | 10/10 and 10/10 | 25.5 | 0.6 GB | 0.79 |
-| tiny.en | 96.7 % (492/509) | 98.8 % (503/509) | 10/10 and 9/10 | 16.8 | 0.6 GB | 0.80 |
+| tiny.en | 96.9 % (493/509) | 98.8 % (503/509) | 10/10 and 9/10 | 16.8 | 0.6 GB | 0.80 |
 | tiny.en q5_1 | 97.4 % (496/509) | 96.9 % (493/509) | 9/10 and 9/10 | 16.5 | 0.6 GB | 0.80 |
 | base.en (greedy) | 96.1 % (489/509) | 97.8 % (498/509) | 9/10 and 8/10 | 16.4 | 0.7 GB | 0.84 |
 | base.en | 96.5 % (491/509) | 97.1 % (494/509) | 9/10 and 7/10 | 11.7 | 0.8 GB | 0.84 |
@@ -26,7 +26,7 @@ false positive, and every injected error is known exactly.
 | small.en (greedy) | 97.1 % (494/509) | 98.6 % (502/509) | 9/10 and 5/10 | 5.8 | 1.2 GB | 0.89 |
 | small.en | 97.8 % (498/509) | 99.0 % (504/509) | 9/10 and 5/10 | 4.5 | 1.3 GB | 0.88 |
 | small.en q5_1 | 97.1 % (494/509) | 98.2 % (500/509) | 8/10 and 5/10 | 4.6 | 1.1 GB | 0.89 |
-| medium.en (greedy) | 97.6 % (497/509) | 98.4 % (501/509) | 10/10 and 8/10 | 2.1 | 2.4 GB | 0.91 |
+| medium.en (greedy) | 97.4 % (496/509) | 98.4 % (501/509) | 10/10 and 8/10 | 2.1 | 2.4 GB | 0.91 |
 | medium.en | 97.4 % (496/509) | 98.6 % (502/509) | 8/10 and 6/10 | 1.8 | 2.7 GB | 0.90 |
 | medium.en q5_0 | 97.1 % (494/509) | 98.4 % (501/509) | 9/10 and 6/10 | 1.6 | 1.8 GB | 0.90 |
 | large-v3-turbo q8_0 | 97.2 % (495/509) | 99.6 % (507/509) | 10/10 and 9/10 | 1.7 | 1.8 GB | 0.88 |
@@ -95,12 +95,12 @@ How much has to be missing before a hole is seen:
 | 0-9 | 16/90 (18 %) |
 | 10-19 | 87/240 (36 %) |
 | 20-39 | 296/360 (82 %) |
-| 40+ | 771/810 (95 %) |
+| 40+ | 772/810 (95 %) |
 
 | Start or end cut off | Detected |
 |---|---|
 | < 150 s | 136/570 (24 %) |
-| 150-250 s | 191/330 (58 %) |
+| 150-250 s | 192/330 (58 %) |
 | >= 250 s | 242/300 (81 %) |
 <!-- /table:bins -->
 

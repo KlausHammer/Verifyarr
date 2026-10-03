@@ -122,7 +122,7 @@
    40
   ],
   "tiny.en-greedy-cpu|sampled|cut_ends": [
-   15,
+   16,
    40
   ],
   "tiny.en-cpu|full|clean": [
@@ -170,7 +170,7 @@
    39
   ],
   "tiny.en-cpu|sampled|holes": [
-   34,
+   35,
    39
   ],
   "tiny.en-cpu|full|dropdup": [
@@ -362,7 +362,7 @@
    160
   ],
   "base.en-greedy-cpu|sampled|rate": [
-   154,
+   155,
    160
   ],
   "base.en-greedy-cpu|full|blocks": [
@@ -370,7 +370,7 @@
    200
   ],
   "base.en-greedy-cpu|sampled|blocks": [
-   192,
+   191,
    200
   ],
   "base.en-greedy-cpu|full|holes": [
@@ -970,7 +970,7 @@
    50
   ],
   "medium.en-greedy|sampled|offset": [
-   50,
+   49,
    50
   ],
   "medium.en-greedy|full|offset_boundary": [
@@ -1638,7 +1638,6 @@
    "KG_BB_S01E01:trunc_end_rand1",
    "KG_BIL_S01E01:trunc_start_rand1",
    "KG_BIL_S01E01:trunc_end_rand0",
-   "KG_BMS_S01E01:trunc_start_rand1",
    "KG_BMS_S01E01:trunc_end_rand1",
    "KG_BOB_S15E01:trunc_end_rand0",
    "KG_BOB_S15E01:trunc_end_rand1",
@@ -1883,6 +1882,7 @@
   "base.en-greedy-cpu|sampled|blocks": [
    "KG_BB_S01E01:block_rand1",
    "KG_BIL_S01E01:block_rand1",
+   "KG_BMS_S01E01:cut_version",
    "KG_BMS_S01E01:block_rand2",
    "KG_BMS_S01E01:block_rand3",
    "KG_BMS_S01E01:cutsteps_rand2",
@@ -2843,7 +2843,6 @@
   ],
   "tiny.en-cpu|sampled|holes": [
    "KG_BMS_S01E01:hole_rand1",
-   "KG_EUP_S01E01:hole_rand0",
    "KG_EUP_S01E01:hole_rand1",
    "KG_SHAM_S05E06:hole_rand2",
    "KG_BOYS_S01E01:hole_rand1"
@@ -3234,7 +3233,6 @@
   "base.en-greedy-cpu|sampled|rate": [
    "KG_PB_S05E01:drift",
    "KG_PB_S05E01:drift_offset",
-   "KG_PB_S05E01:drift_rand0",
    "KG_PB_S05E01:drift_rand1",
    "KG_PB_S05E01:drift_rand2",
    "KG_PB_S05E01:drift_rand4"
@@ -3352,6 +3350,9 @@
   "medium.en-greedy|full|offset": [
    "KG_BOYS_S01E01:uniform_neg"
   ],
+  "medium.en-greedy|sampled|offset": [
+   "KG_BOYS_S01E01:uniform_neg"
+  ],
   "base.en-q5_1-cpu|sampled|rate": [
    "SH_S01E01:drift_rand5"
   ],
@@ -3394,7 +3395,7 @@
    150
   ],
   "sampled|uniform_neg": [
-   150,
+   149,
    150
   ],
   "full|uniform_p03": [
@@ -3506,7 +3507,7 @@
    150
   ],
   "sampled|cut_version": [
-   150,
+   149,
    150
   ],
   "full|missing_middle": [
@@ -3690,7 +3691,7 @@
    150
   ],
   "sampled|hole_rand0": [
-   112,
+   113,
    150
   ],
   "full|hole_rand1": [
@@ -3730,7 +3731,7 @@
    150
   ],
   "sampled|trunc_start_rand1": [
-   83,
+   84,
    150
   ],
   "full|trunc_end_rand0": [
@@ -3754,7 +3755,7 @@
    150
   ],
   "sampled|drift_rand0": [
-   145,
+   146,
    150
   ],
   "full|drift_rand1": [
@@ -3844,7 +3845,7 @@
    200
   ],
   "tiny.en-greedy-cpu|sampled": [
-   49,
+   48,
    200
   ],
   "tiny.en-cpu|full": [
@@ -3852,7 +3853,7 @@
    200
   ],
   "tiny.en-cpu|sampled": [
-   42,
+   41,
    200
   ],
   "tiny.en-q5_1-cpu|full": [
@@ -3868,7 +3869,7 @@
    200
   ],
   "base.en-greedy-cpu|sampled": [
-   40,
+   39,
    200
   ],
   "base.en-cpu|full": [
@@ -3884,7 +3885,7 @@
    200
   ],
   "base.en-q5_1-cpu|sampled": [
-   28,
+   27,
    200
   ],
   "small.en-greedy|full": [
@@ -3900,7 +3901,7 @@
    200
   ],
   "small.en|sampled": [
-   30,
+   32,
    200
   ],
   "small.en-q5_1|full": [
@@ -3908,7 +3909,7 @@
    200
   ],
   "small.en-q5_1|sampled": [
-   46,
+   45,
    200
   ],
   "medium.en-greedy|full": [
@@ -3932,7 +3933,7 @@
    200
   ],
   "medium.en-q5_0|sampled": [
-   35,
+   34,
    200
   ],
   "turbo-q8_0|full": [
@@ -3940,7 +3941,7 @@
    200
   ],
   "turbo-q8_0|sampled": [
-   40,
+   39,
    200
   ],
   "turbo-q5_0|full": [
@@ -3962,7 +3963,7 @@
  },
  "hole_detection_by_removed_dialogue_lines": {
   "40+": [
-   771,
+   772,
    810
   ],
   "10-19": [
@@ -3980,7 +3981,7 @@
  },
  "cut_end_detection_by_cut_length": {
   "150-250 s": [
-   191,
+   192,
    330
   ],
   "< 150 s": [
