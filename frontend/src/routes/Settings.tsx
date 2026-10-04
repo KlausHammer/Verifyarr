@@ -833,7 +833,7 @@ function CorrectnessTab() {
               <input type="checkbox" checked={data.local_whisper_use_gpu} onChange={(e) => setData({ ...data, local_whisper_use_gpu: e.target.checked })} style={{ width: 16, height: 16, accentColor: 'var(--accent)' }} />
             </label>
           </Field>
-          <Field advanced label="CPU threads">
+          <Field advanced label="CPU threads" tip="Threads for local Whisper. Default 10, or fewer if the machine has fewer cores; the WHISPER_THREADS variable in docker-compose changes the default.">
             <input type="number" min={1} value={data.local_whisper_threads} onChange={(e) => setData({ ...data, local_whisper_threads: Number(e.target.value) })} />
           </Field>
         </div>

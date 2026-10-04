@@ -43,6 +43,19 @@ DEFAULT_LOCAL_WHISPER_MODEL_PATH = (_BAKED_IN_WHISPER_MODEL_PATH if _BAKED_IN_WH
                                     else DATA_DIR / "whisper-models" / _WHISPER_MODEL_FILENAME)
 
 
+def _default_whisper_threads() -> int:
+    """WHISPER_THREADS from the environment (docker-compose), else 10, never more than the CPUs this
+    process may use (a cpuset-limited container reports fewer than the host has)."""
+    try:
+        usable = len(os.sched_getaffinity(0))
+    except AttributeError:
+        usable = os.cpu_count() or 4
+    raw = os.environ.get("WHISPER_THREADS", "").strip()
+    if raw.isdigit() and int(raw) >= 1:
+        return int(raw)
+    return max(1, min(10, usable))
+
+
 def _env_bool(name: str, default: bool) -> bool:
     val = os.environ.get(name)
     if val is None:
@@ -711,7 +724,7 @@ SETTING_DEFS: dict = {
     "correctness.local_whisper_binary":  ("correctness", "str", "/usr/local/bin/whisper-cli"),
     "correctness.local_whisper_model":   ("correctness", "str", str(DEFAULT_LOCAL_WHISPER_MODEL_PATH)),
     "correctness.local_whisper_use_gpu": ("correctness", "bool", True),
-    "correctness.local_whisper_threads": ("correctness", "int", 4),
+    "correctness.local_whisper_threads": ("correctness", "int", _default_whisper_threads()),
     "correctness.require_audio_lang":       ("correctness", "str", "en"),
     # off | quarantine | blacklist | remediate — what to do with a file the correctness check
     # flags SUSPECT (see Config.correctness_auto_action).
