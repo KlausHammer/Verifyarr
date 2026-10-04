@@ -628,7 +628,7 @@ RATE_MIN_POINTS = 40
 RATE_MIN_TILT_S = 1.5
 RATE_MIN_RHO = 0.70
 RATE_MIN_KEEP = 0.90
-RATE_MIN_GAIN_S = 0.20
+RATE_MIN_GAIN_S = 0.15
 RATE_MAX_RESID_S = 0.40
 # Lower bars when the slope snaps to a real conversion ratio (Bob's Burgers
 # S15E06: 23.976/24, tilt 1.03s, rho 0.54, gain 0.08s -- failed all three above).

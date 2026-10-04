@@ -7,6 +7,7 @@ them split (CLI, the Bazarr-hook single-file path, remediate's own candidate ver
 
 from __future__ import annotations
 
+import collections
 import copy
 import dataclasses
 import json
@@ -209,6 +210,7 @@ def handle_suspect(subtitle_path: Path, video_path: Path, cfg: Config, media_roo
 # measured differently. Same value as sync.min_change_seconds' default: the screen and the
 # write gate are one rule, coded in two places (see tests/test_sync_threshold.py).
 SCREEN_TOLERANCE_S = 0.25
+VETO_OLD_CLEAN_MIN_CLIPS = 12  # a vetoed fit leaves the original unflagged only if this many clips all read clean
 SCREEN_MIN_CLIPS = 3          # fewer confident clips than this is not evidence, it is silence
 # Of the clips that produced a match, how many land on the SAME answer. The gate on applying
 # a global offset before alass, and the reason is a measured near-miss: piecewise seed 0 read
@@ -1155,6 +1157,11 @@ def _resolve_ambiguous_sync(conn: sqlite3.Connection, video_path: Path, subtitle
                     and ot["mean_abs_shift"] <= wt["mean_abs_shift"]):
                 vetoed_from, winner = winner, "old"
                 row["_vetoed_bad_fit"] = True
+                # The original itself reads clean in every clip: nothing to fetch (Westworld S03E07).
+                old_regions = list(ot["regions"].values())
+                row["_vetoed_old_clean"] = (len(old_regions) >= VETO_OLD_CLEAN_MIN_CLIPS
+                                            and all(abs(x) <= ANCHOR_SUSPECT_THRESHOLD_S for x in old_regions)
+                                            and ot["mean_abs_shift"] <= ANCHOR_PREFER_MARGIN_S)
 
     def _describe(key: str) -> str:
         parts = []
@@ -1503,9 +1510,51 @@ def _stretch_info(name: str, ratio: float, p: dict, worst: float) -> dict:
             "vtilt": None, "n_anchors": p["n"], "n_vad": 0, "worst": worst, "probe": p}
 
 
+def _unclamp_alass_output(current, baseline):
+    """alass clamps cues it shifts before 0 s to 0, and a stretch fix applied on top then maps all of
+    them to the same instant (Avatar S01E14: the first 12 cues piled up at 38.1 s). The shift alass
+    applied is linear in the baseline's times, so the clamped cues are put back where it sent them.
+    Returns the file to stretch, or None when the clamped cues cannot be reconstructed."""
+    if baseline is None or len(baseline.events) != len(current.events):
+        return current if not _has_clamped(current, baseline) else None
+    clamped = [i for i, (c, b) in enumerate(zip(current.events, baseline.events)) if c.start == 0 and b.start > 0]
+    if not clamped:
+        return current
+    ok = [(b.start, c.start) for c, b in zip(current.events, baseline.events) if c.start > 0 and b.start > 0]
+    if len(ok) < 10:
+        return None
+    n = len(ok)
+    mx = sum(x for x, _ in ok) / n
+    my = sum(y for _, y in ok) / n
+    var = sum((x - mx) ** 2 for x, _ in ok)
+    if var <= 0:
+        return None
+    a = sum((x - mx) * (y - my) for x, y in ok) / var
+    b0 = my - a * mx
+    if max(abs(a * x + b0 - y) for x, y in ok) > 1500:       # not one line: do not guess
+        return None
+    out = copy.deepcopy(current)
+    for i in clamped:
+        e, base = out.events[i], baseline.events[i]
+        e.start = int(round(a * base.start + b0))
+        e.end = int(round(a * base.end + b0))
+    return out
+
+
+def _has_clamped(current, baseline) -> bool:
+    """Several cues stacked on one start time (a clamp at 0 whose baseline is not at hand)."""
+    starts = collections.Counter(e.start for e in current.events)
+    return any(n >= 3 and t == 0 for t, n in starts.items())
+
+
 def _apply_stretch_fix(subtitle_path: Path, cfg: Config, media_root: Path,
-                       current_subs, pts: list, p: dict):
+                       current_subs, pts: list, p: dict, baseline=None):
     """Applies a stretch probe that already passed its gates (quartile, threshold, write)."""
+    current_subs = _unclamp_alass_output(current_subs, baseline)
+    if current_subs is None:
+        log.info("stretch rescale for %s discarded: alass clamped cues at 0 and they cannot be put back",
+                 subtitle_path.name)
+        return None
     # a = (s + c) / (1 - m): the rate and the offset are one inverse. alass has
     # usually shifted the file already, so undoing only the rate leaves its shift.
     ratio = stretch_ratio(p)
@@ -2587,11 +2636,12 @@ def correctness_and_finish(video_path: Path, subtitle_path: Path, lang: Optional
 
             rate_fix = None
             vetoed = row.pop("_vetoed_bad_fit", False)
+            old_clean = row.pop("_vetoed_old_clean", False) and result.get("flag") == "ok"
             if vetoed:
                 # A rate error is measured on the untouched original, not on alass'
                 # fit -- the veto must not skip it (KG_BMS 4.6%, KG_BOB 0.1%).
                 rate_fix = rate_fixes()
-            if (vetoed and rate_fix is None
+            if (vetoed and rate_fix is None and not old_clean
                     and not (cfg.anchor_resync_enabled and not cfg.dry_run
                              and result.get("flag") == "ok"
                              and _anchor_bad_samples(cfg, ev_cfg, result, row, resolved_winner)
@@ -2629,7 +2679,7 @@ def correctness_and_finish(video_path: Path, subtitle_path: Path, lang: Optional
                 # already verified this probe end to end, so apply it directly.
                 fps_fix = _apply_stretch_fix(subtitle_path, cfg, media_root,
                                              current_subs, _fps_points(result),
-                                             ramp_probe_saved)
+                                             ramp_probe_saved, baseline=orig_subs or pre_sync_subs)
             if fps_fix is not None:
                 current_subs, fps_note, fps_info = fps_fix
                 steady = fps_info.get("kind") == "offset"
