@@ -17,30 +17,32 @@ results, so the whole measurement can be run again on any machine. No video and 
 Older research data (Community, the earlier Slow Horses set, the Z5 and Z100 library runs, `tests/data/`, `tests/arkiv_*/`)
 is kept for history. No quoted number depends on it.
 
-## Two kinds of test
+## What runs, and on what
 
-**Self-contained** (run everywhere, including GitHub): unit tests, tests on small inline or synthetic subtitles
-and the stored transcripts in `fixtures/whisper_full/`, the API, settings, Docker entrypoint and so on.
+`python -m pytest tests` runs everything from a clean checkout in about a minute, with no media, no network and no folder
+outside the repository. There are no skipped tests apart from two that cannot make sense in a given environment (the
+permission tests when run as root, the timezone test without `time.tzset`).
 
-**External-data tests** (skipped when the data is missing, reported as `skipped` with the reason): they run
-the real pipeline and real alass on real episodes. The media of those episodes is copyrighted, so it stays on your own machine. The test code is in the repo; you point it
-at your own copy of the data:
+- **Unit tests** use small inline subtitles and synthetic anchors: settings, Docker entrypoint, API, anchor and resync
+  maths, line order, the CPU core settings and so on.
+- **Pipeline tests** run the real pipeline (screen, alass step, correctness check, resync, undo net) on the Known Good
+  episodes. The stored Whisper output and the recorded alass answers stand in for audio and for alass, so they are
+  deterministic and need nothing else. They derive from `kg_env.KgReplayCase`, which installs the dataset hooks for one test
+  class and removes them afterwards. The files are `test_clean_files` (a verified-correct subtitle is never rewritten or
+  flagged), `test_silent_rows`, `test_swap_gate`, `test_fps_guard`, `test_fps_rescale`, `test_drift_ramp`,
+  `test_screen_order`, `test_fix_61_62`, `test_remediate_keep` and `test_known_good_dataset` (a small matrix from the packaged data).
 
+A pipeline test that needs an alass answer that has not been recorded stops with `alass replay miss`. A maintainer with the
+media records it once and merges it into the repository:
+
+```bash
+VERIFYARR_KG=auto python -m pytest tests/test_x.py     # runs the real alass and records the answer
+python tests/known_good/replay.py merge
 ```
-export VERIFYARR_TEST_DATA=/path/to/data
-python -m pytest tests -ra
-```
 
-Layout under `VERIFYARR_TEST_DATA`:
-
-| Path | Content |
-|---|---|
-| `whisper_gpu_staging/sweep/<model>/<slug>.json` | stored whisper.cpp output per episode and model |
-| `whisper_gpu_staging/wav/<slug>.wav` | 16 kHz mono audio of the episode (optional; ffmpeg extracts it otherwise) |
-| `Season 2/`, `Season 3/`, `Slow Horse/Season 1/`, `Known Good/` | the video and its subtitle |
-| `Z5_flaggede/<slug>/` + `meta.json` | the five real flawed episodes |
-
-`VERIFYARR_VAD_BINARY` optionally points at `whisper-vad-speech-segments` (the matrix uses VAD when it exists).
+Older tests ran on Community, Slow Horses S01E02-E06 and Z5 episodes from a local folder. They were ported to the Known Good
+episodes (the cases, not the numbers: a docstring that quotes a figure may come from the older episode) or removed where
+no Known Good episode shows the same thing.
 
 The full matrix (`e2e_matrix.py`, 58 scenarios) runs from the packaged Known Good data with `VERIFYARR_KG=replay`
-(see [known_good/README.md](known_good/README.md)); against your own media it needs the layout above.
+(see [known_good/README.md](known_good/README.md)).
