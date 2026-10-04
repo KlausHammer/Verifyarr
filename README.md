@@ -19,27 +19,9 @@ fetch a new one. No cloud speech recognition, no API key, runs on a small CPU bo
 
 ## How it works
 
-```mermaid
-flowchart TD
-  A[Subtitle + video] --> B[alass fits:<br/>single offset, blocks]
-  A --> C[Listen: 2 clips per 10 min<br/>local tiny.en + VAD]
-  B --> D{Which fit matches<br/>the audio anchors?}
-  C --> D
-  D -->|clips disagree| E[Whole-episode transcript]
-  E --> D
-  D -->|offset / framerate / drift| F[Fix, then verify again]
-  F -->|measures clean| OK([Subtitle OK])
-  F -->|still off| G
-  D -->|matches already| OK
-  D -->|wrong episode, missing lines,<br/>swapped lines, bad blocks| G[Flag as suspect]
-  G --> H[Bazarr blacklists it<br/>and finds another subtitle]
-  H --> I{New subtitle passes<br/>the same test?}
-  I -->|yes| OK
-  I -->|no, try next candidate| H
-  I -->|attempts run out| J([Original put back, stays flagged])
-```
+![How Verifyarr decides: input, check, decide, and what happens to a flagged file](docs/img/flow.svg)
 
-alass proposes timings; the audio decides. The refetch loop (blacklist, find another, test it) runs when the action
+alass proposes timings; the audio decides. With the default tiny model the whole episode is transcribed once (cached per video); bigger models use short sampled clips and only transcribe the whole episode when the clips disagree. The refetch loop (blacklist, find another, test it) runs when the action
 is set to `remediate`; with `off` or `quarantine` the file is only flagged or moved. A fix is only written when the corrected file measures clean
 against the same Whisper evidence, so a bad fit (alass is sometimes wildly wrong) is rejected instead of applied.
 

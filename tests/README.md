@@ -9,13 +9,12 @@ owner has verified as correct: **[tests/known_good/](known_good/README.md)**. Th
 stored Whisper output of 14 local configurations and Groq, the VAD intervals, every alass answer the matrix needs and the
 results, so the whole measurement can be run again on any machine. No video and no audio is included.
 
-> **Copyright.** The subtitles and the Whisper transcripts in `tests/known_good/data/` (and the older material in
-> `tests/data/`, `tests/fixtures/` and `tests/arkiv_*/`) are subtitle and speech text of commercial TV episodes. They are
+> **Copyright.** The subtitles and the Whisper transcripts in `tests/known_good/data/` are subtitle and speech text of commercial TV episodes. They are
 > published here only as test evidence for this tool, for research and reproducibility, and belong to their rights holders. If you are a
 > rights holder and want something removed, open an issue and it will go.
 
-Older research data (Community, the earlier Slow Horses set, the Z5 and Z100 library runs, `tests/data/`, `tests/arkiv_*/`)
-is kept for history. No quoted number depends on it.
+The notes from the older Community, Slow Horses, Z5 and Z100 work are in [../findings/](../findings/README.md); the data itself is no longer in
+the repository.
 
 ## What runs, and on what
 

@@ -26,7 +26,7 @@ frontend/.vite/
 .idea/
 
 # The test matrix's working files: corrupted subtitle copies, shard logs and
-# shard results. Only the merged results and tests/data/ belong in the repo.
+# shard results. Only the merged results in tests/known_good/results/ belong in the repo.
 tests/e2e_work_*/
 tests/e2e_work_*.log
 tests/e2e_matrix_[0-9]*.jsonl

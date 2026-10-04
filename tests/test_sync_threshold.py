@@ -4,7 +4,7 @@ pipeline.SCREEN_TOLERANCE_S (screen: offset/spread/drift) and the
 sync.min_change_seconds default (write: nothing under the threshold is written) are the same
 decision. This test pins the value AND that the two places agree, so a future
 one-sided change fails loudly instead of splitting the behaviour. The effect itself is measured
-through the matrix (arm 1/2, the clean cell, genuine.py) -- see CACHE_RAPPORT.md.
+through the matrix (arm 1/2, the clean cell, genuine.py) -- see findings/cache_rapport.md.
 """
 from __future__ import annotations
 

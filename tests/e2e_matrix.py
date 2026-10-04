@@ -1509,7 +1509,9 @@ def build_summary(results, models, slugs, scen, modes=None, audios=None):
             "drift_case": drift_case}
 
 
-if _os.environ.get("VERIFYARR_KG"):
+if _os.environ.get("VERIFYARR_KG") or __name__ == "__main__":
+    # Run as a script it always works from the packaged Known Good data (tests/known_good/data).
+    _os.environ.setdefault("VERIFYARR_KG", "replay")
     sys.path.insert(0, str(Path(__file__).resolve().parent / "known_good"))
     import replay as _kg_replay
     _kg_replay.install(sys.modules[__name__])
