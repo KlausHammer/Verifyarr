@@ -338,6 +338,10 @@ class Config:
     # "the lines are out of order" is never on its own a reason to throw the file away and fetch
     # another release. A real content problem is caught by the correctness score instead.
     correctness_auto_action: str = "off"
+    # Missing lines (a stretch of speech with no cues) are reported as SUSPECT with that reason, but only
+    # trigger the auto action above when this is on: in practice most are songs, background chatter or
+    # burned-in subtitles, and the subtitle is fine.
+    act_on_missing_lines: bool = False
 
     # Same "manual Scan/CLI has its own switch, scheduled sweep + Bazarr poll share a second
     # one" split as sync_enabled/auto_scan_sync_enabled above -- see jobs._effective_cfg.
@@ -429,6 +433,7 @@ class Config:
             vad_model=vals["sync.vad_model"],
             vad_min_speech_seconds=vals["sync.vad_min_speech_seconds"],
             correctness_auto_action=vals["correctness.auto_action"],
+            act_on_missing_lines=vals["correctness.act_on_missing_lines"],
             sample_count=vals["sync.sample_count"],
             clip_seconds=vals["sync.clip_seconds"],
             window_minutes=vals["sync.window_minutes"],
@@ -721,6 +726,7 @@ SETTING_DEFS: dict = {
     # off | quarantine | blacklist | remediate — what to do with a file the correctness check
     # flags SUSPECT (see Config.correctness_auto_action).
     "correctness.auto_action":              ("correctness", "str", "off"),
+    "correctness.act_on_missing_lines":     ("correctness", "bool", False),
 
     # Generate missing subtitles (see generate.py) -- own settings group, deliberately separate
     # from correctness.* even where the provider choice overlaps (groq/openrouter), so a user

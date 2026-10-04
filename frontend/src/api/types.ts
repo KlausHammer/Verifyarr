@@ -238,6 +238,7 @@ export interface CorrectnessSettings {
   local_whisper_cpus: string
   require_audio_lang: string
   auto_action: 'off' | 'quarantine' | 'blacklist' | 'remediate'
+  act_on_missing_lines: boolean
 }
 
 export interface GenerateSettings {

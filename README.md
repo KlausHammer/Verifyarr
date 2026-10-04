@@ -105,6 +105,11 @@ Set per-check (correctness / line-order) under Settings → Automation:
 | `blacklist` | Tells Bazarr to blacklist that source, which removes the file and makes Bazarr search for a replacement on its own |
 | `remediate` | Same as `blacklist`, then waits for and tests whatever Bazarr finds itself; if that fails, tries more candidates from Bazarr's provider search until one passes or attempts run out. If none passes, the original is put back and stays flagged |
 
+The action applies to every flag reason (wrong subtitle, partly out of sync, noisy timing, past the end of the audio) except
+**missing lines**, which only inform by default: a gap in the subtitle usually turns out to be a song, background chatter or
+burned-in subtitles. The flag and its time span still show in the list; turn on Settings → Correctness → "Act on missing
+lines" to let it trigger the action too.
+
 `blacklist`/`remediate` hand the file to Bazarr rather than quarantining it locally, since Bazarr
 only auto-searches for a replacement once it's actually deleted the file. Nothing is lost even
 so: if "Back up subtitles" is on (Settings → General), a copy is saved to `/data/backups` first.

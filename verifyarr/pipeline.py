@@ -1821,6 +1821,13 @@ def _flag_suspect(row: dict, reason: str) -> None:
     row["reason"] = reason
 
 
+def suspect_action(reason: Optional[str], cfg: Config) -> str:
+    """The auto action for a SUSPECT file: missing lines only report unless act_on_missing_lines is on."""
+    if reason == REASON_MISSING_LINES and not getattr(cfg, "act_on_missing_lines", False):
+        return "off"
+    return cfg.correctness_auto_action
+
+
 def _flag_unknown(row: dict, samples: Optional[list]) -> None:
     """Nothing could be verified: no speech in any clip, or a technical failure (retry)."""
     row["correctness_flag"] = "unknown"
@@ -2499,7 +2506,7 @@ def correctness_and_finish(video_path: Path, subtitle_path: Path, lang: Optional
     def act_on_suspect():
         """The configured auto-action for a SUSPECT file (quarantine/blacklist/remediate)."""
         outcome = handle_suspect(subtitle_path, video_path, cfg, media_root, lang, bazarr_meta,
-                                 history_index, cfg.correctness_auto_action, conn=conn,
+                                 history_index, suspect_action(row.get("reason"), cfg), conn=conn,
                                  run_id=run_id, cancel_event=cancel_event)
         if "; " + REMEDIATED_PREFIX in outcome:
             row["_remediated"] = True

@@ -815,6 +815,17 @@ function CorrectnessTab() {
 
   return (
     <>
+      <section className="card" aria-labelledby="sc-corr-act">
+        <h2 id="sc-corr-act" style={{ margin: '0 0 14px', fontSize: 15 }}>What a flag does</h2>
+        <ToggleRow
+          id="act_on_missing_lines"
+          checked={data.act_on_missing_lines}
+          onChange={(act_on_missing_lines) => setData({ ...data, act_on_missing_lines })}
+          label="Act on missing lines"
+          tip="A stretch of speech with no subtitle lines is always shown as a flag with the time span. Off (default): that flag only informs. In practice most are songs, background chatter or burned-in subtitles, and the file is fine. On: it triggers the action chosen under Automation (quarantine, blacklist or fetch a new one) like any other suspect file."
+        />
+      </section>
+
       <section className="card" aria-labelledby="sc-corr0">
         <h2 id="sc-corr0" style={{ margin: '0 0 4px', fontSize: 15 }}>Whisper (local)</h2>
         <p className="text-dim" style={{ fontSize: 12.5, maxWidth: 560, margin: '0 0 14px', lineHeight: 1.5 }}>
