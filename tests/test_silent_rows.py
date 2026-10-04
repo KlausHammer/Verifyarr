@@ -20,28 +20,20 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import e2e_matrix as M
+from kg_env import MODEL, KgReplayCase
 from verifyarr import db
 
-MODEL = "tiny.en-greedy-cpu"
-STAGING_OK = (
-    M.SWEEP.exists()
-    and (M.SWEEP / MODEL / "C_S03E04.json").exists()
-    and (M.SWEEP / MODEL / "C_S03E03.json").exists()
-)
-_needs_staging = unittest.skipUnless(STAGING_OK, "needs whisper_gpu_staging sweep data")
 
 
-def _run(slug, scenario, mode="sampled", audio="on", jitter_lo_hi=None):
+def _run(slug, scenario, mode="sampled", audio="off", jitter_lo_hi=None):
     """Matrix-faithful single row: seeded corruption through M.run_one on a fresh DB."""
     return _runs(slug, scenario, mode, audio, jitter_lo_hi)[-1]
 
 
-def _runs(slug, scenario, mode="sampled", audio="on", jitter_lo_hi=None, repeat=1):
+def _runs(slug, scenario, mode="sampled", audio="off", jitter_lo_hi=None, repeat=1):
     """[(row, rec)] for the same corrupted file run `repeat` times on one DB."""
     fx = M.fixture(slug)
     video = M.media_dir(slug) / fx["video_name"]
-    if not video.exists():
-        raise unittest.SkipTest(f"no video for {slug}")
     lang, segments = M.audio_evidence(MODEL, slug, fx)
     assert segments, f"no sweep segments for {slug}"
     orig = M.subs_for(slug, fx)
@@ -67,8 +59,7 @@ def _runs(slug, scenario, mode="sampled", audio="on", jitter_lo_hi=None, repeat=
         conn.close()
 
 
-@_needs_staging
-class SilentBlockTests(unittest.TestCase):
+class SilentBlockTests(KgReplayCase):
     def test_resync_remainder_warns(self):
         """SH_S01E06 piecewise_c full: resync almost fixes it, but not quite --
         the remainder must warn, not slip through silently. The improvement is kept."""
@@ -115,8 +106,8 @@ class SilentBlockTests(unittest.TestCase):
         self.assertGreater(rec.get("frac_le_1_0s"), 0.9)
 
     def test_block_repair_edges_warn_sampled(self):
-        """SH_S01E04 block_rand2 sampled: 3 sync blocks, 6 lines left."""
-        row, rec = _run("SH_S01E04", "block_rand2", mode="sampled")
+        """KG_PB_S05E01 block_rand2 sampled: 3 sync blocks, 6 lines left."""
+        row, rec = _run("KG_BIL_S01E01", "block_rand2", mode="sampled")
         self.assertIn("sync block(s)", row.get("sync_status") or "")
         self.assertEqual(row.get("correctness_flag"), "SUSPECT")
 
@@ -126,28 +117,28 @@ class SilentBlockTests(unittest.TestCase):
         self.assertEqual([r.get("correctness_flag") for r, _ in rows], ["SUSPECT", "SUSPECT"])
 
     def test_escalated_block_file_is_judged_on_the_full_transcript(self):
-        """C_S02E12 sampled piecewise_b: alass' 3-block fit escalates, but resync and
+        """KG_BB_S01E01 sampled piecewise_b: alass' 3-block fit escalates, but resync and
         recheck fell back to 16 sampled clips, and the half-repaired file
         went through silently (0.440, ok). The verdict must be taken on the purchased transcript."""
-        row, rec = _run("C_S02E12", "piecewise_b", mode="sampled")
+        row, rec = _run("KG_EUP_S01E01", "piecewise_b", mode="sampled")
         self.assertLess(rec.get("frac_le_1_0s"), 0.90)
         self.assertEqual(row.get("correctness_flag"), "SUSPECT",
                          f"silent again (note: {(row.get('note') or '')[:300]})")
 
     def test_lone_huge_anchor_without_block_fit_escalates(self):
-        """C_S03E09 sampled piecewise_c: alass saw one offset, but one anchor was
+        """KG_BMS_S01E01 sampled piecewise_c: alass saw one offset, but one anchor was
         +20 s off. Without a multi-block fit it never escalated and went through silently (0.425)."""
-        row, rec = _run("C_S03E09", "piecewise_c", mode="sampled")
+        row, rec = _run("KG_BMS_S01E01", "piecewise_c", mode="sampled")
         # Escalated, the anchor resync can now fix it (0.903); either outcome is fine.
         self.assertTrue(rec.get("frac_le_1_0s") >= 0.90
                         or row.get("correctness_flag") == "SUSPECT",
                         f"silent again (note: {(row.get('note') or '')[:300]})")
 
     def test_screen_does_not_vouch_for_a_subtitle_that_ends_early(self):
-        """C_S03E08 sampled cut_version: 300s cut out, everything after sits 300s early.
+        """KG_EUP_S01E01 sampled cut_version: 300s cut out, everything after sits 300s early.
         The screen's 5 clips all fell before 405s and agreed, so alass never ran and
         the file went through silently (0.560). The subtitle ends ~300s before the audio."""
-        row, rec = _run("C_S03E08", "cut_version", mode="sampled")
+        row, rec = _run("KG_EUP_S01E01", "cut_version", mode="sampled")
         self.assertNotIn("alass was not run", row.get("note") or "")
         self.assertTrue(rec.get("frac_le_1_0s") >= 0.90
                         or row.get("correctness_flag") == "SUSPECT",
@@ -180,8 +171,7 @@ class SilentBlockTests(unittest.TestCase):
         self.assertEqual(row.get("correctness_flag"), "ok", (row.get("note") or "")[-300:])
 
 
-@_needs_staging
-class MissingMiddleTests(unittest.TestCase):
+class MissingMiddleTests(KgReplayCase):
     def test_missing_middle_full_warns_without_rewriting(self):
         """SH_S01E01 full missing_middle: 300s of cues gone, survivors correct.
         Detection only: SUSPECT + untouched file, timings unchanged."""
@@ -209,10 +199,10 @@ class MissingMiddleTests(unittest.TestCase):
         self.assertIn(row.get("line_order_fixed"), (None, 0))
 
     def test_big_healthy_gap_sampled_stays_ok(self):
-        """SH_S01E02 clean sampled: natural 174s gap (1652-1826, credits music,
+        """KG_BIL_S01E01 clean sampled: natural 174s gap (1652-1826, credits music,
         ~10 words). The gap trigger may buy the full transcript, but the file
         must stay ok and untouched."""
-        row, rec = _run("SH_S01E02", "clean", mode="sampled")
+        row, rec = _run("KG_BIL_S01E01", "clean", mode="sampled")
         self.assertEqual(row.get("correctness_flag"), "ok", (row.get("note") or "")[-300:])
         self.assertTrue((row.get("sync_status") or "").startswith(
             ("already in sync", "left unchanged")),
@@ -220,8 +210,7 @@ class MissingMiddleTests(unittest.TestCase):
         self.assertEqual(rec.get("frac_le_1_0s"), 1.0)
 
 
-@_needs_staging
-class StretchNoteTests(unittest.TestCase):
+class StretchNoteTests(KgReplayCase):
     def test_presync_note_survives_deferral(self):
         """SH_S01E06 full drift: presync fires, but alass goes multi-block and
         the defer path lost the presync text -- the note lied "alass only". The fix
@@ -232,10 +221,10 @@ class StretchNoteTests(unittest.TestCase):
         self.assertGreaterEqual(rec.get("frac_le_1_0s"), 0.90)
 
     def test_sampled_stretch_presyncs(self):
-        """SH_S01E02 sampled drift: the keep gate blocked (0.879) before
+        """KG_BIL_S01E01 sampled drift: the keep gate blocked (0.879) before
         the count trim -- locks in that a sampled stretch fires through
         the pipeline, not only in unit tests."""
-        row, rec = _run("SH_S01E02", "drift", mode="sampled")
+        row, rec = _run("KG_BB_S01E01", "drift", mode="sampled")
         self.assertIn("Pre-sync before alass: rate", row.get("note") or "",
                       f"presync never fired (note: {(row.get('note') or '')[:300]})")
         self.assertGreaterEqual(rec.get("frac_le_1_0s"), 0.90)

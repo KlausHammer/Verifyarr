@@ -10,6 +10,7 @@ from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+from kg_env import MODEL, KgReplayCase
 from verifyarr import pipeline
 
 
@@ -46,7 +47,7 @@ class KeepOriginalTests(unittest.TestCase):
         self.assertFalse(content)
 
 
-class ReplacementVerdictTests(unittest.TestCase):
+class ReplacementVerdictTests(KgReplayCase):
     def test_a_passed_replacement_keeps_its_own_verdict(self):
         """The old SUSPECT verdict must not overwrite the row the replacement saved."""
         import copy
@@ -56,20 +57,16 @@ class ReplacementVerdictTests(unittest.TestCase):
         import e2e_matrix as M
         from verifyarr import db
 
-        slug, model = "SH_S01E01", "tiny.en-greedy-cpu"
-        if not (M.SWEEP / model / f"{slug}.json").exists():
-            self.skipTest("needs whisper_gpu_staging sweep data")
+        slug, model = "SH_S01E01", MODEL
         fx = M.fixture(slug)
         video = M.media_dir(slug) / fx["video_name"]
-        if not video.exists():
-            self.skipTest(f"no video for {slug}")
         lang, segments = M.audio_evidence(model, slug, fx)
         corrupted, _, _ = M.corrupt_wrong_episode(
             copy.deepcopy(M.subs_for(slug, fx)), random.Random("remediate"), slug)
         with tempfile.TemporaryDirectory() as td:
             work = Path(td)
             conn = db.connect(work / "t.db")
-            cfg = dataclasses.replace(M.cfg_for(conn, "sampled", "on", groq_model=model),
+            cfg = dataclasses.replace(M.cfg_for(conn, "sampled", "off", groq_model=model),
                                       correctness_auto_action="remediate")
 
             def replaced(subtitle_path, video_path, *a, conn=None, run_id=None, **k):

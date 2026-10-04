@@ -18,31 +18,21 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import e2e_matrix as M
+from kg_env import MODEL, KgReplayCase
 from verifyarr import db
 from verifyarr.subtitles import load_subs
 
 MODEL = "tiny.en-greedy-cpu"  # shipped model: the only one that matters here
-OUT = M.SWEEP.parent / "out"
-
-STAGING_OK = (
-    M.SWEEP.exists()
-    and (M.SWEEP / MODEL / "SH_S01E01.json").exists()
-    and (OUT / "C_S02E11.json").exists()
-)
 
 
-def _needs_staging():
-    return unittest.skipUnless(STAGING_OK, "needs whisper_gpu_staging sweep data")
 
 
-class FpsRescaleIntegrationTests(unittest.TestCase):
+class FpsRescaleIntegrationTests(KgReplayCase):
     """Real drift must be fixed, healthy files untouched, alass fixes unmolested."""
 
-    def _run(self, slug, subs, mode="sampled", audio="on"):
+    def _run(self, slug, subs, mode="sampled", audio="off"):
         fx = M.fixture(slug)
         video = M.media_dir(slug) / fx["video_name"]
-        if not video.exists():
-            self.skipTest(f"no video for {slug}")
         lang, segments = M.audio_evidence(MODEL, slug, fx)
         self.assertTrue(segments, f"no sweep segments for {slug}")
         work = Path(tempfile.mkdtemp(prefix="fps_test_"))
@@ -64,49 +54,29 @@ class FpsRescaleIntegrationTests(unittest.TestCase):
         self.assertTrue(cands, "no late cue found")
         return cands[-1]
 
-    def _run_out(self, slug, mode="sampled"):
-        """Genuine subtitle + OUT turbo transcript (no sweep for this slug)."""
-        import json
-        fx = M.fixture(slug)
-        video = M.media_dir(slug) / fx["video_name"]
-        if not video.exists():
-            self.skipTest(f"no video for {slug}")
-        doc = json.loads((OUT / f"{slug}.json").read_bytes().decode("utf-8", errors="replace"))
-        segments, lang = M.sweep_segments(doc), M.sweep_language(doc)
-        self.assertTrue(segments, f"no OUT segments for {slug}")
-        subs = M.subs_for(slug, fx)
-        work = Path(tempfile.mkdtemp(prefix="fps_test_"))
-        conn = db.connect(work / "t.db")
-        try:
-            cfg = M.cfg_for(conn, mode, "on", groq_model="genuine")
-            object.__setattr__(cfg, "fps_check_enabled", True)
-            cache = M.audio_cache_for(slug, video)
-            tag = f"{slug}.{mode}.on"
-            row, _ = M.run_one(work, video, subs, lang, segments, cfg, conn,
-                               tag, mode, cache)
-            out = load_subs(work / f"{tag}.srt")
-            return row, out
-        finally:
-            conn.close()
+    def _run_injected(self, slug, scenario, mode="sampled"):
+        """The matrix's own seeded corruption of the verified subtitle, through the whole pipeline."""
+        import copy
+        import random
+        orig = M.subs_for(slug, M.fixture(slug))
+        bad, _, _ = M.SCENARIOS[scenario](copy.deepcopy(orig), random.Random(f"matrix-v1:{slug}:{scenario}"))
+        row, out = self._run(slug, bad, mode)
+        return row, out, orig
 
-    @_needs_staging()
     def test_real_drift_gets_fixed_sampled(self):
-        """C_S02E11 (user-confirmed drift, no swaps) must be rescaled."""
-        row, out = self._run_out("C_S02E11")
+        """KG_BOYS_S01E01 with a 24 fps subtitle on 23.976 audio (the matrix's fps_late) is rescaled."""
+        row, out, orig = self._run_injected("KG_BOYS_S01E01", "fps_late")
         self.assertIsNotNone(row.get("fps_ratio"),
                              f"fps never fired (note: {(row.get('note') or '')[:200]})")
-        orig = M.subs_for("C_S02E11", M.fixture("C_S02E11"))
         o, n = self._late_cue(orig), self._late_cue(out)
-        self.assertGreater(abs(n.start - o.start) / 1000.0, 0.5,
-                           "file effectively unchanged")
+        self.assertAlmostEqual(n.start / 1000.0, o.start / 1000.0, delta=1.0,
+                               msg="late cue not brought back to its original time")
 
-    @_needs_staging()
     def test_real_drift_gets_fixed_full(self):
-        row, _out = self._run_out("C_S02E11", mode="full")
+        row, _out, _orig = self._run_injected("KG_BOYS_S01E01", "fps_late", mode="full")
         self.assertIsNotNone(row.get("fps_ratio"),
                              f"fps never fired in full mode (note: {(row.get('note') or '')[:200]})")
 
-    @_needs_staging()
     def test_healthy_file_untouched(self):
         """SH_S01E01 (facit-egnet): no fps bookkeeping, still already in sync."""
         orig = M.subs_for("SH_S01E01", M.fixture("SH_S01E01"))
@@ -114,7 +84,6 @@ class FpsRescaleIntegrationTests(unittest.TestCase):
         self.assertIsNone(row.get("fps_ratio"), f"fps fired on healthy file: {row.get('note')}")
         self.assertEqual(row.get("sync_status"), "already in sync")
 
-    @_needs_staging()
     def test_injected_scale_not_double_fixed(self):
         """Injected x1001/1000 is fixed by alass itself; fps must stay silent after it."""
         import copy
@@ -131,7 +100,7 @@ class FpsRescaleIntegrationTests(unittest.TestCase):
                                msg="alass did not repair the injected scale")
 
 
-class StretchProbeUnitTests(unittest.TestCase):
+class StretchProbeUnitTests(KgReplayCase):
     """The four readings, on pools whose shape is known by construction."""
 
     @staticmethod
@@ -199,15 +168,14 @@ class StretchProbeUnitTests(unittest.TestCase):
         self.assertIsNone(spearman_rho([(0, 0), (1, 1)]))
 
 
-class StretchRescaleIntegrationTests(unittest.TestCase):
+class StretchRescaleIntegrationTests(KgReplayCase):
     """The round-1 lesson: measure through process_pair, never through the functions
     alone. A dead path passed seven unit tests and fired 0 times in 360 matrix rows."""
 
     _run = FpsRescaleIntegrationTests._run
-    _run_out = FpsRescaleIntegrationTests._run_out
     _late_cue = FpsRescaleIntegrationTests._late_cue
+    _run_injected = FpsRescaleIntegrationTests._run_injected
 
-    @_needs_staging()
     def test_two_percent_stretch_is_measured_and_undone(self):
         """SH_S01E01 + 2%: presync or post-alass stretch must undo the rate.
 
@@ -229,7 +197,6 @@ class StretchRescaleIntegrationTests(unittest.TestCase):
         self.assertAlmostEqual(n.start / 1000.0, o.start / 1000.0, delta=1.0,
                                msg="late cue not brought back to its original time")
 
-    @_needs_staging()
     def test_two_percent_stretch_fixed_in_full_mode(self):
         """Full mode owns the whole transcript, so it must fix a stretch at least
         as reliably as sampled -- not worse. Fresh DB, no cache warmup."""
@@ -245,7 +212,6 @@ class StretchRescaleIntegrationTests(unittest.TestCase):
         self.assertAlmostEqual(n.start / 1000.0, o.start / 1000.0, delta=1.0,
                                msg="late cue not brought back to its original time")
 
-    @_needs_staging()
     def test_block_errors_do_not_trigger_the_stretch_branch(self):
         import random
         orig = M.subs_for("SH_S01E01", M.fixture("SH_S01E01"))
@@ -255,20 +221,17 @@ class StretchRescaleIntegrationTests(unittest.TestCase):
             self.assertFalse((row.get("fps_ratio") or "").startswith("stretch"),
                              f"stretch fired on piecewise seed {seed}: {row.get('note')}")
 
-    @_needs_staging()
     def test_healthy_file_still_untouched_by_the_new_branch(self):
         orig = M.subs_for("SH_S01E01", M.fixture("SH_S01E01"))
         row, _ = self._run("SH_S01E01", orig)
         self.assertIsNone(row.get("fps_ratio"), f"stretch fired on healthy: {row.get('note')}")
 
-    @_needs_staging()
-    def test_real_zero_point_one_percent_still_takes_the_discrete_path(self):
+    def test_zero_point_one_percent_still_takes_the_discrete_path(self):
         """The 8s tilt floor is the branch selector: 0.1% must not be read as a rate."""
-        row, _ = self._run_out("C_S02E11")
-        self.assertTrue((row.get("fps_ratio") or "").startswith("24 ")
-                        or (row.get("fps_ratio") or "").startswith("23.976 "),
-                        f"discrete path lost the real drift case: {row.get('note')}")
-
+        for scenario, name in (("fps_late", "24/23.976"), ("fps_early", "23.976/24")):
+            row, _out, _orig = self._run_injected("KG_BOYS_S01E01", scenario)
+            self.assertEqual(row.get("fps_ratio"), name,
+                             f"discrete path lost the {scenario} case: {row.get('note')}")
 
 
 if __name__ == "__main__":

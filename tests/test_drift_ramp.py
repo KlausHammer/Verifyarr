@@ -27,23 +27,16 @@ import pysubs2
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import e2e_matrix as M
+from kg_env import MODEL, KgReplayCase
 from verifyarr import db
 from verifyarr import pipeline as P
 
-MODEL = "tiny.en-greedy-cpu"
-STAGING_OK = (
-    M.SWEEP.exists()
-    and (M.SWEEP / MODEL / "SH_S01E01.json").exists()
-)
-_needs_staging = unittest.skipUnless(STAGING_OK, "needs whisper_gpu_staging sweep data")
 
 
-def _run(slug, scenario, mode="sampled", audio="on"):
+def _run(slug, scenario, mode="sampled", audio="off"):
     """Matrix-faithful single row: seeded corruption through M.run_one on a fresh DB."""
     fx = M.fixture(slug)
     video = M.media_dir(slug) / fx["video_name"]
-    if not video.exists():
-        raise unittest.SkipTest(f"no video for {slug}")
     lang, segments = M.audio_evidence(MODEL, slug, fx)
     assert segments, f"no sweep segments for {slug}"
     orig = M.subs_for(slug, fx)
@@ -63,8 +56,7 @@ def _run(slug, scenario, mode="sampled", audio="on"):
         conn.close()
 
 
-@_needs_staging
-class DriftRampPipelineTests(unittest.TestCase):
+class DriftRampPipelineTests(KgReplayCase):
     def test_long_episode_drift_sampled(self):
         """SH_S01E01 drift sampled: presync sees only 22/28 points (keep 0.86)."""
         row, rec = _run("SH_S01E01", "drift")
@@ -82,8 +74,8 @@ class DriftRampPipelineTests(unittest.TestCase):
                                 f"still broken: rec={rec.get('frac_le_1_0s')}")
 
     def test_drift_swap_sampled(self):
-        """SH_S01E03 drift_swap sampled: swap + drift, the ramp must still be seen."""
-        row, rec = _run("SH_S01E03", "drift_swap")
+        """KG_BMS_S01E01 drift_swap sampled: swap + drift, the ramp must still be seen."""
+        row, rec = _run("KG_BMS_S01E01", "drift_swap")
         # The screen's presync may take the rate before alass (enough timing clips).
         rate_fixed = ("stretch" in (row.get("sync_status") or "")
                       or "Pre-sync before alass: rate" in (row.get("note") or ""))
@@ -106,8 +98,8 @@ class DriftRampPipelineTests(unittest.TestCase):
                                 f"still broken: rec={rec.get('frac_le_1_0s')}")
 
     def test_drift_under_a_block_staircase_gets_one_rate(self):
-        """SH_S01E05 drift_rand5: alass' 5 blocks read flat, but it is a ramp."""
-        row, rec = _run("SH_S01E05", "drift_rand5", audio="off")
+        """KG_BOB_S15E01 drift_rand5: alass' 5 blocks read flat, but it is a ramp."""
+        row, rec = _run("KG_BOB_S15E01", "drift_rand5", audio="off")
         self.assertIn("rate stretch", row.get("sync_status") or "",
                       f"no rate fix applied: {row.get('sync_status')}")
         self.assertEqual(row.get("correctness_flag"), "ok", row.get("note"))
@@ -115,16 +107,16 @@ class DriftRampPipelineTests(unittest.TestCase):
                                 f"still stepped: rec={rec.get('frac_le_0_5s')}")
 
     def test_step_file_still_keeps_blocks(self):
-        """SH_S01E02 piecewise sampled: a STEP must not look like a ramp."""
-        row, rec = _run("SH_S01E02", "piecewise")
+        """KG_BIL_S01E01 piecewise sampled: a STEP must not look like a ramp."""
+        row, rec = _run("KG_BIL_S01E01", "piecewise")
         self.assertIn("sync block(s)", row.get("sync_status") or "",
                       f"block fit lost: {row.get('sync_status')}")
         self.assertGreaterEqual(rec.get("frac_le_1_0s"), 0.90,
                                 f"block repair broken: rec={rec.get('frac_le_1_0s')}")
 
     def test_cut_file_still_keeps_blocks(self):
-        """SH_S01E04 cut_version sampled: the 2-block shape is the dangerous neighbour."""
-        row, rec = _run("SH_S01E04", "cut_version")
+        """KG_PB_S05E01 cut_version sampled: the 2-block shape is the dangerous neighbour."""
+        row, rec = _run("KG_PB_S05E01", "cut_version")
         self.assertIn("sync block(s)", row.get("sync_status") or "",
                       f"block fit lost: {row.get('sync_status')}")
         self.assertTrue(rec.get("frac_le_1_0s") >= 0.90
@@ -141,8 +133,8 @@ class DriftRampPipelineTests(unittest.TestCase):
                                 f"perfect fix smeared: rec={rec.get('frac_le_1_0s')}")
 
     def test_lucky_baseline_cut_not_rescued(self):
-        """SH_S01E02 cut_version sampled: a false ramp must not trigger rescue."""
-        row, rec = _run("SH_S01E02", "cut_version")
+        """KG_BIL_S01E01 cut_version sampled: a false ramp must not trigger rescue."""
+        row, rec = _run("KG_BIL_S01E01", "cut_version")
         self.assertNotIn("Ramp rescue", row.get("note") or "")
         self.assertNotIn("stretch", row.get("sync_status") or "",
                          f"rate fix on a cut file: {row.get('sync_status')}")
@@ -177,7 +169,7 @@ def _step_pool(seed=7):
     return pts
 
 
-class RampDecisionUnitTests(unittest.TestCase):
+class RampDecisionUnitTests(KgReplayCase):
     """_resolve_ambiguous_sync with mocked evidence: the decision is exercised, not the data."""
 
     REGIONS = [223.8, 949.7, 1257.4, 1719.5, 2016.1, 2420.3, 2805.3, 3025.8]
@@ -295,7 +287,7 @@ def _ramp_pool_with_mismatches(rate=0.0636, span=1300.0, n=200, n_wild=30, seed=
     return pts
 
 
-class QuartileAbstentionUnitTests(unittest.TestCase):
+class QuartileAbstentionUnitTests(KgReplayCase):
     """Empty quartiles do not vote: absence of data is not counter-evidence."""
 
     def test_lone_mismatch_in_empty_quarter_abstains(self):

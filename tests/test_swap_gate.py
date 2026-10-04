@@ -19,14 +19,9 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import e2e_matrix as M
+from kg_env import MODEL, KgReplayCase
 from verifyarr import db
 
-MODEL = "tiny.en-greedy-cpu"
-STAGING_OK = (
-    M.SWEEP.exists()
-    and (M.SWEEP / MODEL / "SH_S01E01.json").exists()
-)
-_needs_staging = unittest.skipUnless(STAGING_OK, "needs whisper_gpu_staging sweep data")
 
 
 def _corrupt_many_swaps(subs, frac=0.25):
@@ -55,15 +50,13 @@ def _corrupt_many_swaps(subs, frac=0.25):
 def _run_row(slug, corrupted, mode="full", model=MODEL, segments=None, lang="en"):
     fx = M.fixture(slug)
     video = M.media_dir(slug) / fx["video_name"]
-    if not video.exists():
-        raise unittest.SkipTest(f"no video for {slug}")
     if segments is None:
         lang, segments = M.audio_evidence(model, slug, fx)
         assert segments, f"no sweep segments for {slug}"
     work = Path(tempfile.mkdtemp(prefix="swapgate_"))
     conn = db.connect(work / "t.db")
     try:
-        cfg = M.cfg_for(conn, mode, "on", groq_model=model)
+        cfg = M.cfg_for(conn, mode, "off", groq_model=model)
         cache = M.audio_cache_for(slug, video)
         row, _after = M.run_one(work, video, corrupted, lang, segments, cfg,
                                 conn, "t", mode, cache)
@@ -72,8 +65,7 @@ def _run_row(slug, corrupted, mode="full", model=MODEL, segments=None, lang="en"
         conn.close()
 
 
-@_needs_staging
-class SwapGateTests(unittest.TestCase):
+class SwapGateTests(KgReplayCase):
     def test_many_swaps_full_flags_and_leaves_untouched(self):
         """25 % swapped lines: SUSPECT + untouched file, before any fix."""
         fx = M.fixture("SH_S01E01")

@@ -18,23 +18,15 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import e2e_matrix as M
+from kg_env import MODEL, KgReplayCase
 from verifyarr import db
 
-MODEL = "tiny.en-greedy-cpu"
-STAGING_OK = (
-    M.SWEEP.exists()
-    and (M.SWEEP / MODEL / "C_S03E04.json").exists()
-    and (M.SWEEP / MODEL / "C_S03E03.json").exists()
-)
-_needs_staging = unittest.skipUnless(STAGING_OK, "needs whisper_gpu_staging sweep data")
 
 
-def _run(slug, scenario, mode="sampled", audio="on"):
+def _run(slug, scenario, mode="sampled", audio="off"):
     """Matrix-faithful single row: seeded corruption through M.run_one on a fresh DB."""
     fx = M.fixture(slug)
     video = M.media_dir(slug) / fx["video_name"]
-    if not video.exists():
-        raise unittest.SkipTest(f"no video for {slug}")
     lang, segments = M.audio_evidence(MODEL, slug, fx)
     assert segments, f"no sweep segments for {slug}"
     orig = M.subs_for(slug, fx)
@@ -55,10 +47,9 @@ def _run(slug, scenario, mode="sampled", audio="on"):
         conn.close()
 
 
-@_needs_staging
-class FpsGuardTests(unittest.TestCase):
+class FpsGuardTests(KgReplayCase):
     def test_pure_shift_gets_no_stretch(self):
-        """C_S02E12 uniform_neg sampled: pure -45s shift, no rate at all.
+        """KG_BB_S01E01 uniform_neg sampled: pure -45s shift, no rate at all.
 
         Before: post-alass stretch -4.01% applied to alass' broken 2-block fit,
         rec 0.847 with flag ok (silent). The presync offset was already right;
@@ -67,7 +58,7 @@ class FpsGuardTests(unittest.TestCase):
         With escalation on, the full transcript's pool is clean end to end and the
         stretch then undoes alass' ramp correctly (rec 1.0) -- so a stretch is allowed,
         but only one that actually fixes the file."""
-        row, rec = _run("C_S02E12", "uniform_neg")
+        row, rec = _run("KG_BB_S01E01", "uniform_neg")
         if "stretch" in (row.get("sync_status") or ""):
             self.assertGreaterEqual(rec.get("frac_le_1_0s"), 0.90,
                                     "a stretch was applied and left the file wrong")
@@ -76,11 +67,11 @@ class FpsGuardTests(unittest.TestCase):
                         f"still silent: rec={rec.get('frac_le_1_0s')} flag={row.get('correctness_flag')}")
 
     def test_pal_gets_no_ntsc(self):
-        """SH_S01E05 pal_early sampled: 4.17% error, presync already fixed it.
+        """KG_BIL_S01E01 pal_early sampled: 4.17% error, presync already fixed it.
 
         Before: fps 24->23.976 (0.1%) applied on top of presync's +4.10%,
         rec 0.316 with flag ok (silent). Rejecting the 0.1% leaves rec 1.0."""
-        row, rec = _run("SH_S01E05", "pal_early")
+        row, rec = _run("KG_BIL_S01E01", "pal_early")
         self.assertNotIn("framerate", row.get("sync_status") or "",
                          f"NTSC applied on top of a PAL fix (rec={rec.get('frac_le_1_0s')})")
         self.assertGreaterEqual(rec.get("frac_le_1_0s"), 0.90,
@@ -98,7 +89,7 @@ class FpsGuardTests(unittest.TestCase):
                                 f"alass fix broken: rec={rec.get('frac_le_1_0s')}")
 
 
-class QuartileResidualUnitTests(unittest.TestCase):
+class QuartileResidualUnitTests(KgReplayCase):
     """The guard reading, on pools whose shape is known by construction."""
 
     @staticmethod

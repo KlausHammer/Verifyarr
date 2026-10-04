@@ -27,22 +27,14 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import e2e_matrix as M
+from kg_env import MODEL, KgReplayCase
 from verifyarr import db
 
-MODEL = "tiny.en-greedy-cpu"
-STAGING_OK = (
-    M.SWEEP.exists()
-    and (M.SWEEP / MODEL / "SH_S01E01.json").exists()
-    and (M.SWEEP / MODEL / "C_S02E01.json").exists()
-)
-_needs_staging = unittest.skipUnless(STAGING_OK, "needs whisper_gpu_staging sweep data")
 
 
-def _run(slug, scenario, mode="full", audio="on"):
+def _run(slug, scenario, mode="full", audio="off"):
     fx = M.fixture(slug)
     video = M.media_dir(slug) / fx["video_name"]
-    if not video.exists():
-        raise unittest.SkipTest(f"no video for {slug}")
     lang, segments = M.audio_evidence(MODEL, slug, fx)
     assert segments, f"no sweep segments for {slug}"
     orig = M.subs_for(slug, fx)
@@ -64,8 +56,7 @@ def _run(slug, scenario, mode="full", audio="on"):
         conn.close()
 
 
-@_needs_staging
-class PresyncBaselineTests(unittest.TestCase):
+class PresyncBaselineTests(KgReplayCase):
     def test_presync_winner_is_written_not_reported_in_sync(self):
         """SH_S01E01 uniform_neg full: a baseline win must land on disk as fixed,
         not "already in sync" on a file that is 45 s off."""
@@ -79,13 +70,12 @@ class PresyncBaselineTests(unittest.TestCase):
                                 f"disk still wrong: rec={rec.get('frac_le_1_0s')}")
 
 
-@_needs_staging
-class SingleBlockContentTests(unittest.TestCase):
+class SingleBlockContentTests(KgReplayCase):
     def test_single_block_wrong_content_stays_untouched(self):
-        """C_S02E01 wrong_episode full: an alass single-block fit on wrong
+        """KG_BB_S01E01 wrong_episode full: an alass single-block fit on wrong
         content must be held back until the content check has spoken. SUSPECT +
         untouched, not fixed."""
-        row, _rec = _run("C_S02E01", "wrong_episode", mode="full")
+        row, _rec = _run("KG_BB_S01E01", "wrong_episode", mode="full")
         self.assertEqual(row.get("correctness_flag"), "SUSPECT",
                          f"flag: {(row.get('note') or '')[:300]}")
         s = row.get("sync_status") or ""
