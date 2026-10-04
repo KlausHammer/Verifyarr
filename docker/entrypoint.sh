@@ -43,7 +43,9 @@ fi
 USERNAME="$(getent passwd "$PUID" | cut -d: -f1)"
 
 mkdir -p /data
-chown -R "$PUID:$PGID" /data
+# A chown that is refused (NFS root_squash, rootless podman, ACL-only shares) must not stop the
+# container: the app only needs /data to be writable by PUID.
+chown -R "$PUID:$PGID" /data 2>/dev/null || echo "entrypoint: could not chown /data to $PUID:$PGID -- continuing" >&2
 
 # No --clear-groups: a `group_add: render` GPU setup needs its supplementary group.
 if command -v setpriv >/dev/null 2>&1; then

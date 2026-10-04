@@ -68,6 +68,24 @@ Automation, Scheduling.
 
 Forgot the admin password? `docker exec -it verifyarr python3 verifyarr.py reset-password`.
 
+### Host notes (Debian, Ubuntu, Mint, Fedora, NAS boxes)
+
+The image is Debian-based, so the host's distribution mostly matters for Docker itself and file permissions.
+Only the Debian/Ubuntu-style host (WSL2) has been run so far; the rest below follows from how the container works.
+
+- **SELinux (Fedora, RHEL, Rocky, Alma, openSUSE):** bind mounts need a label or reads fail with "permission denied":
+  add `:z` to the volumes (`./data:/data:z`, `/path/to/media/tv:/media/tv:z`).
+- **Rootless Docker or Podman:** `PUID`/`PGID` map into your user namespace, so use `0` or leave them for a rootless setup. If the
+  container cannot `chown /data` it carries on and warns; `./data` must then already be writable.
+- **GPU (optional):** the `render` group id differs per distro (check `getent group render`). With no `/dev/dri` it runs on the CPU, which is what the tests used. NVIDIA-only hosts also run on the CPU.
+- **CPU:** Whisper uses every core by default. Limit threads or pick cores under Settings → Correctness (e.g. `0-3`).
+  In a Proxmox/VM guest set the CPU type to `host`, otherwise AVX/AVX2 is hidden and Whisper is several times slower.
+- **Building:** the first `docker compose up` compiles alass (Rust) and whisper.cpp (C++), which takes a while and wants a few GB of free RAM. Small
+  ARM boards (Raspberry Pi 4/5, 64-bit OS) should work but are untested. Build on the machine that will run it: whisper.cpp is
+  compiled for that CPU, so an image built elsewhere can stop with "illegal instruction".
+- **Unraid, Synology, TrueNAS:** use the `PUID`/`PGID` of the user that owns your media (Unraid usually 99/100). Keep `/data` on a local disk.
+
+
 
 ## Connecting it to Bazarr
 
