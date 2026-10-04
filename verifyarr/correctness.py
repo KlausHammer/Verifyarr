@@ -21,7 +21,7 @@ from verifyarr.audiotrack import audio_map_args, english_audio_index
 from verifyarr.memo import BoundedMemo
 from verifyarr import db
 from verifyarr import vad
-from verifyarr.procprio import wrap_low_priority
+from verifyarr.procprio import pin_to_cpus, whisper_threads, wrap_low_priority
 from verifyarr.settings import Config, VOCABULARY_HINT_MAX_CHARS
 from verifyarr.subtitles import (
     pick_dialogue_dense_time, subs_text_in_window, tokenize, is_nonspeech_annotation, speech_text,
@@ -455,13 +455,13 @@ def _run_local_whisper(cfg: Config, audio_path: Path, language: Optional[str],
         # was both faster and better on the worst file (medium.en 0.873 greedy vs 0.820 beam,
         # 72s vs 135s). whisper-cli defaults to beam 5.
         cmd = [binary, "-m", model, "-f", str(audio_path), "-oj", "-of", str(out_stem),
-               "-t", str(max(1, cfg.local_whisper_threads)), "-l", lang, "-mc", "0",
+               "-t", str(max(1, whisper_threads(cfg.local_whisper_threads, getattr(cfg, "local_whisper_cpus", "")))), "-l", lang, "-mc", "0",
                "-bs", "1", "-bo", "1"]
         if not cfg.local_whisper_use_gpu:
             cmd.append("-ng")
         log.debug("local Whisper: model=%s lang=%s clip=%s", Path(model).name, language or "auto",
                   audio_path.name)
-        returncode, _stdout, stderr = _run_cancellable(wrap_low_priority(cmd), timeout=timeout,
+        returncode, _stdout, stderr = _run_cancellable(pin_to_cpus(wrap_low_priority(cmd), getattr(cfg, "local_whisper_cpus", "")), timeout=timeout,
                                                         cancel_event=cancel_event)
         if returncode != 0:
             raise RuntimeError(f"local Whisper failed (exit {returncode}): {stderr[-500:]}")

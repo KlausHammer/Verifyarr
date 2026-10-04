@@ -43,19 +43,6 @@ DEFAULT_LOCAL_WHISPER_MODEL_PATH = (_BAKED_IN_WHISPER_MODEL_PATH if _BAKED_IN_WH
                                     else DATA_DIR / "whisper-models" / _WHISPER_MODEL_FILENAME)
 
 
-def _default_whisper_threads() -> int:
-    """WHISPER_THREADS from the environment (docker-compose), else 10, never more than the CPUs this
-    process may use (a cpuset-limited container reports fewer than the host has)."""
-    try:
-        usable = len(os.sched_getaffinity(0))
-    except AttributeError:
-        usable = os.cpu_count() or 4
-    raw = os.environ.get("WHISPER_THREADS", "").strip()
-    if raw.isdigit() and int(raw) >= 1:
-        return int(raw)
-    return max(1, min(10, usable))
-
-
 def _env_bool(name: str, default: bool) -> bool:
     val = os.environ.get(name)
     if val is None:
@@ -228,6 +215,7 @@ class Config:
     local_whisper_model: str
     local_whisper_use_gpu: bool
     local_whisper_threads: int
+    local_whisper_cpus: str
     # VAD timeline traffic control (see vad.py). Binary+model are local-only and optional:
     # empty means "no binary timeline", and placement falls back to cached transcript
     # segments, then to subtitle dialogue density. Nothing here is language-specific.
@@ -436,6 +424,7 @@ class Config:
             local_whisper_model=vals["correctness.local_whisper_model"],
             local_whisper_use_gpu=vals["correctness.local_whisper_use_gpu"],
             local_whisper_threads=vals["correctness.local_whisper_threads"],
+            local_whisper_cpus=vals["correctness.local_whisper_cpus"],
             vad_binary=vals["sync.vad_binary"],
             vad_model=vals["sync.vad_model"],
             vad_min_speech_seconds=vals["sync.vad_min_speech_seconds"],
@@ -724,7 +713,10 @@ SETTING_DEFS: dict = {
     "correctness.local_whisper_binary":  ("correctness", "str", "/usr/local/bin/whisper-cli"),
     "correctness.local_whisper_model":   ("correctness", "str", str(DEFAULT_LOCAL_WHISPER_MODEL_PATH)),
     "correctness.local_whisper_use_gpu": ("correctness", "bool", True),
-    "correctness.local_whisper_threads": ("correctness", "int", _default_whisper_threads()),
+    # 0 = every core the process may use (or every core in local_whisper_cpus when that is set).
+    "correctness.local_whisper_threads": ("correctness", "int", 0),
+    # Which cores Whisper may run on, e.g. "0-3,6". Empty = all of them.
+    "correctness.local_whisper_cpus": ("correctness", "str", ""),
     "correctness.require_audio_lang":       ("correctness", "str", "en"),
     # off | quarantine | blacklist | remediate — what to do with a file the correctness check
     # flags SUSPECT (see Config.correctness_auto_action).
@@ -889,6 +881,10 @@ def set_settings_group(conn, group: str, values: dict) -> None:
                            else validate_executable_file(value, "local Whisper binary"))
                 if problem is not None:
                     raise ValueError(problem)
+        elif key == "correctness.local_whisper_cpus":
+            from verifyarr.procprio import parse_cpu_list
+            if parse_cpu_list(value) is None:
+                raise ValueError(f"bad CPU list {value!r} -- use e.g. 0-3,6 (empty = all cores)")
         elif key == "sync.whisper_mode":
             if value not in WHISPER_MODES:
                 raise ValueError(f"unknown whisper mode: {value!r} — use one of {', '.join(WHISPER_MODES)}")

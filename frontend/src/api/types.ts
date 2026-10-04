@@ -235,6 +235,7 @@ export interface CorrectnessSettings {
   local_whisper_model: string
   local_whisper_use_gpu: boolean
   local_whisper_threads: number
+  local_whisper_cpus: string
   require_audio_lang: string
   auto_action: 'off' | 'quarantine' | 'blacklist' | 'remediate'
 }

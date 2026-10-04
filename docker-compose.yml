@@ -20,9 +20,6 @@ services:
       # pre-baked and is what detection is calibrated and tested on (with VAD). Others download
       # once into ./data on first use, untested. Non-English audio needs a multilingual model.
       WHISPER_MODEL: tiny.en
-      # CPU threads for local Whisper. Default: 10, or fewer if the machine has fewer cores.
-      # Lower it to leave room for other containers; the Settings page can still override it.
-      # WHISPER_THREADS: 10
     ports:
       - "6868:6868"
     volumes:
