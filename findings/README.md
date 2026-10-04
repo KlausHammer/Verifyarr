@@ -14,6 +14,7 @@ runs) and are kept as the record of what was found and why a rule looks the way 
 | [cache_rapport.md](cache_rapport.md), [fix_rapport.md](fix_rapport.md) | Model-key / atomic-WAV / 0.25 s threshold work, and findings 6.1/6.2 measured to completion |
 | [modelvalg_detektion.md](modelvalg_detektion.md) | Detection per model (older 11-episode set; the current model comparison is in [docs/models_and_tests.md](../docs/models_and_tests.md)) |
 | [plan_simplify_rester.md](plan_simplify_rester.md) | The simplification findings that were and were not applied |
+| [design_prompt_frontend.md](design_prompt_frontend.md) | The brief the web UI design was made from |
 | [archive/](archive/) | Older reports replaced by the Known Good ones, kept for history |
 
 Not in the repository on purpose: the rewritten Z100 subtitles with their originals (copyrighted text, kept locally for checking) and
