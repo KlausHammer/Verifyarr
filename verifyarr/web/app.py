@@ -16,6 +16,7 @@ from fastapi.staticfiles import StaticFiles
 from verifyarr import applog
 from verifyarr import log
 from verifyarr import db
+from verifyarr import gpu
 from verifyarr import jobs
 from verifyarr import scheduler
 from verifyarr import settings as settings_mod
@@ -48,6 +49,7 @@ async def lifespan(app: FastAPI):
 
     logging.getLogger("verifyarr").setLevel(cfg.log_level)
     scheduler.start()
+    gpu.probe_in_background(cfg)
 
     if cfg.run_on_start:
         try:

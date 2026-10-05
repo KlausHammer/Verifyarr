@@ -46,6 +46,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Iterator, Optional
 
+from verifyarr import progress
 from verifyarr.audiotrack import audio_map_args
 from verifyarr import log, HEADER, SUCCESS
 from verifyarr import db
@@ -849,9 +850,12 @@ def transcribe_full_track(cfg: Config, video_path: Path, tmp_dir: Path, cancel_e
         spoken_lang = normalize_lang(correctness.detect_audio_language_ffprobe(video_path))
         segments: list[dict] = []
         dropped = 0
+        progress.start(str(video_path), len(chunks))
         for i, (c_start, c_end) in enumerate(chunks):
             if cancel_event is not None and cancel_event.is_set():
                 raise correctness.JobCancelled("cancelled during full-track transcription")
+            if i:
+                progress.chunk_done(str(video_path))
 
             trimmed_path, mapping = trim_long_silences(full_audio_path, c_start, c_end, silences,
                                                         tmp_dir, f"{tag}.c{i}", cancel_event=cancel_event)
@@ -895,6 +899,7 @@ def transcribe_full_track(cfg: Config, video_path: Path, tmp_dir: Path, cancel_e
         segments = _drop_repetition_loops(segments)
         return {"language": spoken_lang, "segments": split_segments_into_cues(segments)}
     finally:
+        progress.finish(str(video_path))
         full_audio_path.unlink(missing_ok=True)
 
 

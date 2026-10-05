@@ -60,7 +60,7 @@ Only the Debian/Ubuntu-style host (WSL2) has been run so far; the rest below fol
   add `:z` to the volumes (`./data:/data:z`, `/path/to/media/tv:/media/tv:z`).
 - **Rootless Docker or Podman:** `PUID`/`PGID` map into your user namespace, so use `0` or leave them for a rootless setup. If the
   container cannot `chown /data` it carries on and warns; `./data` must then already be writable.
-- **GPU (optional):** the `render` group id differs per distro (check `getent group render`). With no `/dev/dri` it runs on the CPU, which is what the tests used. NVIDIA-only hosts also run on the CPU.
+- **GPU (optional):** the compose file passes `/dev/dri` through; the container joins the group that owns the render node by itself, so no `group_add`. Remove the `devices:` lines on a host with no `/dev/dri` (Docker refuses to start otherwise). The startup log and Settings → Correctness say whether a GPU was found; without one it runs on the CPU, which is what the tests used. NVIDIA-only hosts also run on the CPU.
 - **CPU:** Whisper uses every core by default. Limit threads or pick cores under Settings → Correctness (e.g. `0-3`).
   In a Proxmox/VM guest set the CPU type to `host`, otherwise AVX/AVX2 is hidden and Whisper is several times slower.
 - **Building:** a local build compiles alass (Rust) and whisper.cpp (C++), which takes a while and wants a few GB of free RAM. Small

@@ -12,7 +12,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
-from verifyarr import db, jobs, scheduler
+from verifyarr import progress, db, jobs, scheduler
 from verifyarr.settings import Config
 from verifyarr.web.deps import get_conn, require_auth, serialize_row
 
@@ -40,6 +40,13 @@ class StartRunBody(BaseModel):
     episode: Optional[str] = None  # e.g. "S03E02" — series only
 
 
+def _with_inflight(row: dict) -> dict:
+    """A running run also reports the part-done files (Whisper chunks) so its % moves."""
+    if row.get("status") == "running":
+        row["files_inflight"] = round(progress.inflight(), 3)
+    return row
+
+
 @router.get("")
 def list_runs(page: int = Query(1, ge=1), page_size: int = Query(30, ge=1, le=200),
               status: Optional[str] = None,
@@ -47,7 +54,7 @@ def list_runs(page: int = Query(1, ge=1), page_size: int = Query(30, ge=1, le=20
     if status and status not in db.RUN_STATUSES:
         raise HTTPException(status_code=422, detail=f"unknown status: {status}")
     rows, total = db.list_runs(conn, page=page, page_size=page_size, status=status)
-    return {"items": [serialize_row(r) for r in rows], "total": total, "page": page, "page_size": page_size,
+    return {"items": [_with_inflight(serialize_row(r)) for r in rows], "total": total, "page": page, "page_size": page_size,
             "current_run_id": jobs.runner.current_run_id()}
 
 
@@ -75,7 +82,7 @@ def get_run(run_id: int, user=Depends(require_auth), conn=Depends(get_conn)):
     row = db.get_run(conn, run_id)
     if row is None:
         raise HTTPException(status_code=404, detail="run not found")
-    return serialize_row(row)
+    return _with_inflight(serialize_row(row))
 
 
 @router.get("/{run_id}/log")

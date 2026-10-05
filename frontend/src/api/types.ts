@@ -62,6 +62,8 @@ export interface RunRow {
   finished_at: string | null
   files_total: number | null
   files_processed: number
+  // Part-done files (Whisper chunks) of a running run, so the percentage moves inside a long file.
+  files_inflight?: number
   files_changed: number
   files_suspect: number
   files_error: number

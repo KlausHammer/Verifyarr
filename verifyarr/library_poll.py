@@ -18,9 +18,8 @@ import threading
 from verifyarr import db, log
 from verifyarr.discovery import (
     build_library_video_rows,
-    discover_all_videos,
+    discover_library,
     discover_missing,
-    discover_pairs,
     resolve_embedded_cache,
 )
 from verifyarr.settings import Config
@@ -75,8 +74,7 @@ def refresh_library_cache(conn: sqlite3.Connection, cfg: Config, use_persisted_c
     with _progress_lock:
         _progress.update(running=True, done=0, total=0, cancelled=False)
 
-    pairs = discover_pairs(cfg)
-    all_videos = discover_all_videos(cfg)
+    pairs, all_videos = discover_library(cfg)
     persisted = db.get_persisted_embedded_cache(conn, all_videos) if use_persisted_cache else None
 
     def _report(done: int, total: int) -> None:

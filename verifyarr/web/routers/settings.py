@@ -10,6 +10,7 @@ from typing import Any, Optional
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
+from verifyarr import gpu
 from verifyarr import settings as settings_mod
 from verifyarr import scheduler
 from verifyarr.bazarr import bazarr_request
@@ -33,6 +34,12 @@ class TestBazarrConnectionBody(BaseModel):
 @router.get("")
 def get_all(user=Depends(require_auth), conn=Depends(get_conn)):
     return {group: settings_mod.get_settings_group(conn, group) for group in settings_mod.GROUPS}
+
+
+@router.get("/whisper-status")
+def whisper_status(user=Depends(require_auth)):
+    """Whether local Whisper found a GPU (probed at startup, see gpu.py)."""
+    return gpu.status()
 
 
 @router.get("/{group}")

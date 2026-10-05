@@ -25,7 +25,7 @@ from typing import Optional
 from verifyarr import log, HEADER, SUCCESS
 from verifyarr import db
 from verifyarr.settings import Config, DATA_DIR
-from verifyarr.discovery import (discover_pairs, discover_all_videos, discover_missing,
+from verifyarr.discovery import (discover_library, discover_pairs, discover_all_videos, discover_missing,
                                 parse_lang_from_filename, build_library_video_rows,
                                 infer_title_and_episode, resolve_embedded_cache)
 from verifyarr.pipeline import (process_pair, sync_pair, screen_pair,
@@ -259,8 +259,7 @@ def _run_sweep(conn: sqlite3.Connection, run_id: int, cfg: Config, force: bool,
                         "unscoped Scan) first and this will narrow to just that folder next time.",
                         kind, title, season)
 
-    pairs = discover_pairs(cfg, roots=scope_roots)
-    all_videos = discover_all_videos(cfg, roots=scope_roots)
+    pairs, all_videos = discover_library(cfg, roots=scope_roots)
     # Logged immediately, before the (possibly slower) embedded-subtitle check below, so
     # Activity shows something within seconds of the directory walk instead of sitting on
     # "waiting for log lines" for however long that check takes -- and cancel_event is now

@@ -568,6 +568,7 @@ def translate_text(text: str, target_lang: str, *, provider: str, api_key: str, 
 # Bounded and process-local: a few hundred short strings, oldest dropped first.
 _TRANSLATION_MEMO: dict[tuple[str, str, str], str] = {}
 _TRANSLATION_MEMO_MAX = 512
+_WARNED_NO_KEY = False
 
 
 def translate_to_english(cfg: Config, text: str, cancel_event=None) -> Optional[str]:
@@ -577,8 +578,11 @@ def translate_to_english(cfg: Config, text: str, cancel_event=None) -> Optional[
     results (see _TRANSLATION_MEMO), so re-scoring the same window text costs nothing."""
     kw = cfg.llm_call_kwargs
     if not kw["api_key"]:
-        log.warning("No %s API key under Settings -> Generate: cannot translate a subtitle for the check",
-                    kw["provider"])
+        global _WARNED_NO_KEY
+        if not _WARNED_NO_KEY:  # once, not once per sample
+            _WARNED_NO_KEY = True
+            log.warning("No %s API key under Settings -> Generate: cannot translate a subtitle for the check",
+                        kw["provider"])
         return None
     key = (kw["provider"], kw["llm_model"], text)
     hit = _TRANSLATION_MEMO.get(key)

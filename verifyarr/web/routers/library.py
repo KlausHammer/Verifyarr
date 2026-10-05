@@ -132,7 +132,8 @@ def list_library(kind: Optional[str] = Query(None, pattern="^(movie|series)$"),
     response = grouped_response(conn, kind)
     cfg = Config.from_db(conn)
     if cfg.bazarr_url and cfg.bazarr_api_key:
-        row = conn.execute("SELECT COUNT(*) AS n, COALESCE(SUM(bazarr_matched), 0) AS m FROM library_videos").fetchone()
+        row = conn.execute("SELECT COUNT(*) AS n, COALESCE(SUM(bazarr_matched), 0) AS m FROM library_videos "
+                           "WHERE (? IS NULL OR kind = ?)", (kind, kind)).fetchone()
         response["bazarr_match"] = {"videos": row["n"], "matched": row["m"]}
     return response
 
@@ -201,7 +202,7 @@ def rescan_library(kind: Optional[str] = Query(None, pattern="^(movie|series)$")
     result is returned — the Movies page and Series page both call this endpoint, each with
     its own filter, and in effect refresh each other's cache too as a bonus."""
     cfg = Config.from_db(conn)
-    result = refresh_library_cache(conn, cfg)
+    result = refresh_library_cache(conn, cfg, use_persisted_cache=True)  # unchanged videos (size+mtime) are not re-probed
     response = grouped_response(conn, kind)
     response["cancelled"] = result.get("cancelled", False)
     if not response["cancelled"]:

@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { filesDone, runPct } from '../lib/progress'
 import { useNavigate, useParams } from 'react-router-dom'
 import { api, ApiError } from '../api/client'
 import type { LogLine, RunRow } from '../api/types'
@@ -88,8 +89,8 @@ export default function ActivityDetail() {
   if (!run && !notFound) return <LoadingState title="Job" noun="this job" />
 
   const running = run?.status === 'running'
-  const prog = run && run.files_total ? run.files_processed / run.files_total : 0
-  const pct = run && run.files_total ? Math.round(prog * 100) : null
+  const prog = run && run.files_total ? filesDone(run) / run.files_total : 0
+  const pct = run ? runPct(run) : null
   const elapsedSec = run ? Math.max(0, (Date.now() - new Date(run.started_at).getTime()) / 1000) : 0
   const leftSec = running && prog > 0.02 ? Math.max(1, elapsedSec / prog - elapsedSec) : null
   const memoryHint = !!run?.error_message && /memory|model/i.test(run.error_message)
@@ -155,8 +156,8 @@ export default function ActivityDetail() {
                 {running && !run.files_total
                   ? 'Finding files to check…'
                   : running
-                  ? `${run.files_processed}${run.files_total ? ` of ${run.files_total}` : ''} files${leftSec !== null ? ` · about ${formatDuration(leftSec)} left` : ''}`
-                  : `${run.files_processed}${run.files_total ? ` of ${run.files_total}` : ''} files processed`}
+                  ? `${run.files_processed}${run.files_total ? ` of ${run.files_total}` : ''} subtitle files${leftSec !== null ? ` · about ${formatDuration(leftSec)} left` : ''}`
+                  : `${run.files_processed}${run.files_total ? ` of ${run.files_total}` : ''} subtitle files processed`}
               </span>
               {pct !== null && <span style={{ fontWeight: 600 }}>{pct}%</span>}
             </div>

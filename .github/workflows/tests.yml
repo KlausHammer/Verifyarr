@@ -47,5 +47,6 @@ jobs:
         with:
           context: .
           push: false
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          build-args: NATIVE=OFF
+          cache-from: type=gha,scope=image
+          cache-to: type=gha,mode=max,scope=image

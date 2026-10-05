@@ -4,6 +4,7 @@ import { api } from '../api/client'
 import type { AttentionResponse, FileRow, NextRunResponse, Paginated, RunRow, StatsSummary } from '../api/types'
 import { ErrorState, LoadingState } from '../components/PageState'
 import StatusPill from '../components/StatusPill'
+import { runPct } from '../lib/progress'
 import { useRunningJob } from '../hooks/useRunningJob'
 import { useToasts } from '../hooks/useToasts'
 import { formatExact, formatRelative, nextScanLabel } from '../lib/format'
@@ -101,7 +102,7 @@ export default function Dashboard() {
 
   if (!scanned) {
     const pct = running && running.files_total
-      ? Math.round((running.files_processed / running.files_total) * 100)
+      ? runPct(running)
       : null
     return (
       <>
@@ -121,7 +122,7 @@ export default function Dashboard() {
             {firstRun && running && (
               <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 16 }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13 }}>
-                  <span>{running.files_total ? `${running.files_processed} of ${running.files_total} files checked` : 'Finding files to check…'}</span>
+                  <span>{running.files_total ? `${running.files_processed} of ${running.files_total} subtitle files checked` : 'Finding files to check…'}</span>
                   {pct !== null && <span style={{ color: 'var(--accent)', fontWeight: 600 }}>{pct}%</span>}
                 </div>
                 {pct !== null && (
@@ -165,7 +166,7 @@ export default function Dashboard() {
 
   const job: RunRow | null = running ?? runs.items[0] ?? summary.last_run ?? null
   const jobRunning = job?.status === 'running'
-  const jobPct = job && job.files_total ? Math.round((job.files_processed / job.files_total) * 100) : null
+  const jobPct = job ? runPct(job) : null
 
   return (
     <>

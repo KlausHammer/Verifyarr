@@ -20,8 +20,5 @@ services:
       # Local disk only (SQLite breaks on NFS/SMB)
       - ./data:/data
       # - /path/to/whisper-models:/models:ro  # own whisper.cpp models
-    # GPU for local Whisper (optional):
-    # devices:
-    #   - /dev/dri:/dev/dri
-    # group_add:
-    #   - "104"  # host's `getent group render`
+    devices:
+      - /dev/dri:/dev/dri  # GPU for Whisper; remove this if the host has no /dev/dri

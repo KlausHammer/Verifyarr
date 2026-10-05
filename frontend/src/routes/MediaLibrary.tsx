@@ -4,6 +4,7 @@ import { api, ApiError } from '../api/client'
 import type { GeneralSettings, LibraryEntry, LibraryResponse } from '../api/types'
 import ConfirmDialog from '../components/ConfirmDialog'
 import { ErrorState, LoadingState } from '../components/PageState'
+import { runPct } from '../lib/progress'
 import { useRunningJob } from '../hooks/useRunningJob'
 import { useToasts } from '../hooks/useToasts'
 import { formatExact, formatRelative } from '../lib/format'
@@ -163,7 +164,7 @@ export default function MediaLibrary({ kind, title, folderHint }: { kind: 'movie
             <span className="spinner" style={{ width: 12, height: 12 }} />
             <span style={{ flex: 1 }}>
               {runTypeLabel(runAll)} is running
-              {runAll.files_total ? ` (${Math.round((runAll.files_processed / runAll.files_total) * 100)}%)` : ''}.
+              {runPct(runAll) !== null ? ` (${runPct(runAll)}%)` : ''}.
               Counts update when files finish.
             </span>
             <button className="btn btn-sm" onClick={() => navigate(`/activity/${runAll.id}`)}>View job</button>

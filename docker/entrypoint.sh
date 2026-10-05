@@ -47,9 +47,22 @@ mkdir -p /data
 # container: the app only needs /data to be writable by PUID.
 chown -R "$PUID:$PGID" /data 2>/dev/null || echo "entrypoint: could not chown /data to $PUID:$PGID -- continuing" >&2
 
-# No --clear-groups: a `group_add: render` GPU setup needs its supplementary group.
+# GPU: if /dev/dri has a render node, join the group that owns it, so `devices:` alone is enough
+# (no group_add). A group_add from compose is still kept.
+GPU_GID=""
+for node in /dev/dri/renderD*; do
+  [ -e "$node" ] || continue
+  GPU_GID="$(stat -c %g "$node" 2>/dev/null || true)"
+  break
+done
+GROUPS_ARG="--keep-groups"
+if [ -n "$GPU_GID" ] && [ "$GPU_GID" != "0" ]; then
+  KEEP="$(id -G | tr ' ' '\n' | grep -vx 0 | tr '\n' ',')"  # group_add groups from compose
+  GROUPS_ARG="--groups=${KEEP}${GPU_GID}"
+fi
 if command -v setpriv >/dev/null 2>&1; then
-  exec setpriv --reuid="$PUID" --regid="$PGID" --keep-groups -- "$@"
+  # shellcheck disable=SC2086
+  exec setpriv --reuid="$PUID" --regid="$PGID" $GROUPS_ARG -- "$@"
 elif command -v runuser >/dev/null 2>&1; then
   exec runuser -u "$USERNAME" -g "$PGID" -- "$@"
 else

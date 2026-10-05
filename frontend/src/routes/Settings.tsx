@@ -18,7 +18,6 @@ import { buildCron, parseCron, DAY_NAMES, type FriendlySchedule, type ScheduleMo
 import { formatRelative } from '../lib/format'
 import ConfirmDialog from '../components/ConfirmDialog'
 import FolderBrowser from '../components/FolderBrowser'
-import LanguageMultiSelect from '../components/LanguageMultiSelect'
 import CopyLogButton from '../components/CopyLogButton'
 import { SETTINGS_TABS } from '../components/Layout'
 import { GENERATE_UI } from '../lib/features'
@@ -432,6 +431,9 @@ function GeneralTab() {
   const [savedAt, setSavedAt] = useState<number | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [detecting, setDetecting] = useState(false)
+  const [posting, setPosting] = useState(false) // click sent, server not yet reporting running
+  const postingRef = useRef(false)
+  postingRef.current = posting
   const [detectProgress, setDetectProgress] = useState<{ done: number; total: number } | null>(null)
   const [detectResult, setDetectResult] = useState<string | null>(null)
   const [detectError, setDetectError] = useState<string | null>(null)
@@ -490,7 +492,7 @@ function GeneralTab() {
           '/library/rescan/status',
         )
         if (cancelled) return
-        setDetecting(s.running)
+        setDetecting((d) => (postingRef.current ? d : s.running))
         setDetectProgress(s.running && s.total > 0 ? { done: s.done, total: s.total } : null)
       } catch {
         // transient poll failure -- try again next tick rather than showing an error for this
@@ -508,6 +510,7 @@ function GeneralTab() {
     setDetectResult(null)
     setDetectError(null)
     setDetecting(true)
+    setPosting(true)
     try {
       const r = await api.post<LibraryResponse>('/library/rescan')
       setDetectResult(
@@ -520,6 +523,7 @@ function GeneralTab() {
     } catch (err) {
       setDetectError(err instanceof ApiError ? err.message : String(err))
     }
+    setPosting(false)
     // No `finally { setDetecting(false) }` here on purpose -- the poll loop above picks up
     // the real "running: false" from the server, so it stays correct even if this component
     // unmounted (tab switch) before this request resolved.
@@ -585,6 +589,12 @@ function GeneralTab() {
               Detect now
             </button>
           )}
+          {detecting && !detectProgress && (
+            <span className="text-dim" style={{ fontSize: 12.5 }}>
+              <span className="spinner" style={{ width: 11, height: 11, marginRight: 6 }} />
+              Rescan started. Looking through the folders…
+            </span>
+          )}
           {detectProgress && (
             <span className="text-faint mono" style={{ fontSize: 12.5 }}>
               {detectProgress.done} / {detectProgress.total}
@@ -597,10 +607,10 @@ function GeneralTab() {
       </section>
 
       <section className="card" aria-labelledby="sc-general1">
-        <h2 id="sc-general1" style={{ margin: '0 0 14px', fontSize: 15 }}>Languages</h2>
-        <Field label="Subtitle languages" tip="Empty = all languages allowed.">
-          <LanguageMultiSelect codes={data.subtitle_langs} onChange={(subtitle_langs) => setData({ ...data, subtitle_langs })} />
-        </Field>
+        <h2 id="sc-general1" style={{ margin: '0 0 10px', fontSize: 15 }}>Languages</h2>
+        <p className="text-dim" style={{ margin: 0, fontSize: 13, lineHeight: 1.5 }}>
+          Only English subtitles are checked and fixed for now. Subtitles in other languages are left alone.
+        </p>
       </section>
 
       <section className="card" aria-labelledby="sc-general2">
@@ -832,6 +842,7 @@ function CorrectnessTab() {
           Turned on/off from Settings → Automation → What runs. The checks always listen with
           whisper.cpp on this machine — no cloud speech recognition and no API key.
         </p>
+        <GpuStatus />
         <Field advanced label="Model file path" tip="A ggml model file. Every threshold is measured on tiny.en (the default) -- other models transcribe differently and are not calibrated.">
           <input type="text" value={data.local_whisper_model} onChange={(e) => setData({ ...data, local_whisper_model: e.target.value })} />
         </Field>
@@ -839,15 +850,15 @@ function CorrectnessTab() {
           <input type="text" value={data.local_whisper_binary} onChange={(e) => setData({ ...data, local_whisper_binary: e.target.value })} />
         </Field>
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, maxWidth: 540 }}>
-          <Field advanced label="Use GPU" tip="Off forces CPU-only (-ng) even if the binary was built with Vulkan/GPU support.">
+          <Field label="Use GPU" tip="Off forces CPU-only (-ng) even if the binary was built with Vulkan/GPU support.">
             <label style={{ display: 'flex', alignItems: 'center', gap: 8, margin: 0 }}>
               <input type="checkbox" checked={data.local_whisper_use_gpu} onChange={(e) => setData({ ...data, local_whisper_use_gpu: e.target.checked })} style={{ width: 16, height: 16, accentColor: 'var(--accent)' }} />
             </label>
           </Field>
-          <Field advanced label="CPU threads" tip="Threads for local Whisper. 0 uses every core it is allowed to run on.">
+          <Field label="CPU threads" tip="Threads for local Whisper. 0 uses every core it is allowed to run on.">
             <input type="number" min={0} value={data.local_whisper_threads} onChange={(e) => setData({ ...data, local_whisper_threads: Number(e.target.value) })} />
           </Field>
-          <Field advanced label="CPU cores" tip="Which cores Whisper may use, e.g. 0-3,6. Empty = all cores. Leave a few free to keep the rest of the machine responsive.">
+          <Field label="CPU cores" tip="Which cores Whisper may use, e.g. 0-3,6. Empty = all cores. Leave a few free to keep the rest of the machine responsive.">
             <input type="text" placeholder="all" value={data.local_whisper_cpus} onChange={(e) => setData({ ...data, local_whisper_cpus: e.target.value })} />
           </Field>
         </div>
@@ -1681,6 +1692,19 @@ function AccountTab() {
 }
 
 const TAB_KEYS = SETTINGS_TABS.map((t) => t.key)
+
+function GpuStatus() {
+  const [st, setSt] = useState<{ checked: boolean; gpu: boolean; detail: string } | null>(null)
+  useEffect(() => {
+    api.get<{ checked: boolean; gpu: boolean; detail: string }>('/settings/whisper-status').then(setSt, () => setSt(null))
+  }, [])
+  if (!st) return null
+  return (
+    <p style={{ fontSize: 13, margin: '0 0 14px', lineHeight: 1.5 }} className={st.gpu ? '' : 'text-dim'}>
+      <strong>GPU:</strong> {st.checked ? st.detail : 'checking…'}
+    </p>
+  )
+}
 
 export default function Settings() {
   const { tab } = useParams()

@@ -138,7 +138,28 @@ def parse_lang_from_filename(subtitle_path: Path) -> Optional[str]:
     return None
 
 
-def find_subtitles_for_video(video_path: Path, sibling_videos: list[Path]) -> list[tuple[Path, Optional[str]]]:
+def _list_dir(path: Path, cache: Optional[dict]) -> list[tuple[Path, bool, bool]]:
+    """[(entry, is_file, is_dir)] for a folder. One scandir (file/folder kind comes with the
+    listing, no stat per entry), and listed once per discovery run when a cache is given."""
+    if cache is not None and path in cache:
+        return cache[path]
+    out: list[tuple[Path, bool, bool]] = []
+    try:
+        with os.scandir(path) as it:
+            for e in it:
+                try:
+                    out.append((Path(e.path), e.is_file(), e.is_dir()))
+                except OSError:
+                    out.append((Path(e.path), False, False))
+    except OSError:
+        pass
+    if cache is not None:
+        cache[path] = out
+    return out
+
+
+def find_subtitles_for_video(video_path: Path, sibling_videos: list[Path],
+                             cache: Optional[dict] = None) -> list[tuple[Path, Optional[str]]]:
     """Find subtitles in the same folder, and — if none found there — in a subfolder
     (e.g. 'Subs/', 'Subtitles/') one level down. In a subfolder, either a shared SxxEyy
     pattern with the video is required, or the video must be the only one in its folder
@@ -147,14 +168,11 @@ def find_subtitles_for_video(video_path: Path, sibling_videos: list[Path]) -> li
     parent = video_path.parent
     results: list[tuple[Path, Optional[str]]] = []
 
-    try:
-        entries = list(parent.iterdir())
-    except OSError:
-        return results
+    entries = _list_dir(parent, cache)
 
     # 1) Same folder — requires the filename to start with the video's stem.
-    for f in entries:
-        if f.is_file() and f.suffix.lower() in SUBTITLE_EXTS and f.name.startswith(stem):
+    for f, is_file, _is_dir in entries:
+        if is_file and f.suffix.lower() in SUBTITLE_EXTS and f.name.startswith(stem):
             results.append((f, _lang_from_name_parts(f.name, len(stem))))
 
     if results:
@@ -163,15 +181,11 @@ def find_subtitles_for_video(video_path: Path, sibling_videos: list[Path]) -> li
     # 2) One folder down.
     ep_tag = _sxxeyy(video_path.name)
     single_video_folder = len(sibling_videos) == 1
-    for sub_dir in entries:
-        if not sub_dir.is_dir():
+    for sub_dir, _is_file, is_dir in entries:
+        if not is_dir:
             continue
-        try:
-            sub_entries = list(sub_dir.iterdir())
-        except OSError:
-            continue
-        for f in sub_entries:
-            if not f.is_file() or f.suffix.lower() not in SUBTITLE_EXTS:
+        for f, f_is_file, _f_is_dir in _list_dir(sub_dir, cache):
+            if not f_is_file or f.suffix.lower() not in SUBTITLE_EXTS:
                 continue
             if f.name.startswith(stem):
                 results.append((f, _lang_from_name_parts(f.name, len(stem))))
@@ -220,34 +234,35 @@ def _iter_video_dirs(cfg: Config, roots: Optional[list[Path]] = None):
                               if Path(n).suffix.lower() in cfg.video_exts]
 
 
-def discover_pairs(cfg: Config, roots: Optional[list[Path]] = None) -> list[tuple[Path, Path, Optional[str]]]:
-    """(video, subtitle, lang) for every video with a discoverable subtitle file.
-
-    roots: see _iter_video_dirs."""
+def discover_library(cfg: Config, roots: Optional[list[Path]] = None
+                     ) -> tuple[list[tuple[Path, Path, Optional[str]]], list[Path]]:
+    """(pairs, all_videos) from ONE walk of the folders. pairs = (video, subtitle, lang) for
+    every video with a discoverable subtitle file; all_videos = every video, with or without
+    one. roots: see _iter_video_dirs."""
     for root in (roots if roots is not None else cfg.media_roots):
         if not root.exists():
-            # discover_all_videos stays silent here (as before) — only the pairing pass
-            # warns, so a missing root is logged exactly once per sweep, not twice.
             log.warning("Root Folder does not exist: %s", root)
-    pairs = []
+    listing: dict = {}
+    pairs: list[tuple[Path, Path, Optional[str]]] = []
+    all_videos: list[Path] = []
     for _dirpath, videos in _iter_video_dirs(cfg, roots):
+        all_videos.extend(videos)
         for video in videos:
-            for sub_path, lang in find_subtitles_for_video(video, videos):
+            for sub_path, lang in find_subtitles_for_video(video, videos, listing):
                 if cfg.subtitle_langs and lang and lang not in cfg.subtitle_langs:
                     continue
                 pairs.append((video, sub_path, lang))
-    return pairs
+    return pairs, all_videos
+
+
+def discover_pairs(cfg: Config, roots: Optional[list[Path]] = None) -> list[tuple[Path, Path, Optional[str]]]:
+    """(video, subtitle, lang) for every video with a discoverable subtitle file."""
+    return discover_library(cfg, roots)[0]
 
 
 def discover_all_videos(cfg: Config, roots: Optional[list[Path]] = None) -> list[Path]:
-    """All video files under the root folders, regardless of whether they have any subtitle
-    at all — discover_pairs alone can't be used for this, since a video with NO subtitles
-    found doesn't appear in its result. Deliberately walks the tree again (instead of
-    collecting this alongside discover_pairs) to keep the two functions independent and
-    simple; the cost of an extra os.walk is negligible for a private media library.
-
-    roots: see discover_pairs."""
-    return [video for _dirpath, videos in _iter_video_dirs(cfg, roots) for video in videos]
+    """All video files under the root folders, with or without a subtitle."""
+    return discover_library(cfg, roots)[1]
 
 
 def videos_needing_embedded_check(cfg: Config, pairs: list[tuple[Path, Path, Optional[str]]],

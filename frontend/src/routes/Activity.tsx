@@ -4,6 +4,7 @@ import { api, ApiError } from '../api/client'
 import type { Paginated, RunRow } from '../api/types'
 import { ErrorState, LoadingState } from '../components/PageState'
 import StatusPill from '../components/StatusPill'
+import { runPct } from '../lib/progress'
 import { useRunningJob } from '../hooks/useRunningJob'
 import { useToasts } from '../hooks/useToasts'
 import { durationBetween, formatExact, formatRelative } from '../lib/format'
@@ -120,7 +121,7 @@ export default function Activity() {
               {data.items.map((j) => {
                 const running = j.status === 'running'
                 const pct = running && j.files_total
-                  ? Math.round((j.files_processed / j.files_total) * 100)
+                  ? runPct(j)
                   : null
                 return (
                   <div key={j.id} role="row" data-row data-hover style={{ display: 'grid', gridTemplateColumns: '52px minmax(0,1.2fr) minmax(0,2fr) 100px 104px 96px 76px 70px 64px 56px', minWidth: 860, gap: 12, alignItems: 'center', padding: '7px 14px', borderBottom: '1px solid var(--border)', fontSize: 13 }}>

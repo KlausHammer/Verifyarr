@@ -403,7 +403,9 @@ class Config:
         return cls(
             movies_folder=Path(vals["general.movies_folder"]) if vals["general.movies_folder"] else None,
             series_folder=Path(vals["general.series_folder"]) if vals["general.series_folder"] else None,
-            subtitle_langs=[l.lower() for l in vals["general.subtitle_langs"]],
+            # English only for now (see TODO.md): other languages can't be verified without a
+            # translation key, so they are never checked, whatever the setting says.
+            subtitle_langs=["en"],
             # Not a setting anymore — always all supported file types (see VIDEO_EXTS_DEFAULT).
             # Limiting it added complexity without real benefit; scope is instead controlled
             # via the Movies/Series folders.
