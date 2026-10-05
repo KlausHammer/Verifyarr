@@ -1,6 +1,6 @@
 services:
   verifyarr:
-    build: https://github.com/KlausHammer/Verifyarr.git
+    image: ghcr.io/klaushammer/verifyarr:latest
     container_name: verifyarr
     restart: unless-stopped
     cpu_shares: 128  # low priority vs other containers

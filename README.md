@@ -27,8 +27,9 @@ against the same Whisper evidence, so a bad fit (alass is sometimes wildly wrong
 
 ## Install with Docker
 
-Grab the compose file (it builds straight from this repo, no separate clone needed),
-then edit it before starting:
+Grab the compose file (it pulls the prebuilt image from ghcr.io, no clone needed),
+then edit it before starting. Update later with `docker compose pull && docker compose up -d`
+(or the Update button in Dockge/Portainer):
 
 ```bash
 curl -O https://raw.githubusercontent.com/KlausHammer/Verifyarr/main/docker-compose.yml
@@ -62,9 +63,8 @@ Only the Debian/Ubuntu-style host (WSL2) has been run so far; the rest below fol
 - **GPU (optional):** the `render` group id differs per distro (check `getent group render`). With no `/dev/dri` it runs on the CPU, which is what the tests used. NVIDIA-only hosts also run on the CPU.
 - **CPU:** Whisper uses every core by default. Limit threads or pick cores under Settings → Correctness (e.g. `0-3`).
   In a Proxmox/VM guest set the CPU type to `host`, otherwise AVX/AVX2 is hidden and Whisper is several times slower.
-- **Building:** the first `docker compose up` compiles alass (Rust) and whisper.cpp (C++), which takes a while and wants a few GB of free RAM. Small
-  ARM boards (Raspberry Pi 4/5, 64-bit OS) should work but are untested. Build on the machine that will run it: whisper.cpp is
-  compiled for that CPU, so an image built elsewhere can stop with "illegal instruction".
+- **Building:** a local build compiles alass (Rust) and whisper.cpp (C++), which takes a while and wants a few GB of free RAM. Small
+  ARM boards (Raspberry Pi 4/5, 64-bit OS) should work but are untested. The prebuilt image targets CPUs with AVX2 (about 2013+). On an older CPU, build locally with `build:` and `NATIVE=ON`.
 - **Unraid, Synology, TrueNAS:** use the `PUID`/`PGID` of the user that owns your media (Unraid usually 99/100). Keep `/data` on a local disk.
 
 

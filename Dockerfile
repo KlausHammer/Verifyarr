@@ -9,6 +9,8 @@ RUN cargo install alass-cli --locked
 # Vulkan = cross-vendor GPU (Intel/AMD/NVIDIA), no heavy vendor SDK needed. Falls back to CPU if
 # no GPU is passed through.
 FROM debian:bookworm-slim AS whisper-builder
+# NATIVE=ON tunes for the build machine; the published image uses OFF + AVX2 so it runs on any x86-64-v3 CPU.
+ARG NATIVE=ON
 RUN apt-get update && apt-get install -y --no-install-recommends \
         build-essential cmake ninja-build git ca-certificates curl \
         pkg-config libvulkan-dev glslc spirv-headers \
@@ -22,7 +24,8 @@ RUN git clone --branch ${WHISPER_CPP_VERSION} --depth 1 \
 # Try Debian's own Vulkan headers first (static link -- one binary to copy, no .so files).
 # Only if that build fails (headers too old) do we fetch fresh Vulkan-Headers and retry.
 RUN set -e; \
-    CMK="cmake -S /tmp/whisper.cpp -B /tmp/whisper.cpp/build -GNinja -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF -DGGML_VULKAN=1"; \
+    CMK="cmake -S /tmp/whisper.cpp -B /tmp/whisper.cpp/build -GNinja -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF -DGGML_VULKAN=1 -DGGML_NATIVE=$NATIVE"; \
+    [ "$NATIVE" = ON ] || CMK="$CMK -DGGML_AVX2=ON -DGGML_FMA=ON -DGGML_F16C=ON"; \
     if ! ( $CMK && ninja -C /tmp/whisper.cpp/build -j"$(nproc)" whisper-cli whisper-vad-speech-segments ); then \
         echo "Debian's Vulkan headers were too old -- fetching fresh ones"; \
         rm -rf /tmp/whisper.cpp/build; \

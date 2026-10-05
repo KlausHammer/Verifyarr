@@ -18,8 +18,8 @@ class CpuList(unittest.TestCase):
     def test_threads_default_is_every_usable_core(self):
         with mock.patch("os.sched_getaffinity", return_value=set(range(12))):
             self.assertEqual(procprio.whisper_threads(0, ""), 12)
-        self.assertEqual(procprio.whisper_threads(0, "0-3,6"), 5)
-        self.assertEqual(procprio.whisper_threads(3, "0-3,6"), 3)
+            self.assertEqual(procprio.whisper_threads(0, "0-3,6"), 5)
+            self.assertEqual(procprio.whisper_threads(3, "0-3,6"), 3)
 
     def test_pin(self):
         with mock.patch.object(procprio, "_TASKSET_BIN", "/usr/bin/taskset"):
