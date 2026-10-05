@@ -1248,6 +1248,9 @@ def correctness_check(video_path: Path, subs: "pysubs2.SSAFile", sub_lang: Optio
     log.info("Whisper: local (whisper.cpp, %s)", Path(cfg.local_whisper_model).name)
 
     audio_lang = detect_audio_language_ffprobe(video_path)
+    track = english_audio_index(video_path)
+    if track:
+        log.info("Listening to English audio track #%d (not the file's first track)", track + 1)
     if cfg.require_audio_lang and audio_lang and audio_lang != cfg.require_audio_lang:
         # ffprobe's language tag alone is enough to decide this — skip sampling entirely.
         reason = f"speech is '{audio_lang}' (per the file's metadata), not '{cfg.require_audio_lang}' — skipped"
