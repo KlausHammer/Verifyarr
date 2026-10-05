@@ -20,3 +20,4 @@ runs) and are kept as the record of what was found and why a rule looks the way 
 
 Not in the repository on purpose: the rewritten Z100 subtitles with their originals (copyrighted text, kept locally for checking) and
 raw run output.
+- [z100_10_nye_b_2026-10-05.md](z100_10_nye_b_2026-10-05.md) — 10 nye tilfældige afsnit, kørsel 2
