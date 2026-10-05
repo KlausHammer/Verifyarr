@@ -34,7 +34,8 @@ def wav_bytes(n_frames=1600, rate=16000):
 
 def _fake_run(payload: bytes, returncode=0, exc=None):
     def fake(cmd, **kw):
-        Path(cmd[-1]).write_bytes(payload)
+        if str(cmd[-1]).endswith(".part"):  # not the ionice probe's trailing "true"
+            Path(cmd[-1]).write_bytes(payload)
         if exc is not None:
             raise exc
         return SimpleNamespace(returncode=returncode, stdout="", stderr="")
