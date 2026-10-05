@@ -3,11 +3,10 @@ import { useNavigate, useSearchParams } from 'react-router-dom'
 import { api, ApiError } from '../api/client'
 import type { BazarrSettings, CorrectnessSettings, GeneralSettings, NextRunResponse, SchedulingSettings } from '../api/types'
 import FolderBrowser from '../components/FolderBrowser'
-import LanguageMultiSelect from '../components/LanguageMultiSelect'
 import { useToasts } from '../hooks/useToasts'
 import { buildCron, DAY_NAMES, parseCron } from '../lib/cron'
 
-const STEPS = ['Media folders', 'Languages', 'Bazarr', 'Speech recognition', 'Bad subtitles', 'Schedule']
+const STEPS = ['Media folders', 'Bazarr', 'Speech recognition', 'Bad subtitles', 'Schedule']
 
 interface WizVals {
   moviesDir: string
@@ -205,12 +204,10 @@ export default function Wizard() {
         toast('Setup saved.')
         navigate('/settings/general')
       } else {
-        const r = await api.post<{ run_id: number }>('/runs', { mode: 'sweep' })
-        toast('First scan started. The dashboard fills in when it finishes.', {
-          kind: 'info',
-          action: () => navigate(`/activity/${r.run_id}`),
-          actionLabel: 'View job',
-        })
+        // Only lists what is in the folders (Movies/Series pages); nothing is checked or fixed
+        // until the user presses Scan or the schedule runs.
+        api.post('/library/rescan').catch(() => {})
+        toast('Setup saved. Your library is being listed; press Scan library when you want it checked.', { kind: 'info' })
         navigate('/')
       }
     } catch (err) {
@@ -221,7 +218,7 @@ export default function Wizard() {
   }
 
   function go(n: number) {
-    setStep(Math.max(0, Math.min(5, n)))
+    setStep(Math.max(0, Math.min(4, n)))
     setBrowsing(null)
   }
 
@@ -274,7 +271,7 @@ export default function Wizard() {
         <div style={{ padding: '18px 22px 14px', borderBottom: '1px solid var(--border)' }}>
           <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
             <h1 style={{ fontSize: 19, margin: 0 }}>{fromSettings ? 'Setup wizard' : 'Set up Verifyarr'}</h1>
-            <span className="text-dim" style={{ fontSize: 12.5 }}>Step {step + 1} of 6 · every step can be skipped and changed later in Settings</span>
+            <span className="text-dim" style={{ fontSize: 12.5 }}>Step {step + 1} of 5 · every step can be skipped and changed later in Settings</span>
           </div>
           <ol aria-label="Setup steps" style={{ listStyle: 'none', margin: '14px 0 0', padding: 0, display: 'flex', gap: 4, flexWrap: 'wrap' }}>
             {STEPS.map((label, i) => {
@@ -348,19 +345,6 @@ export default function Wizard() {
           {step === 1 && (
             <>
               <p className="text-dim" style={{ margin: '0 0 16px', lineHeight: 1.5 }}>
-                Which subtitle languages should Verifyarr check? Subtitles in other languages are left alone.
-              </p>
-              <div className="field">
-                <label>Languages to check</label>
-                <LanguageMultiSelect codes={v.langs} onChange={(langs) => setV({ langs })} />
-                <div className="field-hint" style={{ color: 'var(--text-dim)' }}>Leave empty to check every language.</div>
-              </div>
-            </>
-          )}
-
-          {step === 2 && (
-            <>
-              <p className="text-dim" style={{ margin: '0 0 16px', lineHeight: 1.5 }}>
                 Connecting Bazarr lets Verifyarr check new subtitles as they arrive, blacklist bad ones and fetch replacements. Without it, Verifyarr can still check and fix timing.
               </p>
               <div className="field">
@@ -410,7 +394,7 @@ export default function Wizard() {
             </>
           )}
 
-          {step === 3 && (
+          {step === 2 && (
             <>
               <p className="text-dim" style={{ margin: '0 0 16px', lineHeight: 1.5 }}>
                 Verifyarr listens to the audio with speech recognition and compares it with each subtitle.
@@ -422,7 +406,7 @@ export default function Wizard() {
             </>
           )}
 
-          {step === 4 && (
+          {step === 3 && (
             <>
               <p className="text-dim" style={{ margin: '0 0 16px', lineHeight: 1.5 }}>
                 Some subtitles can&apos;t be fixed: the wrong episode, missing parts, a cut version. What should Verifyarr do with them?
@@ -446,10 +430,10 @@ export default function Wizard() {
             </>
           )}
 
-          {step === 5 && (
+          {step === 4 && (
             <>
               <p className="text-dim" style={{ margin: '0 0 16px', lineHeight: 1.5 }}>
-                When should Verifyarr look for new and changed files? A scan works the processor hard, so night is best.{' '}
+                New files are checked as they arrive (via Bazarr). This schedule is a full scan of the library for anything missed, and it works the processor hard, so night is best.{' '}
                 Times are local time on the server{serverTz ? ` (${serverTz})` : ''}.
               </p>
               <RadioCards
@@ -488,7 +472,7 @@ export default function Wizard() {
               )}
               {!fromSettings && (
                 <p className="text-dim" style={{ margin: '16px 0 0', fontSize: 13, lineHeight: 1.5 }}>
-                  When you finish, the first scan starts right away. It checks the whole library and can take a few hours on a small server; you can use Verifyarr meanwhile.
+                  When you finish, Verifyarr lists your movies and series but checks and fixes nothing yet. Press Scan library on the dashboard when you want the first check (a few hours on a small server), or wait for the schedule.
                 </p>
               )}
             </>
@@ -501,9 +485,9 @@ export default function Wizard() {
           </button>
           <span style={{ flex: 1 }} />
           {step > 0 && <button className="btn" type="button" onClick={() => go(step - 1)}>Back</button>}
-          {step < 5 && <button className="btn" type="button" onClick={() => go(step + 1)}>Skip this step</button>}
-          <button className="btn btn-primary" type="button" disabled={finishing} onClick={() => (step < 5 ? go(step + 1) : finish())}>
-            {finishing ? <span className="spinner" /> : step < 5 ? 'Next' : fromSettings ? 'Save' : 'Finish and start first scan'}
+          {step < 4 && <button className="btn" type="button" onClick={() => go(step + 1)}>Skip this step</button>}
+          <button className="btn btn-primary" type="button" disabled={finishing} onClick={() => (step < 4 ? go(step + 1) : finish())}>
+            {finishing ? <span className="spinner" /> : step < 4 ? 'Next' : fromSettings ? 'Save' : 'Finish setup'}
           </button>
         </div>
       </div>

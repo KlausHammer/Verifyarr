@@ -13,9 +13,12 @@ another scan per page — same cache, filtered differently."""
 
 from __future__ import annotations
 
+import json
+import re
+from pathlib import Path
 from typing import Optional
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 
 from verifyarr import db
 from verifyarr.library_poll import get_progress, refresh_library_cache, request_cancel
@@ -100,9 +103,12 @@ def grouped_response(conn, kind: Optional[str]) -> dict:
 
     groups: dict = {}
     for video in db.list_library_videos(conn, kind=kind):
-        group = groups.setdefault(video["title"], new_group_bucket(
+        # "Billions" and "BILLIONS" (Bazarr's title vs a release-folder name) are one title.
+        group = groups.setdefault(video["title"].casefold(), new_group_bucket(
             title=video["title"], seasons={} if kind == "series" else None,
         ))
+        if group["title"].isupper() and not video["title"].isupper():
+            group["title"] = video["title"]
         video_rows = rows_by_video.get(video["video_path"], [])
         accumulate_video_into_bucket(group, video, video_rows)
 
@@ -123,7 +129,48 @@ def grouped_response(conn, kind: Optional[str]) -> dict:
 @router.get("")
 def list_library(kind: Optional[str] = Query(None, pattern="^(movie|series)$"),
                  user=Depends(require_auth), conn=Depends(get_conn)):
-    return grouped_response(conn, kind)
+    response = grouped_response(conn, kind)
+    cfg = Config.from_db(conn)
+    if cfg.bazarr_url and cfg.bazarr_api_key:
+        row = conn.execute("SELECT COUNT(*) AS n, COALESCE(SUM(bazarr_matched), 0) AS m FROM library_videos").fetchone()
+        response["bazarr_match"] = {"videos": row["n"], "matched": row["m"]}
+    return response
+
+
+_EPISODE_NUM_RE = re.compile(r"E(\d+)", re.IGNORECASE)
+
+
+def _episode_sort_key(video: dict) -> tuple:
+    """Episode 1 first. Videos with no SxxEyy (extras) come last, by file name."""
+    se = video["season_episode"] or ""
+    m = _EPISODE_NUM_RE.search(se)
+    return (0, int(m.group(1)), "") if m else (1, 0, Path(video["video_path"]).name.lower())
+
+
+@router.get("/series/episodes")
+def series_episodes(title: str = Query(..., min_length=1), user=Depends(require_auth), conn=Depends(get_conn)):
+    """Every season and episode of one series, episodes in order, with each subtitle file's status
+    (the series page's drill-down). Title matches case-insensitively, like the library list."""
+    files_by_video: dict = {}
+    for r in conn.execute("SELECT id, video_path, subtitle_path, lang, sync_status, correctness_flag, reason, "
+                          "last_processed FROM files WHERE subtitle_path IS NOT NULL").fetchall():
+        files_by_video.setdefault(r["video_path"], []).append(dict(r))
+    seasons: dict = {}
+    for video in db.list_library_videos(conn, kind="series"):
+        if video["title"].casefold() != title.casefold():
+            continue
+        seasons.setdefault(season_of(video), []).append(video)
+    if not seasons:
+        raise HTTPException(status_code=404, detail="series not found")
+    out = []
+    for season, videos in sorted(seasons.items()):
+        out.append({"season": season, "episodes": [
+            {"video_path": v["video_path"], "name": Path(v["video_path"]).name,
+             "season_episode": v["season_episode"], "has_subtitle": bool(v["has_subtitle"]),
+             "embedded_langs": json.loads(v["embedded_langs_json"] or "[]"),
+             "subtitles": files_by_video.get(v["video_path"], [])}
+            for v in sorted(videos, key=_episode_sort_key)]})
+    return {"title": title, "seasons": out}
 
 
 @router.get("/rescan/status")

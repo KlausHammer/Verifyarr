@@ -17,6 +17,8 @@ synced/verified — only external subtitle files are."""
 from __future__ import annotations
 
 import json
+import time
+from datetime import datetime, timezone
 
 from verifyarr import db, jobs, log
 from verifyarr.bazarr import bazarr_request, response_items
@@ -42,6 +44,24 @@ def _wanted_keys(cfg: Config, kind: str, endpoint: str) -> set:
     }
 
 
+def _resolve_pending(conn, our_kind: str, currently_wanted: set) -> None:
+    """A replacement we asked for is done once Bazarr no longer lists it as wanted."""
+    now = datetime.now(timezone.utc)
+    wanted = {(str(i), lang) for i, lang in currently_wanted}
+    done = []
+    for r in db.pending_replacements(conn, PENDING_WINDOW_HOURS):
+        if (r["kind"] == "movie") != (our_kind == "movie"):
+            continue
+        age = now - datetime.fromisoformat(r["blacklisted_at"])
+        if age.total_seconds() < PENDING_GRACE_MINUTES * 60:
+            continue
+        key = str(r["radarr_id"] if r["kind"] == "movie" else r["episode_id"])
+        if (key, r["language"]) not in wanted:
+            done.append(r["id"])
+    if done:
+        db.resolve_replacements(conn, done)
+
+
 def _poll_one(conn, cfg: Config, kind: str, our_kind: str, endpoint: str) -> None:
     key = f"scheduling._bazarr_wanted.{kind}"
     raw = db.get_setting_raw(conn, key)
@@ -55,6 +75,7 @@ def _poll_one(conn, cfg: Config, kind: str, our_kind: str, endpoint: str) -> Non
     currently_wanted = _wanted_keys(cfg, kind, endpoint)
     db.set_setting_raw(conn, key, json.dumps(sorted(currently_wanted)))
 
+    _resolve_pending(conn, our_kind, currently_wanted)
     resolved = previously_wanted - currently_wanted
     if not resolved or is_first_poll:
         return  # first poll ever just captures a baseline — nothing "resolved" yet, just unknown
@@ -67,14 +88,36 @@ def _poll_one(conn, cfg: Config, kind: str, our_kind: str, endpoint: str) -> Non
         log.info("Bazarr poll: a job is already running, skipped this scan (%s)", our_kind)
 
 
+# While we wait for a replacement we asked Bazarr for, poll fast; otherwise at the setting's pace.
+PENDING_POLL_MINUTES = 3
+PENDING_WINDOW_HOURS = 6  # give up waiting after this
+PENDING_GRACE_MINUTES = 10  # Bazarr needs a moment to list a just-blacklisted item as wanted
+_LAST_KEY = "scheduling._bazarr_poll_last"
+
+
+def _due(conn, cfg: Config, now: float) -> bool:
+    pending = bool(db.pending_replacements(conn, PENDING_WINDOW_HOURS))
+    minutes = min(PENDING_POLL_MINUTES, cfg.poll_new_media_interval_minutes) if pending \
+        else cfg.poll_new_media_interval_minutes
+    try:
+        last = float(db.get_setting_raw(conn, _LAST_KEY) or 0)
+    except ValueError:
+        last = 0.0
+    return now - last >= minutes * 60 - 5
+
+
 def poll_wanted_subtitles() -> None:
-    """Called on a fixed interval by scheduler.py. No-ops quietly if the setting is off or Bazarr
-    isn't configured — this runs regardless of whether anyone uses the feature."""
+    """Ticks every PENDING_POLL_MINUTES (scheduler.py) but only asks Bazarr when due (see _due).
+    No-ops quietly if the setting is off or Bazarr isn't configured."""
     conn = db.connect()
     try:
         cfg = Config.from_db(conn)
         if not cfg.poll_new_media_enabled or not cfg.bazarr_url or not cfg.bazarr_api_key:
             return
+        now = time.time()
+        if not _due(conn, cfg, now):
+            return
+        db.set_setting_raw(conn, _LAST_KEY, str(now))
         for kind, our_kind, endpoint in _WANTED_ENDPOINTS:
             _poll_one(conn, cfg, kind, our_kind, endpoint)
     except Exception as e:

@@ -191,7 +191,8 @@ def execute_run(run_id: int, cfg: Config, conn: sqlite3.Connection, cancel_event
                  subtitle: Optional[Path] = None, lang: Optional[str] = None,
                  bazarr_meta: Optional[dict] = None,
                  kind: Optional[str] = None, title: Optional[str] = None,
-                 season: Optional[str] = None, lock_wait_s: Optional[float] = None) -> None:
+                 season: Optional[str] = None, episode: Optional[str] = None,
+                 lock_wait_s: Optional[float] = None) -> None:
     """lock_wait_s: how long to wait for another run's lock (None = as long as it takes)."""
     cfg = _effective_cfg(cfg, trigger)
     handler = _RunLogHandler(conn, run_id)
@@ -202,7 +203,7 @@ def execute_run(run_id: int, cfg: Config, conn: sqlite3.Connection, cancel_event
         with run_lock(lock_wait_s, cancel_event):
             if mode == "sweep":
                 _run_sweep(conn, run_id, cfg, force, cancel_event, kind=kind, title=title,
-                           season=season)
+                           season=season, episode=episode)
             elif mode == "generate_single":
                 _run_generate_single(conn, run_id, cfg, video, lang, cancel_event)
             else:
@@ -231,20 +232,14 @@ def _scoped_pair_title(pair: tuple, cfg: Config, bazarr_titles: dict) -> str:
     Bazarr renamed would match zero pairs here even though the button that triggered this
     used that exact name."""
     video = pair[0]
-    _season_episode, inferred = infer_title_and_episode(video, cfg.media_root_for(video))
+    _season_episode, inferred = infer_title_and_episode(video, cfg.media_root_for(video), cfg.kind_for(video) == "series")
     return bazarr_titles.get(video) or inferred or str(video.parent)
-
-
-def _scoped_pair_season(pair: tuple, cfg: Config) -> str:
-    """A pair's "S03"-style season key for Scan-scope filtering ("" when unparseable)."""
-    video = pair[0]
-    season_episode, _title = infer_title_and_episode(video, cfg.media_root_for(video))
-    return (season_episode or "")[:3]
 
 
 def _run_sweep(conn: sqlite3.Connection, run_id: int, cfg: Config, force: bool,
                 cancel_event: threading.Event, kind: Optional[str] = None,
-                title: Optional[str] = None, season: Optional[str] = None) -> None:
+                title: Optional[str] = None, season: Optional[str] = None,
+                episode: Optional[str] = None) -> None:
     # A Scan scoped to one title/season (see web/routers/library.py) only needs to walk that
     # title's own folder(s) -- resolved from the Library cache rather than the filesystem, so
     # it requires a prior whole-library scan/Detect now to have seen this title at least once
@@ -279,6 +274,9 @@ def _run_sweep(conn: sqlite3.Connection, run_id: int, cfg: Config, force: bool,
     cache_note = "full recheck (Rescan)" if force else "reusing cached results for unchanged files"
     log.info("Found %d video/subtitle pair(s) under %s — checking for embedded subtitles "
              "(%s, %s)...", len(pairs), cfg.media_roots, walk_note, cache_note)
+    # Show a total right away (an upper bound; narrowed below for a scoped run) so the UI reads
+    # "0 of N" instead of an unexplained "0 files" while the embedded-subtitle check runs.
+    db.update_run_counts(conn, run_id, files_total=len(pairs))
     persisted = db.get_persisted_embedded_cache(conn, all_videos) if not force else None
     # A scoped run already knows this title's Bazarr-matched titles from the Library cache (the
     # same one scope_roots itself came from) -- no need to re-fetch Bazarr's ENTIRE catalog
@@ -309,13 +307,21 @@ def _run_sweep(conn: sqlite3.Connection, run_id: int, cfg: Config, force: bool,
     # safety net (title inference could in principle disagree with what's cached) rather than
     # the primary mechanism, but stays cheap and correct either way.
     scoped_pairs = pairs
+    # Season/episode as the Library page shows them (Bazarr's numbering when it has one).
+    cached_se = {r["video_path"]: r["season_episode"] for r in db.list_library_videos(conn, kind="series")}
+
+    def _se(p) -> str:
+        return cached_se.get(str(p[0])) or infer_title_and_episode(p[0], cfg.media_root_for(p[0]))[0] or ""
+
     if kind:
         scoped_pairs = [p for p in scoped_pairs if cfg.kind_for(p[0]) == kind]
     if title:
         scoped_pairs = [p for p in scoped_pairs
-                        if _scoped_pair_title(p, cfg, bazarr_titles) == title]
+                        if _scoped_pair_title(p, cfg, bazarr_titles).casefold() == title.casefold()]
     if season:
-        scoped_pairs = [p for p in scoped_pairs if _scoped_pair_season(p, cfg) == season]
+        scoped_pairs = [p for p in scoped_pairs if _se(p)[:3] == season]
+    if episode:  # "S03E02", series only
+        scoped_pairs = [p for p in scoped_pairs if _se(p) == episode]
     if kind or title or season:
         log.info("Scoped to %d/%d pairs (kind=%s, title=%s, season=%s)",
                   len(scoped_pairs), len(pairs), kind, title, season)
@@ -592,9 +598,9 @@ class JobRunner:
 
     def start_sweep(self, trigger: str, force: bool = False, dry_run_override: Optional[bool] = None,
                      kind: Optional[str] = None, title: Optional[str] = None,
-                     season: Optional[str] = None) -> int:
+                     season: Optional[str] = None, episode: Optional[str] = None) -> int:
         return self._start(trigger, "sweep", force=force, dry_run_override=dry_run_override,
-                            kind=kind, title=title, season=season)
+                            kind=kind, title=title, season=season, episode=episode)
 
     def start_single(self, trigger: str, video: Path, subtitle: Path, lang: Optional[str] = None,
                       bazarr_meta: Optional[dict] = None, dry_run_override: Optional[bool] = None) -> int:
@@ -620,12 +626,12 @@ class JobRunner:
                 # single-file run it's derived from the video path itself.
                 if mode == "sweep":
                     target_kind, target_title = kwargs.get("kind"), kwargs.get("title")
-                    if target_title and kwargs.get("season"):
-                        target_title = f"{target_title} {kwargs['season']}"
+                    if target_title and (kwargs.get("episode") or kwargs.get("season")):
+                        target_title = f"{target_title} {kwargs.get('episode') or kwargs['season']}"
                 elif mode in ("single", "generate_single") and kwargs.get("video") is not None:
                     from verifyarr.discovery import target_label
                     target_kind = cfg.kind_for(kwargs["video"])
-                    target_title = target_label(kwargs["video"], cfg.media_root_for(kwargs["video"]))
+                    target_title = target_label(kwargs["video"], cfg.media_root_for(kwargs["video"]), cfg.kind_for(kwargs["video"]) == "series")
                 else:
                     target_kind = target_title = None
                 run_id = create_run(conn0, trigger, mode, dry_run, kwargs.get("force", False),

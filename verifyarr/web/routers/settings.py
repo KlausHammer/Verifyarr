@@ -78,7 +78,9 @@ def test_bazarr_connection(body: TestBazarrConnectionBody = TestBazarrConnection
     if resp is None:
         raise HTTPException(status_code=502, detail="could not connect to Bazarr")
     if resp.status_code != 200:
-        raise HTTPException(status_code=502, detail=f"Bazarr responded {resp.status_code}")
+        hint = " -- check the port and Bazarr's Base URL (e.g. http://host:6767/bazarr)" if resp.status_code == 404 else ""
+        raise HTTPException(status_code=502,
+                            detail=f"Bazarr responded {resp.status_code} for {cfg.bazarr_url}/api/system/status{hint}")
     try:
         data = resp.json().get("data", {})
     except ValueError:

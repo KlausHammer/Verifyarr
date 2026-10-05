@@ -31,6 +31,7 @@ type SortKey = (typeof HEADS)[number]['key']
 
 export default function MediaLibrary({ kind, title, folderHint }: { kind: 'movie' | 'series'; title: string; folderHint: string }) {
   const [items, setItems] = useState<LibraryEntry[] | null>(null)
+  const [match, setMatch] = useState<{ videos: number; matched: number } | null>(null)
   const [failed, setFailed] = useState(false)
   const [folder, setFolder] = useState('')
   const [q, setQ] = useState('')
@@ -47,7 +48,7 @@ export default function MediaLibrary({ kind, title, folderHint }: { kind: 'movie
     setFailed(false)
     api
       .get<LibraryResponse>(`/library?kind=${kind}`)
-      .then((r) => setItems(r.items))
+      .then((r) => { setItems(r.items); setMatch(r.bazarr_match ?? null) })
       .catch(() => {
         setItems(null)
         setFailed(true)
@@ -152,6 +153,11 @@ export default function MediaLibrary({ kind, title, folderHint }: { kind: 'movie
       </div>
 
       <div data-content style={{ padding: 20 }}>
+        {match && match.videos > 0 && match.matched / match.videos < 0.5 && (
+          <div role="alert" className="error-banner" style={{ marginBottom: 12 }}>
+            Bazarr recognises only {match.matched} of {match.videos} videos. Titles and episode numbers then come from the file names. Check the path mapping under Settings → Bazarr.
+          </div>
+        )}
         {runAll && (
           <div role="status" style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 12px', border: '1px solid #2f4a70', background: 'rgba(110,168,254,.08)', borderRadius: 'var(--radius)', marginBottom: 12, fontSize: 13 }}>
             <span className="spinner" style={{ width: 12, height: 12 }} />
@@ -200,7 +206,7 @@ export default function MediaLibrary({ kind, title, folderHint }: { kind: 'movie
                 <div key={t.title} role="row" data-row data-hover style={{ display: 'grid', gridTemplateColumns: 'minmax(0,2.6fr) 70px 86px 70px 80px 80px 130px 96px', minWidth: 780, gap: 12, alignItems: 'center', padding: '7px 14px', borderBottom: '1px solid var(--border)' }}>
                   <div role="cell" data-cell="main" style={{ minWidth: 0 }}>
                     <button
-                      onClick={() => navigate(`/files?title=${encodeURIComponent(t.title)}`)}
+                      onClick={() => navigate(kind === 'series' ? `/series/${encodeURIComponent(t.title)}` : `/files?title=${encodeURIComponent(t.title)}`)}
                       style={{ background: 'none', border: 0, padding: 0, color: 'var(--text)', fontWeight: 500, fontSize: 14, textAlign: 'left', maxWidth: '100%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', cursor: 'pointer' }}
                     >
                       {t.title}

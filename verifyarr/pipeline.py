@@ -2575,7 +2575,7 @@ def correctness_and_finish(video_path: Path, subtitle_path: Path, lang: Optional
             # Many swapped lines: SUSPECT before anything is written. Sync only
             # moves cues; the text is identical across candidates, so this
             # measures the file as-is. Deferred sync is dropped unwritten.
-            swap_ev = _swap_gate_hit(conn, video_path, current_subs, cfg)
+            swap_ev = _swap_gate_hit(conn, video_path, current_subs, cfg) if cfg.line_order_enabled else None
             if swap_ev is not None and swap_gate_trips(swap_ev):
                 had_deferred = row.pop("_ambiguous_sync", None) is not None
                 if had_deferred or not (row.get("sync_status") or "").startswith("fixed"):
@@ -2951,8 +2951,9 @@ def correctness_and_finish(video_path: Path, subtitle_path: Path, lang: Optional
                 if act_on_line_order:
                     _apply_line_order(row, result, swap_severity, current_subs, subtitle_path,
                                        cfg, media_root)
-                elif cfg.line_order_enabled:
-                    # audio_confirm off — heuristic-only reporting, never auto-fixed. candidates
+                else:
+                    # audio_confirm off — heuristic-only note (always shown, also with the
+                    # line-order switch off), never auto-fixed. candidates
                     # is every 2-line event in full mode (see collect_samples_full) -- use
                     # heuristic_indices here instead, same free-heuristic-only count as before.
                     issues = collected.get("heuristic_indices")
@@ -2963,20 +2964,17 @@ def correctness_and_finish(video_path: Path, subtitle_path: Path, lang: Optional
                     if issues:
                         row["note"] += (f" Line order: {len(issues)} block(s) flagged for manual "
                                          f"review (not auto-fixed, low confidence).")
-                # else: line-order is off entirely — nothing surfaced, but the data above is still
-                # cached for whenever it's turned on.
 
     else:
         row["correctness_flag"] = correctness_unavailable_flag
-        if cfg.line_order_enabled:
-            # No correctness check running at all — free local heuristic only, no Whisper spent,
-            # and nothing to reuse from a cache either (there's no prior Whisper data to check).
-            issues = heuristic_candidates(current_subs)
-            row["line_order_fixed"] = 0
-            row["line_order_flagged"] = len(issues)
-            if issues:
-                row["note"] += (f" Line order: {len(issues)} block(s) flagged for manual "
-                                 f"review (not auto-fixed, low confidence).")
+        # No correctness check running at all — free local heuristic only, no Whisper spent,
+        # and nothing to reuse from a cache either (there's no prior Whisper data to check).
+        issues = heuristic_candidates(current_subs)
+        row["line_order_fixed"] = 0
+        row["line_order_flagged"] = len(issues)
+        if issues:
+            row["note"] += (f" Line order: {len(issues)} block(s) flagged for manual "
+                             f"review (not auto-fixed, low confidence).")
 
     # Every path above that actually ran the Whisper check has resolved a deferred sync by now
     # (_resolve_ambiguous_sync). Any path that didn't (check disabled/unavailable, skipped for

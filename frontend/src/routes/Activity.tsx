@@ -144,7 +144,7 @@ export default function Activity() {
                       {running && pct !== null ? `${pct}% · ` : ''}{durationBetween(j.started_at, j.finished_at)}
                     </div>
                     <div role="cell" data-cell data-label="Processed" style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>
-                      {running && j.files_total ? `${j.files_processed}/${j.files_total}` : j.files_processed}
+                      {running && j.files_total ? `${j.files_processed}/${j.files_total}` : running ? '…' : j.files_processed}
                     </div>
                     <div role="cell" data-cell data-label="Changed" style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{j.files_changed}</div>
                     <div role="cell" data-cell data-label="Flagged" style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>

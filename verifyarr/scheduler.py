@@ -147,11 +147,11 @@ def reschedule() -> None:
     # Enable/disable itself is also checked live inside bazarr_poll.poll_wanted_subtitles()
     # (belt and braces), but the INTERVAL can only change here — APScheduler needs a fresh
     # trigger for that.
-    interval = max(1, cfg.poll_new_media_interval_minutes)
+    interval = bazarr_poll.PENDING_POLL_MINUTES  # tick; the poll itself decides when it is due
     _scheduler.add_job(bazarr_poll.poll_wanted_subtitles, IntervalTrigger(minutes=interval),
                         id=_POLL_JOB_ID, replace_existing=True, max_instances=1)
     log.info("Bazarr wanted-subtitles poll: %s, every %d min",
-              "on" if cfg.poll_new_media_enabled else "off", interval)
+              "on" if cfg.poll_new_media_enabled else "off", cfg.poll_new_media_interval_minutes)
 
     # Same belt-and-braces note as above — enable/disable is also checked live inside
     # library_poll.poll_library_for_new_media(), but the interval needs a fresh trigger here.

@@ -159,10 +159,27 @@ export interface LibraryEntry {
   seasons: SeasonEntry[] | null
 }
 
+export interface SeriesEpisodes {
+  title: string
+  seasons: {
+    season: string
+    episodes: {
+      video_path: string
+      name: string
+      season_episode: string | null
+      has_subtitle: boolean
+      embedded_langs: string[]
+      subtitles: { id: number; subtitle_path: string; lang: string | null; sync_status: string | null; correctness_flag: string | null; last_processed: string | null }[]
+    }[]
+  }[]
+}
+
 export interface LibraryResponse {
   items: LibraryEntry[]
   total: number
   last_scanned_at: string | null
+  // Only when Bazarr is connected: how many library videos Bazarr recognised.
+  bazarr_match?: { videos: number; matched: number }
   // Only present on the POST /library/rescan response ("Detect now" button) -- not on a plain GET.
   pairs_found?: number
   missing_found?: number

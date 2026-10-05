@@ -369,13 +369,13 @@ function WhatRunsTable({ general, sync, correctness, generate }: ReturnType<type
     },
     {
       key: 'lineorder', name: 'Line-order check',
-      tip: 'Catches two-line entries in the wrong order. Auto-fixes if the correctness check is on too; otherwise just flags likely cases.',
+      tip: 'Always notes two-line entries that look swapped. With this on, a file with many swapped lines is flagged "fetch a fresh subtitle". Nothing is rewritten.',
       manual: s.line_order_enabled, setManual: (v: boolean) => sync.setData({ ...s, line_order_enabled: v }),
       auto: g.auto_scan_line_order_enabled, setAuto: (v: boolean) => general.setData({ ...g, auto_scan_line_order_enabled: v }),
       action: (
         <span style={{ display: 'flex', gap: 7, alignItems: 'center' }}>
-          <span className="text-dim">fixed in place</span>
-          {tipBtn('fixed', 'fixed in place', 'A confirmed swap is just swapped back -- it is never a reason to throw the file away and fetch another release. A real content problem is caught by the correctness check instead, which has its own action.')}
+          <span className="text-dim">flag only</span>
+          {tipBtn('fixed', 'flag only', 'Swapped lines are never rewritten. Many of them make the file SUSPECT (action as set above); a few are only noted.')}
         </span>
       ),
     },
@@ -1470,7 +1470,7 @@ function SchedulingTab() {
           tip="Scans an item as soon as Bazarr's satisfied it (needs a URL + API key on Settings → Bazarr). What the scan does is set under Automation → What runs."
         />
         {data.poll_new_media_enabled && (
-          <Field label="Check every (minutes)" tip="How often to poll Bazarr's wanted-subtitles lists.">
+          <Field label="Check every (minutes)" tip="How often to poll Bazarr's wanted-subtitles lists. While Verifyarr waits for a replacement it asked Bazarr for, it checks every 3 minutes instead.">
             <input type="number" min={1} value={data.poll_new_media_interval_minutes} onChange={(e) => setData({ ...data, poll_new_media_interval_minutes: Number(e.target.value) })} style={{ maxWidth: 120 }} />
           </Field>
         )}

@@ -116,12 +116,12 @@ export default function Dashboard() {
                 ? 'Verifyarr is listening to each movie and episode and checking every subtitle against it. The dashboard fills in when the scan finishes. You can close this page; the scan keeps running.'
                 : runs.total > 0
                   ? 'The scan is done but found no video files to check. Make sure the media folders in Settings point at your movies and series, then scan again.'
-                  : "Verifyarr hasn't checked your library yet. The first scan listens to each movie and episode and checks every subtitle against it. On a small server this can take a few hours; you can keep using Verifyarr meanwhile."}
+                  : "Verifyarr hasn't checked your library yet. Press Scan library when you're ready; the first scan listens to each movie and episode and checks every subtitle against it. On a small server this can take a few hours; you can keep using Verifyarr meanwhile."}
             </p>
             {firstRun && running && (
               <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 16 }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13 }}>
-                  <span>{running.files_total ? `${running.files_processed} of ${running.files_total} files checked` : `${running.files_processed} files checked`}</span>
+                  <span>{running.files_total ? `${running.files_processed} of ${running.files_total} files checked` : 'Finding files to check…'}</span>
                   {pct !== null && <span style={{ color: 'var(--accent)', fontWeight: 600 }}>{pct}%</span>}
                 </div>
                 {pct !== null && (
@@ -240,7 +240,7 @@ export default function Dashboard() {
                 )}
                 <div style={{ fontSize: 13 }}>
                   {jobRunning
-                    ? `${job.files_processed}${job.files_total ? ` of ${job.files_total}` : ''} files · ${job.files_changed} changed · ${job.files_suspect} flagged`
+                    ? `${job.files_total ? `${job.files_processed} of ${job.files_total} files` : 'Finding files…'} · ${job.files_changed} changed · ${job.files_suspect} flagged`
                     : `${job.files_processed} files · ${job.files_changed} changed · ${job.files_suspect} flagged · ${job.files_error} errors`}
                 </div>
                 <div style={{ marginTop: 'auto', paddingTop: 12 }}>

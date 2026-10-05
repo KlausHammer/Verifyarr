@@ -76,7 +76,21 @@ def _sxxeyy(name: str) -> Optional[str]:
     return f"S{int(m.group(1)):02d}E{int(m.group(2)):02d}" if m else None
 
 
-def infer_title_and_episode(video_path: Path, media_root: Optional[Path] = None) -> tuple[Optional[str], Optional[str]]:
+def _no_episode_folder(video_path: Path, media_root: Optional[Path], series: bool) -> Path:
+    """The folder that names a video with no SxxEyy. In a series folder everything under a
+    show's folder belongs to that show (extras, discs, featurettes), so a video nested below
+    the top-level folder takes that folder's name. Movies keep their own folder."""
+    folder = video_path.parent
+    if not series or media_root is None:
+        return folder
+    try:
+        parts = folder.relative_to(media_root).parts
+    except ValueError:
+        return folder
+    return media_root / parts[0] if len(parts) >= 2 else folder
+
+
+def infer_title_and_episode(video_path: Path, media_root: Optional[Path] = None, series: bool = False) -> tuple[Optional[str], Optional[str]]:
     """(season_episode, title) best-effort — (None, folder name) when there's no SxxEyy
     pattern in the filename (typically a movie). Otherwise 'S02E01' plus a title PREFERRING the
     folder structure over the filename: a release's own filename often carries site/group junk
@@ -93,7 +107,7 @@ def infer_title_and_episode(video_path: Path, media_root: Optional[Path] = None)
     all — see build_library_video_rows) and still carry raw release-group junk itself."""
     m = SXXEYY_RE.search(video_path.name)
     if not m:
-        return None, _normalize_title_if_junky(video_path.parent.name)
+        return None, _normalize_title_if_junky(_no_episode_folder(video_path, media_root, series).name)
     se = f"S{int(m.group(1)):02d}E{int(m.group(2)):02d}"
 
     parent = video_path.parent
@@ -108,10 +122,10 @@ def infer_title_and_episode(video_path: Path, media_root: Optional[Path] = None)
     return se, _normalize_title_if_junky(title or None)
 
 
-def target_label(video_path: Path, media_root: Optional[Path] = None) -> str:
+def target_label(video_path: Path, media_root: Optional[Path] = None, series: bool = False) -> str:
     """Human-readable "what got scanned" label for a single-file run's Activity entry, e.g.
     'Community S03E02' for an episode or just the movie's folder name for a movie."""
-    se, title = infer_title_and_episode(video_path, media_root)
+    se, title = infer_title_and_episode(video_path, media_root, series)
     t = title or video_path.parent.name
     return f"{t} {se}" if se else t
 
@@ -385,7 +399,7 @@ def build_library_video_rows(cfg: Config, pairs: list[tuple[Path, Path, Optional
     videos_with_subtitle = {video for video, _sub, _lang in pairs}
     rows = []
     for video in all_videos:
-        se, title = infer_title_and_episode(video, cfg.media_root_for(video))
+        se, title = infer_title_and_episode(video, cfg.media_root_for(video), cfg.kind_for(video) == "series")
         title = bazarr_titles.get(video) or title
         has_subtitle = video in videos_with_subtitle
         if not has_subtitle:
@@ -402,6 +416,7 @@ def build_library_video_rows(cfg: Config, pairs: list[tuple[Path, Path, Optional
         # that recorded an actual check, never one that skipped it for this reason.
         embedded_langs = embedded_cache.get(video)
         ids = bazarr_ids.get(video) or {}
+        se = ids.get("season_episode") or se  # Bazarr's numbering wins, like its title
         rows.append({
             "video_path": str(video),
             "media_root": str(cfg.media_root_for(video)),

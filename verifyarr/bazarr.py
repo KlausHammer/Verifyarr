@@ -117,6 +117,14 @@ class LazyHistoryIndex:
         return self._index.get(key, default)
 
 
+def _season_episode(ep: dict) -> Optional[str]:
+    """Bazarr's own season/episode numbers as "S03E02" (None when it has none)."""
+    try:
+        return f"S{int(ep['season']):02d}E{int(ep['episode']):02d}"
+    except (KeyError, TypeError, ValueError):
+        return None
+
+
 def bazarr_library_info(cfg: Config, ids_out: Optional[dict] = None) -> tuple[dict[Path, set[str]], dict[Path, str]]:
     """One bulk read of Bazarr's /movies, /series, /episodes, returning:
       - {video_path: {lang, ...}} — every embedded subtitle track Bazarr itself already knows
@@ -194,7 +202,8 @@ def bazarr_library_info(cfg: Config, ids_out: Optional[dict] = None) -> tuple[di
         _absorb(response_items(episodes_resp),
                 title_for=lambda ep: series_titles.get(ep.get("sonarrSeriesId")),
                 ids_for=lambda ep: {"kind": "episode", "series_id": ep.get("sonarrSeriesId"),
-                                     "episode_id": ep.get("sonarrEpisodeId"), "radarr_id": None})
+                                     "episode_id": ep.get("sonarrEpisodeId"), "radarr_id": None,
+                                     "season_episode": _season_episode(ep)})
 
     return embedded, titles
 

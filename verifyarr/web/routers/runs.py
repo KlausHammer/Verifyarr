@@ -37,6 +37,7 @@ class StartRunBody(BaseModel):
     kind: Optional[str] = None  # "movie" | "series"
     title: Optional[str] = None
     season: Optional[str] = None  # e.g. "S03" — series only
+    episode: Optional[str] = None  # e.g. "S03E02" — series only
 
 
 @router.get("")
@@ -55,7 +56,8 @@ def start_run(body: StartRunBody, user=Depends(require_auth), conn=Depends(get_c
     try:
         if body.mode == "sweep":
             run_id = jobs.runner.start_sweep("manual_ui", force=body.force, dry_run_override=body.dry_run,
-                                              kind=body.kind, title=body.title, season=body.season)
+                                              kind=body.kind, title=body.title, season=body.season,
+                                              episode=body.episode)
         elif body.mode == "single":
             if not body.video or not body.subtitle:
                 raise HTTPException(status_code=400, detail="video and subtitle are required for mode=single")

@@ -1,7 +1,7 @@
 """Detects two-line subtitle entries where the two lines are in the wrong (reversed) reading
-order, e.g. line 2 is actually spoken before line 1. Auto-fixing/flagging is off unless
-sync.line_order_enabled is on (see Settings -> Automation's "What runs" table), but the two
-layers below actually run — and get cached — every time a correctness check does, whether or not
+order, e.g. line 2 is actually spoken before line 1. Report only, nothing is rewritten: a note
+about likely swaps is always added; with sync.line_order_enabled on, a file with many swapped
+lines is also flagged SUSPECT ("fetch a fresh subtitle"). The two layers below run — and get cached — every time a correctness check does, whether or not
 line-order is on (see pipeline.py): there's no reason not to, since layer 2 rides on the same
 Whisper clips correctness is already sending.
 

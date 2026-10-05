@@ -9,6 +9,7 @@ import Wizard from './routes/Wizard'
 import MediaLibrary from './routes/MediaLibrary'
 import Files from './routes/Files'
 import FileDetail from './routes/FileDetail'
+import SeriesDetail from './routes/SeriesDetail'
 import Activity from './routes/Activity'
 import ActivityDetail from './routes/ActivityDetail'
 import Stats from './routes/Stats'
@@ -51,6 +52,7 @@ export default function App() {
           <Route index element={<Dashboard />} />
           <Route path="movies" element={<MediaLibrary kind="movie" title="Movies" folderHint="Movies" />} />
           <Route path="series" element={<MediaLibrary kind="series" title="Series" folderHint="Series" />} />
+          <Route path="series/:title" element={<SeriesDetail />} />
           <Route path="files" element={<Files />} />
           <Route path="files/:id" element={<FileDetail />} />
           <Route path="activity" element={<Activity />} />

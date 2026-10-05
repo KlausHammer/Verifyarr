@@ -39,7 +39,7 @@ def _run_target_meta(cfg: Config, video_p: Path) -> dict:
     cmd_generate so the manual paths label runs exactly like the Files-page button."""
     from verifyarr.discovery import target_label
     return {"target_kind": cfg.kind_for(video_p),
-            "target_title": target_label(video_p, cfg.media_root_for(video_p))}
+            "target_title": target_label(video_p, cfg.media_root_for(video_p), cfg.kind_for(video_p) == "series")}
 
 
 def _execute_command(cfg: Config, conn, *, trigger: str, run_kind: str, force: bool = False,

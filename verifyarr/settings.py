@@ -305,7 +305,7 @@ class Config:
     sweep_cron: str = "0 4 * * 0"
     run_on_start: bool = False
     poll_new_media_enabled: bool = True
-    poll_new_media_interval_minutes: int = 3
+    poll_new_media_interval_minutes: int = 60  # idle; 3 min while a replacement is pending
     # Separate from poll_new_media_* above (that one is Bazarr's wanted-lists poll, not a
     # filesystem check) -- a periodic, discovery-only refresh of the Library page's cache (no
     # sync/correctness/API calls, just the same directory walk a sweep already does at the start
@@ -314,12 +314,9 @@ class Config:
     poll_library_enabled: bool = True
     poll_library_interval_minutes: int = 720  # 12 hours
 
-    # ON by default — see fileops.backup_subtitle. Gates EVERY backup_subtitle call (both the
-    # ordinary sync-fix and the line-order auto-fix), not a separate switch per feature — see
-    # pipeline.py. On rather than off because this app rewrites subtitles in place in three
-    # different places, and the line-order auto-fix runs at ~98% precision -- measured, so ~2% of
-    # its swaps are wrong, and without this there is nothing to undo them with. A failed backup
-    # never blocks the fix itself (pipeline._backup_best_effort).
+    # ON by default — see fileops.backup_subtitle. Gates every backup_subtitle call (sync fixes
+    # rewrite subtitles in place; without a backup there is nothing to undo them with). A failed
+    # backup never blocks the fix itself (pipeline._backup_best_effort).
     backup_originals: bool = True
 
     # A manual Scan (and CLI calls) always use sync_enabled/enable_correctness_check/
@@ -333,10 +330,7 @@ class Config:
     auto_scan_line_order_enabled: bool = False
 
     # What to do with a file the CORRECTNESS check flags SUSPECT (off | quarantine | blacklist |
-    # remediate). There is deliberately no line-order equivalent: a confirmed swap is a safe
-    # mechanical per-line fix (measured precision 0.98 against an independent reference), so
-    # "the lines are out of order" is never on its own a reason to throw the file away and fetch
-    # another release. A real content problem is caught by the correctness score instead.
+    # remediate). Many swapped lines (line-order switch on) also count as SUSPECT and use this action.
     correctness_auto_action: str = "off"
     # Missing lines (a stretch of speech with no cues) are reported as SUSPECT with that reason, but only
     # trigger the auto action above when this is on: in practice most are songs, background chatter or
@@ -791,7 +785,7 @@ SETTING_DEFS: dict = {
     # remediate need, and this is a strictly better "is it ready" signal than anything Sonarr/
     # Radarr's own API gave us).
     "scheduling.poll_new_media_enabled":           ("scheduling", "bool", True),
-    "scheduling.poll_new_media_interval_minutes":  ("scheduling", "int", 3),
+    "scheduling.poll_new_media_interval_minutes":  ("scheduling", "int", 60),
     "scheduling.poll_library_enabled":             ("scheduling", "bool", True),
     "scheduling.poll_library_interval_minutes":    ("scheduling", "int", 720),  # 12 hours
 }

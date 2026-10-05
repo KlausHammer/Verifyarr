@@ -152,7 +152,9 @@ export default function ActivityDetail() {
             </div>
             <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, marginBottom: 6 }}>
               <span>
-                {running
+                {running && !run.files_total
+                  ? 'Finding files to check…'
+                  : running
                   ? `${run.files_processed}${run.files_total ? ` of ${run.files_total}` : ''} files${leftSec !== null ? ` · about ${formatDuration(leftSec)} left` : ''}`
                   : `${run.files_processed}${run.files_total ? ` of ${run.files_total}` : ''} files processed`}
               </span>

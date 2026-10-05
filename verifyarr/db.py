@@ -330,6 +330,7 @@ _ADDED_COLUMNS = (
     ("video_full_transcript_cache", "stt_model", "TEXT"),
     ("video_full_transcript_cache", "video_mtime", "REAL"),
     ("video_full_transcript_cache", "video_size", "INTEGER"),
+    ("blacklist_actions", "resolved_at", "TEXT"),
     ("video_transcript_cache", "stt_provider", "TEXT"),
     ("video_transcript_cache", "stt_model", "TEXT"),
 )
@@ -480,9 +481,11 @@ def should_skip(conn: sqlite3.Connection, video_path: Path, subtitle_path: Path,
     return True
 
 
-def _infer_title_and_episode(video_path: Path, media_root: Optional[Path] = None):
+def _infer_title_and_episode(conn, video_path: Path, media_root: Optional[Path] = None):
     from verifyarr.discovery import infer_title_and_episode
-    return infer_title_and_episode(video_path, media_root)
+    series_folder = get_setting_raw(conn, "general.series_folder")
+    series = bool(series_folder and media_root and str(media_root) == series_folder.rstrip("/"))
+    return infer_title_and_episode(video_path, media_root, series)
 
 
 def update_state(conn: sqlite3.Connection, video_path: Path, subtitle_path: Path, row: dict,
@@ -505,7 +508,7 @@ def update_state(conn: sqlite3.Connection, video_path: Path, subtitle_path: Path
     except OSError:
         subtitle_mtime = subtitle_size = None
 
-    season_episode, title = _infer_title_and_episode(video_path, media_root)
+    season_episode, title = _infer_title_and_episode(conn, video_path, media_root)
     conn.execute("""
         INSERT INTO files (subtitle_path, video_path, lang, media_root, season_episode,
                             series_or_movie_title, video_mtime, video_size, subtitle_mtime,
@@ -568,7 +571,7 @@ def mark_missing(conn: sqlite3.Connection, video_path: Path, lang: str,
         video_mtime, video_size = vstat.st_mtime, vstat.st_size
     except OSError:
         video_mtime = video_size = None
-    season_episode, title = _infer_title_and_episode(video_path, media_root)
+    season_episode, title = _infer_title_and_episode(conn, video_path, media_root)
     conn.execute("""
         INSERT INTO files (subtitle_path, video_path, lang, media_root, season_episode,
                             series_or_movie_title, video_mtime, video_size, last_processed, sync_status)
@@ -654,7 +657,7 @@ def list_files(conn: sqlite3.Connection, q: Optional[str] = None, flag: Optional
         params += [f"%{q}%", f"%{q}%", f"%{q}%"]
     if title:
         # Exact title (the Library page's per-title link) — unlike ?q=, "It" doesn't match all.
-        where.append("series_or_movie_title = ?")
+        where.append("series_or_movie_title = ? COLLATE NOCASE")
         params.append(title)
     if flag == "attention":
         # Everything needing attention: flagged files (same population as attention_counts,
@@ -969,6 +972,19 @@ def add_blacklist_action(conn: sqlite3.Connection, *, subtitle_path=None, video_
     conn.commit()
 
 
+def pending_replacements(conn: sqlite3.Connection, max_hours: float) -> list[sqlite3.Row]:
+    """Blacklist actions still waiting for Bazarr's replacement (not resolved, newer than max_hours)."""
+    cutoff = (datetime.now(timezone.utc) - timedelta(hours=max_hours)).isoformat()
+    return conn.execute("SELECT id, kind, episode_id, radarr_id, language, blacklisted_at FROM blacklist_actions "
+                        "WHERE resolved_at IS NULL AND blacklisted_at > ?", (cutoff,)).fetchall()
+
+
+def resolve_replacements(conn: sqlite3.Connection, ids: list[int]) -> None:
+    conn.executemany("UPDATE blacklist_actions SET resolved_at = ? WHERE id = ?",
+                     [(datetime.now(timezone.utc).isoformat(), i) for i in ids])
+    conn.commit()
+
+
 # --- library cache (see library_videos above) -----------------------------------------------------
 
 def replace_library_videos(conn: sqlite3.Connection, rows: list[dict]) -> None:
@@ -1060,7 +1076,7 @@ def _scope_where(kind: Optional[str], title: Optional[str], season: Optional[str
         clauses.append("kind = ?")
         params.append(kind)
     if title:
-        clauses.append("title = ?")
+        clauses.append("title = ? COLLATE NOCASE")
         params.append(title)
     if season:
         clauses.append("substr(season_episode, 1, 3) = ?")  # e.g. "S03E02" -> "S03", see library.py
