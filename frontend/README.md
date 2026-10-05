@@ -3,7 +3,7 @@
 React + TypeScript + Vite SPA for verifyarr's webapp. See the main project's `../README.md`
 for what it does.
 
-- `npm run dev` — local development (proxies `/api` to `http://127.0.0.1:6868`, see `vite.config.ts`)
+- `npm run dev` — local development (proxies `/api` to `http://127.0.0.1:7979`, see `vite.config.ts`)
 - `npm run build` — builds to `dist/`, which `Dockerfile` copies into `verifyarr/web/static/`
   during the container build. FastAPI (`verifyarr/web/app.py`) serves it directly, including
   client-side-routing fallback.

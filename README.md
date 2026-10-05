@@ -44,7 +44,7 @@ docker compose up -d
 - Whisper models of your own (optional): uncomment the `/models:ro` mount and set Settings →
   Correctness → "Model file path" to `/models/ggml-<name>.bin`.
 
-Open `http://your-server:6868`, create an admin password, then go through Settings: General
+Open `http://your-server:7979`, create an admin password, then go through Settings: General
 (Root Folders), Correctness (local Whisper works out of the box, no key needed), Bazarr (URL + API key),
 Automation, Scheduling.
 

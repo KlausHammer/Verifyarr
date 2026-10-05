@@ -223,31 +223,29 @@ class WriteNewSubtitleOwnershipTests(unittest.TestCase):
 
 
 class PortFromEnvTests(unittest.TestCase):
-    def test_default_and_valid(self):
-        from verifyarr.web.__main__ import port_from_env
+    def _with_port(self, value):
         old = os.environ.get("PORT")
         try:
-            os.environ.pop("PORT", None)
-            self.assertEqual(port_from_env(), 6868)
-            os.environ["PORT"] = "9999"
-            self.assertEqual(port_from_env(), 9999)
+            if value is None:
+                os.environ.pop("PORT", None)
+            else:
+                os.environ["PORT"] = value
+            from verifyarr.web.__main__ import port_from_env
+            return port_from_env()
         finally:
             if old is None:
                 os.environ.pop("PORT", None)
             else:
                 os.environ["PORT"] = old
 
-    def test_invalid_falls_back_to_default(self):
-        from verifyarr.web.__main__ import port_from_env
-        old = os.environ.get("PORT")
-        try:
-            os.environ["PORT"] = "notaport"
-            self.assertEqual(port_from_env(), 6868)
-        finally:
-            if old is None:
-                os.environ.pop("PORT", None)
-            else:
-                os.environ["PORT"] = old
+    def test_valid(self):
+        self.assertEqual(self._with_port("9999"), 9999)
+
+    def test_missing_or_invalid_stops(self):
+        for bad in (None, "", "notaport", "0", "70000"):
+            with self.assertRaises(SystemExit):
+                self._with_port(bad)
+
 
 
 class LogLevelParsingTests(unittest.TestCase):

@@ -3,43 +3,30 @@ services:
     build: https://github.com/KlausHammer/Verifyarr.git
     container_name: verifyarr
     restart: unless-stopped
-    # Lowest CPU priority vs other containers (default is 1024). Soft weight, not a cap.
-    cpu_shares: 128
+    cpu_shares: 128  # low priority vs other containers
     environment:
-      # Your ids on the host (run `id -u` / `id -g`): files Verifyarr writes get
-      # these owners instead of root, so Sonarr/Radarr/Bazarr can manage them.
-      PUID: 1000
+      PUID: 1000  # `id -u` / `id -g` on the host
       PGID: 1000
-      # Permission mask for new files (022 = rw-r--r--). Must stay quoted (octal).
       UMASK: "022"
-      # Server timezone for scheduled scans; use your own, e.g. Europe/Berlin.
       TZ: Europe/Copenhagen
-      # Webapp port inside the container; must match the right side of ports:.
-      PORT: 6868
-      # Local Whisper model (Settings -> Correctness -> "Use local Whisper"). tiny.en ships
-      # pre-baked and is what detection is calibrated and tested on (with VAD). Others download
-      # once into ./data on first use, untested. Non-English audio needs a multilingual model.
-      WHISPER_MODEL: tiny.en
+      PORT: 7979  # same as the right side of ports:
+      WHISPER_MODEL: tiny.en  # others download on first use; non-English audio needs a multilingual model
     ports:
-      - "6868:6868"
+      - "7979:7979"
     volumes:
-      # Use the SAME paths Sonarr/Radarr see, so Bazarr's hook passes paths that exist here.
+      # Same paths as Sonarr/Radarr see
       - /path/to/media/movies:/media/movies
       - /path/to/media/tv:/media/tv
-      # Keep on a LOCAL disk: SQLite locks break on NFS/SMB shares.
+      # Local disk only (SQLite breaks on NFS/SMB)
       - ./data:/data
-      # Optional: your own whisper.cpp models, read-only. Then set Settings ->
-      # Correctness -> "Model file path" to /models/ggml-<name>.bin.
-      # - /path/to/whisper-models:/models:ro
-    # Uncomment for iGPU/GPU access (local Whisper, Settings -> Correctness). Without it: CPU-only.
+      # - /path/to/whisper-models:/models:ro  # own whisper.cpp models
+    # GPU for local Whisper (optional):
     # devices:
     #   - /dev/dri:/dev/dri
     # group_add:
-    #   - "104"   # your host's `getent group render` GID
+    #   - "104"  # host's `getent group render`
     logging:
       driver: json-file
       options:
         max-size: "10m"
         max-file: "3"
-
-    # In a VM (Proxmox etc.): set CPU type to "host", or AVX/AVX2 get hidden and CPU is much slower.

@@ -9,23 +9,18 @@ import uvicorn
 from verifyarr import log
 from verifyarr.settings import DATA_DIR, DEFAULT_BACKUP_DIR, DEFAULT_REPORT_DIR, DEFAULT_QUARANTINE_DIR
 
-DEFAULT_PORT = 6868
-
-
 def port_from_env() -> int:
-    """The webapp's listen port: $PORT, or 6868. Garbage falls back to 6868 with a
-    warning instead of crashing the container on a typo."""
+    """The webapp's listen port, from $PORT (set in docker-compose). No built-in default:
+    a missing or invalid value stops the container with a clear message."""
     raw = (os.environ.get("PORT") or "").strip()
-    if not raw:
-        return DEFAULT_PORT
     try:
         port = int(raw)
     except ValueError:
         port = -1
-    if 1 <= port <= 65535:
-        return port
-    log.warning("Ignoring invalid PORT=%r, listening on %d instead", raw, DEFAULT_PORT)
-    return DEFAULT_PORT
+    if not 1 <= port <= 65535:
+        raise SystemExit(f"PORT must be set to a port number (1-65535), got {raw!r}. "
+                         "Set it in docker-compose.yml, same as the right side of ports:.")
+    return port
 
 
 def main() -> None:
