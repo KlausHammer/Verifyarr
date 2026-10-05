@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { api, ApiError } from '../api/client'
-import type { GeneralSettings, LibraryEntry, LibraryResponse } from '../api/types'
+import type { BazarrSettings, GeneralSettings, LibraryEntry, LibraryResponse, PathCheck } from '../api/types'
 import ConfirmDialog from '../components/ConfirmDialog'
 import { ErrorState, LoadingState } from '../components/PageState'
 import { runPct } from '../lib/progress'
@@ -32,6 +32,7 @@ type SortKey = (typeof HEADS)[number]['key']
 
 export default function MediaLibrary({ kind, title, folderHint }: { kind: 'movie' | 'series'; title: string; folderHint: string }) {
   const [items, setItems] = useState<LibraryEntry[] | null>(null)
+  const [pathCheck, setPathCheck] = useState<PathCheck | null>(null)
   const [match, setMatch] = useState<{ videos: number; matched: number } | null>(null)
   const [failed, setFailed] = useState(false)
   const [folder, setFolder] = useState('')
@@ -84,6 +85,26 @@ export default function MediaLibrary({ kind, title, folderHint }: { kind: 'movie
       })
     } catch (err) {
       setBusyKey(null)
+      toast(err instanceof ApiError ? err.message : String(err), { kind: 'bad' })
+    }
+  }
+
+  async function checkPaths() {
+    try {
+      setPathCheck(await api.get<PathCheck>('/settings/bazarr/path-check'))
+    } catch (err) {
+      toast(err instanceof ApiError ? err.message : String(err), { kind: 'bad' })
+    }
+  }
+
+  async function addMapping(local: string, bazarr: string) {
+    try {
+      const cur = await api.get<BazarrSettings>('/settings/bazarr')
+      const pairs = [...cur.path_map.filter((p) => p[1] !== bazarr), [local, bazarr] as [string, string]]
+      await api.put('/settings/bazarr', { values: { path_map: pairs } })
+      setPathCheck(null)
+      toast('Mapping added. Run Detect now (Settings → General) to refresh the library.', { kind: 'info' })
+    } catch (err) {
       toast(err instanceof ApiError ? err.message : String(err), { kind: 'bad' })
     }
   }
@@ -157,6 +178,18 @@ export default function MediaLibrary({ kind, title, folderHint }: { kind: 'movie
         {match && match.videos > 0 && match.matched / match.videos < 0.5 && (
           <div role="alert" className="error-banner" style={{ marginBottom: 12 }}>
             Bazarr recognises only {match.matched} of {match.videos} videos. Titles and episode numbers then come from the file names. Check the path mapping under Settings → Bazarr.
+            {' '}<button className="btn btn-sm" onClick={checkPaths}>Check paths</button>
+            {pathCheck && pathCheck.samples.map((s) => (
+              <div key={s.kind} style={{ marginTop: 8, fontSize: 12.5 }}>
+                <div>{s.kind === 'movie' ? 'Movie' : 'Episode'} in Bazarr: <code>{s.bazarr_path}</code></div>
+                <div>{s.library_path ? <>Same file here: <code>{s.library_path}</code></> : 'Not found in this library under that name.'}</div>
+                {s.suggestion && (
+                  <button className="btn btn-sm" style={{ marginTop: 4 }} onClick={() => addMapping(s.suggestion!.local, s.suggestion!.bazarr)}>
+                    Add mapping {s.suggestion.local} ⇄ {s.suggestion.bazarr}
+                  </button>
+                )}
+              </div>
+            ))}
           </div>
         )}
         {runAll && (

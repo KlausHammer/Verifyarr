@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import tempfile
 import time
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Optional
 
 import requests
@@ -24,6 +24,20 @@ def bazarr_map_path(cfg: Config, local_path: Path) -> str:
         if p.startswith(local_prefix):
             return bazarr_prefix + p[len(local_prefix):]
     return p
+
+
+def suggest_mapping(local: str, theirs: str) -> Optional[dict]:
+    """The prefix pair that turns Bazarr's path into ours, from two paths to the same file: strip
+    the trailing folders/file name they share."""
+    a, c = PurePosixPath(local).parts, PurePosixPath(theirs).parts
+    n = 0
+    while n < min(len(a), len(c)) and a[-1 - n] == c[-1 - n]:
+        n += 1
+    if n == 0 or (n == len(a) and n == len(c)):
+        return None
+    if n == len(c) - 1:  # Bazarr's prefix would be just "/": keep the mount folder both sides share
+        n -= 1
+    return {"local": str(PurePosixPath(*a[:len(a) - n])), "bazarr": str(PurePosixPath(*c[:len(c) - n]))}
 
 
 def bazarr_to_local_path(cfg: Config, bazarr_path: str) -> Path:
@@ -125,7 +139,23 @@ def _season_episode(ep: dict) -> Optional[str]:
         return None
 
 
-def bazarr_library_info(cfg: Config, ids_out: Optional[dict] = None) -> tuple[dict[Path, set[str]], dict[Path, str]]:
+def _save_learned_mapping(cfg: Config, learned: list[tuple[str, str]]) -> None:
+    """Adds mappings found while matching Bazarr's paths to settings (bazarr.path_map)."""
+    new = [p for p in learned if p not in [tuple(x) for x in cfg.path_map]]
+    if not new:
+        return
+    from verifyarr import db, settings as settings_mod
+    conn = db.connect()
+    try:
+        settings_mod.set_settings_group(conn, "bazarr", {"path_map": [list(p) for p in cfg.path_map] + [list(p) for p in new]})
+    finally:
+        conn.close()
+    for local, theirs in new:
+        log.info("Bazarr sees the media under %s, we see it under %s: path mapping saved automatically", theirs, local)
+
+
+def bazarr_library_info(cfg: Config, ids_out: Optional[dict] = None,
+                        local_videos: Optional[list] = None) -> tuple[dict[Path, set[str]], dict[Path, str]]:
     """One bulk read of Bazarr's /movies, /series, /episodes, returning:
       - {video_path: {lang, ...}} — every embedded subtitle track Bazarr itself already knows
         about (its own "Embedded Subtitles" provider, if enabled under its Settings ->
@@ -159,6 +189,29 @@ def bazarr_library_info(cfg: Config, ids_out: Optional[dict] = None) -> tuple[di
     if not _bazarr_configured(cfg):
         return embedded, titles
 
+    # With the library's own videos at hand, Bazarr's paths are matched to ours by the folders
+    # and file name they share; the path mapping is worked out (and saved) from that, so nobody
+    # has to type it.
+    local_set = set(local_videos) if local_videos else None
+    by_tail = {v.parts[-3:]: v for v in local_set} if local_set else {}
+    learned: list[tuple[str, str]] = []
+
+    def _to_local(path: str) -> Path:
+        p = bazarr_to_local_path(cfg, path)
+        if local_set is None or p in local_set:
+            return p
+        for lp, bp in learned:
+            q = Path(lp + path[len(bp):]) if path.startswith(bp) else None
+            if q is not None and q in local_set:
+                return q
+        match = by_tail.get(PurePosixPath(path).parts[-3:])
+        if match is not None:
+            pair = suggest_mapping(str(match), path)
+            if pair and (pair["local"], pair["bazarr"]) not in learned:
+                learned.append((pair["local"], pair["bazarr"]))
+            return match
+        return p
+
     def _embedded_langs(item: dict) -> set[str]:
         return {sub["code2"] for sub in (item.get("subtitles") or [])
                 if sub.get("embedded_track_id") is not None and sub.get("code2")}
@@ -168,7 +221,7 @@ def bazarr_library_info(cfg: Config, ids_out: Optional[dict] = None) -> tuple[di
             path = item.get("path")
             if not path:
                 continue
-            local = bazarr_to_local_path(cfg, path)
+            local = _to_local(path)
             langs = _embedded_langs(item)
             if langs:
                 embedded.setdefault(local, set()).update(langs)
@@ -205,6 +258,7 @@ def bazarr_library_info(cfg: Config, ids_out: Optional[dict] = None) -> tuple[di
                                      "episode_id": ep.get("sonarrEpisodeId"), "radarr_id": None,
                                      "season_episode": _season_episode(ep)})
 
+    _save_learned_mapping(cfg, learned)
     return embedded, titles
 
 

@@ -1440,9 +1440,10 @@ function SchedulingTab() {
             <option value="daily">Every day</option>
             <option value="weekly">Every week</option>
             <option value="advanced">Advanced (raw cron)</option>
+            <option value="never">Never (only when I press Scan)</option>
           </select>
         </Field>
-        {schedule.mode !== 'advanced' && (
+        {schedule.mode !== 'advanced' && schedule.mode !== 'never' && (
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, maxWidth: 540 }}>
             {schedule.mode === 'weekly' && (
               <Field label="On">

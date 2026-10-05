@@ -92,6 +92,8 @@ def next_sweep_at(cron_expr: str, now=None) -> Optional[str]:
     """Next sweep fire time as ISO ("Next scan"), from the cron alone. Carries the server's
     UTC offset so the browser renders it in the viewer's own zone. None if invalid."""
     from datetime import timezone
+    if not (cron_expr or "").strip():
+        return None
     try:
         trigger = _cron_to_trigger(cron_expr)
     except Exception:
@@ -135,14 +137,19 @@ def reschedule() -> None:
     finally:
         conn.close()
 
-    try:
-        trigger = _cron_to_trigger(cfg.sweep_cron)
-    except Exception as e:
-        log.warning("Invalid cron expression in schedule.cron (%r): %s — schedule not changed", cfg.sweep_cron, e)
+    if not cfg.sweep_cron.strip():  # empty = no scheduled sweep
+        if _scheduler.get_job(_JOB_ID):
+            _scheduler.remove_job(_JOB_ID)
+        log.info("Scheduled sweep: off")
     else:
-        _scheduler.add_job(_run_scheduled_sweep, trigger, id=_JOB_ID, replace_existing=True, max_instances=1)
-        log.info("Scheduled sweep set to: %s (server time, %s)", cfg.sweep_cron,
-                 server_timezone_name())
+        try:
+            trigger = _cron_to_trigger(cfg.sweep_cron)
+        except Exception as e:
+            log.warning("Invalid cron expression in schedule.cron (%r): %s — schedule not changed", cfg.sweep_cron, e)
+        else:
+            _scheduler.add_job(_run_scheduled_sweep, trigger, id=_JOB_ID, replace_existing=True, max_instances=1)
+            log.info("Scheduled sweep set to: %s (server time, %s)", cfg.sweep_cron,
+                     server_timezone_name())
 
     # Enable/disable itself is also checked live inside bazarr_poll.poll_wanted_subtitles()
     # (belt and braces), but the INTERVAL can only change here — APScheduler needs a fresh

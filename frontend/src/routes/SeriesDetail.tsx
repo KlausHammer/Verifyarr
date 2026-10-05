@@ -73,21 +73,19 @@ export default function SeriesDetail() {
             {s.episodes.map((e) => {
               const key = e.video_path
               return (
-                <div key={key} style={{ display: 'grid', gridTemplateColumns: '70px minmax(0,1fr) auto 80px', gap: 12, alignItems: 'center', padding: '7px 14px', borderBottom: '1px solid var(--border)' }}>
-                  <div style={{ fontWeight: 600, fontSize: 13 }}>{e.season_episode ?? '—'}</div>
-                  <div style={{ minWidth: 0 }}>
-                    <div style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: 13.5 }} title={e.name}>{e.name}</div>
+                <div key={key} style={{ display: 'grid', gridTemplateColumns: '64px minmax(0,1fr) auto 64px', gap: 10, alignItems: 'center', padding: '3px 14px', borderBottom: '1px solid var(--border)', minHeight: 30 }}>
+                  <div style={{ fontWeight: 600, fontSize: 12.5 }}>{e.season_episode ?? '—'}</div>
+                  <div style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: 13 }} title={e.name}>{e.name}</div>
+                  <div style={{ display: 'flex', gap: 10, alignItems: 'center', whiteSpace: 'nowrap' }}>
                     {e.embedded_langs.length > 0 && (
-                      <span className="text-dim" style={{ fontSize: 12.5 }}>Embedded in the video: {e.embedded_langs.join(', ')}</span>
+                      <span className="text-dim" style={{ fontSize: 12 }} title="Subtitle track inside the video">embedded: {e.embedded_langs.join(', ')}</span>
                     )}
                     {e.subtitles.length === 0 && e.embedded_langs.length === 0 && (
-                      <span className="text-dim" style={{ fontSize: 12.5 }}>{e.has_subtitle ? 'Has a subtitle (embedded)' : 'No subtitle'}</span>
+                      <span className="text-dim" style={{ fontSize: 12 }}>{e.has_subtitle ? 'embedded' : 'no subtitle'}</span>
                     )}
-                  </div>
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: 4, alignItems: 'flex-end' }}>
                     {e.subtitles.map((f) => (
                       <button key={f.id} onClick={() => navigate(`/files/${f.id}`)} data-hover
-                        style={{ background: 'none', border: 0, padding: 0, cursor: 'pointer', display: 'flex', gap: 6, alignItems: 'center' }}
+                        style={{ background: 'none', border: 0, padding: 0, cursor: 'pointer', display: 'flex', gap: 5, alignItems: 'center' }}
                         title={f.subtitle_path}>
                         <span className="text-dim" style={{ fontSize: 12 }}>{f.lang ?? '?'}</span>
                         <StatusPill value={f.correctness_flag === 'SUSPECT' ? 'SUSPECT' : f.sync_status} />

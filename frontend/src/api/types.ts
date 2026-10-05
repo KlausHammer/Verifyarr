@@ -176,6 +176,18 @@ export interface SeriesEpisodes {
   }[]
 }
 
+export interface PathCheck {
+  configured: boolean
+  samples: {
+    kind: 'movie' | 'series'
+    bazarr_path: string
+    as_local: string
+    exists: boolean
+    library_path: string | null
+    suggestion: { local: string; bazarr: string } | null
+  }[]
+}
+
 export interface LibraryResponse {
   items: LibraryEntry[]
   total: number

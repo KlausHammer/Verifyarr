@@ -51,5 +51,13 @@ class PollDue(unittest.TestCase):
         self.assertTrue(bazarr_poll._due(self.conn, self.cfg, self.now))
 
 
+
+class NoSchedule(unittest.TestCase):
+    def test_empty_cron_means_no_next_scan(self):
+        from verifyarr import scheduler
+        self.assertIsNone(scheduler.next_sweep_at(""))
+        self.assertIsNone(scheduler.next_sweep_at("  "))
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -343,7 +343,7 @@ def resolve_embedded_cache(cfg: Config, pairs: list[tuple[Path, Path, Optional[s
         from verifyarr.bazarr import bazarr_library_info  # local: keeps bazarr.py's own heavier
         # dependency chain (sync_engine/correctness/subtitles/requests) out of every plain
         # discovery.py import, most of which never touch Bazarr at all.
-        embedded_cache, bazarr_titles = bazarr_library_info(cfg, ids_out=ids_out)
+        embedded_cache, bazarr_titles = bazarr_library_info(cfg, ids_out=ids_out, local_videos=all_videos)
     if extra_cache:
         for video, langs in extra_cache.items():
             embedded_cache.setdefault(video, langs)

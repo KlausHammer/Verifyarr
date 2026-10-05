@@ -18,7 +18,7 @@ interface WizVals {
   mapFrom: string
   mapTo: string
   badAction: 'off' | 'quarantine' | 'blacklist' | 'remediate'
-  schedMode: 'nightly' | 'weekly' | 'keep'
+  schedMode: 'nightly' | 'weekly' | 'keep' | 'never'
   schedTime: string
   schedDay: number
   keepCron: string
@@ -106,7 +106,7 @@ export default function Wizard() {
           mapFrom: fromSettings && firstPair ? (firstPair[1] ?? '') : '',
           mapTo: fromSettings && firstPair ? (firstPair[0] ?? '') : '',
           badAction: c.auto_action,
-          schedMode: sched.mode === 'advanced' ? 'keep' : sched.mode === 'weekly' ? 'weekly' : 'nightly',
+          schedMode: sched.mode === 'advanced' ? 'keep' : sched.mode === 'never' ? 'never' : sched.mode === 'weekly' ? 'weekly' : 'nightly',
           schedTime: sched.time,
           schedDay: sched.dayOfWeek,
           keepCron: s.cron,
@@ -193,9 +193,11 @@ export default function Wizard() {
       if (vals.schedMode !== 'keep') {
         puts.push(api.put('/settings/scheduling', {
           values: {
-            cron: vals.schedMode === 'nightly'
-              ? buildCron({ mode: 'daily', time: vals.schedTime, dayOfWeek: 0 })
-              : buildCron({ mode: 'weekly', time: vals.schedTime, dayOfWeek: vals.schedDay }),
+            cron: vals.schedMode === 'never'
+              ? ''
+              : vals.schedMode === 'nightly'
+                ? buildCron({ mode: 'daily', time: vals.schedTime, dayOfWeek: 0 })
+                : buildCron({ mode: 'weekly', time: vals.schedTime, dayOfWeek: vals.schedDay }),
           },
         }))
       }
@@ -443,6 +445,7 @@ export default function Wizard() {
                 options={[
                   { value: 'nightly', title: 'Every night', desc: 'Checks new and changed files once a day.' },
                   { value: 'weekly', title: 'Every week', desc: 'Checks new and changed files once a week.' },
+                  { value: 'never', title: 'Never', desc: 'No scheduled scan. Library scans run only when you press Scan.' },
                   ...(v.keepCron && parseCron(v.keepCron).mode === 'advanced'
                     ? [{ value: 'keep' as const, title: 'Keep current schedule', desc: `A custom schedule is set (${v.keepCron}); leave it alone.` }]
                     : []),

@@ -863,10 +863,12 @@ def transcribe_full_track(cfg: Config, video_path: Path, tmp_dir: Path, cancel_e
                 # Nothing but silence in this whole chunk -- no API call spent finding that out.
                 log.debug("Chunk %d (%.0f-%.0fs) is silent — skipped", i, c_start, c_end)
                 continue
+            t0 = time.monotonic()
             try:
                 result = adapter(cfg, trimmed_path, spoken_lang, cancel_event=cancel_event)
             finally:
                 trimmed_path.unlink(missing_ok=True)
+            log.info("Chunk %d/%d of %s done in %.0f s", i + 1, len(chunks), video_path.name, time.monotonic() - t0)
 
             if spoken_lang is None:
                 spoken_lang = normalize_lang(result.get("language"))

@@ -1,4 +1,4 @@
-export type ScheduleMode = 'daily' | 'weekly' | 'advanced'
+export type ScheduleMode = 'daily' | 'weekly' | 'advanced' | 'never'
 
 export interface FriendlySchedule {
   mode: ScheduleMode
@@ -13,6 +13,7 @@ export const DAY_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday'
  * falls back to 'advanced' mode, where the raw cron string is edited directly. */
 export function parseCron(cron: string): FriendlySchedule {
   const fallback: FriendlySchedule = { mode: 'advanced', time: '04:00', dayOfWeek: 0 }
+  if (!cron.trim()) return { mode: 'never', time: '04:00', dayOfWeek: 0 } // empty = no scheduled sweep
   const parts = cron.trim().split(/\s+/)
   if (parts.length !== 5) return fallback
   const [m, h, dom, mon, dow] = parts
@@ -27,7 +28,8 @@ export function parseCron(cron: string): FriendlySchedule {
   return fallback
 }
 
-export function buildCron(schedule: Omit<FriendlySchedule, 'mode'> & { mode: 'daily' | 'weekly' }): string {
+export function buildCron(schedule: Omit<FriendlySchedule, 'mode'> & { mode: 'daily' | 'weekly' | 'never' }): string {
+  if (schedule.mode === 'never') return ''
   const [h, m] = schedule.time.split(':').map((x) => Number(x))
   const hour = Number.isFinite(h) ? h : 0
   const minute = Number.isFinite(m) ? m : 0

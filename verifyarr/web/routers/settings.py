@@ -4,6 +4,7 @@ only holds real Docker requirements."""
 from __future__ import annotations
 
 import dataclasses
+from pathlib import Path, PurePosixPath
 import logging
 from typing import Any, Optional
 
@@ -13,7 +14,7 @@ from pydantic import BaseModel
 from verifyarr import gpu
 from verifyarr import settings as settings_mod
 from verifyarr import scheduler
-from verifyarr.bazarr import bazarr_request
+from verifyarr.bazarr import bazarr_request, suggest_mapping, bazarr_to_local_path, response_items
 from verifyarr.settings import Config, normalize_url
 from verifyarr.web.deps import get_conn, require_auth
 
@@ -34,6 +35,40 @@ class TestBazarrConnectionBody(BaseModel):
 @router.get("")
 def get_all(user=Depends(require_auth), conn=Depends(get_conn)):
     return {group: settings_mod.get_settings_group(conn, group) for group in settings_mod.GROUPS}
+
+
+@router.get("/bazarr/path-check")
+def bazarr_path_check(user=Depends(require_auth), conn=Depends(get_conn)):
+    """One movie and one episode as Bazarr reports them, next to the library's copy of the same
+    file, and the path mapping that would make them match."""
+    cfg = Config.from_db(conn)
+    if not cfg.bazarr_url or not cfg.bazarr_api_key:
+        return {"configured": False, "samples": []}
+    samples = []
+    movies = response_items(bazarr_request(cfg, "GET", "/movies", params={"start": 0, "length": 1}))
+    series = response_items(bazarr_request(cfg, "GET", "/series", params={"start": 0, "length": 1}))
+    episodes = []
+    if series and series[0].get("sonarrSeriesId") is not None:
+        episodes = response_items(bazarr_request(cfg, "GET", "/episodes",
+                                                 params={"seriesid[]": [series[0]["sonarrSeriesId"]]}))
+    for kind, items in (("movie", movies), ("series", episodes)):
+        path = (items[0].get("path") if items else None) or None
+        if not path:
+            continue
+        mapped = str(bazarr_to_local_path(cfg, path))
+        sample = {"kind": kind, "bazarr_path": path, "as_local": mapped, "exists": Path(mapped).exists(),
+                  "library_path": None, "suggestion": None}
+        row = None
+        for r in conn.execute("SELECT video_path FROM library_videos WHERE kind = ?", (kind,)):
+            if PurePosixPath(r["video_path"]).name == PurePosixPath(path).name:
+                row = r
+                break
+        if row is not None:
+            sample["library_path"] = row["video_path"]
+            if not sample["exists"]:
+                sample["suggestion"] = suggest_mapping(row["video_path"], path)
+        samples.append(sample)
+    return {"configured": True, "samples": samples}
 
 
 @router.get("/whisper-status")
