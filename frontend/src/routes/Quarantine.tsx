@@ -32,7 +32,7 @@ export default function Quarantine() {
         setQuarantine(q)
         setBackups(b)
         const roots = q.media_roots.length ? q.media_roots : b.media_roots
-        setRestoreRoot((prev) => (prev && roots.includes(prev) ? prev : (roots[0] ?? '')))
+        setRestoreRoot((prev) => (prev && roots.includes(prev) ? prev : ''))
       })
       .catch(() => {
         setQuarantine(null)
@@ -110,6 +110,7 @@ export default function Quarantine() {
           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
             <label htmlFor="q-root" style={{ margin: 0 }}>Restore to</label>
             <select id="q-root" value={restoreRoot} onChange={(e) => setRestoreRoot(e.target.value)} style={{ width: 'auto' }}>
+              <option value="">Automatic (where it came from)</option>
               {roots.map((r) => (
                 <option key={r} value={r}>{r}</option>
               ))}

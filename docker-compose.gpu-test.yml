@@ -1,0 +1,35 @@
+# One-off CPU vs GPU Whisper timing test. Run once, results land in /media/tv/_verifyarr_gpu_test.
+services:
+  verifyarr-gpu-test:
+    image: ghcr.io/klaushammer/verifyarr:latest
+    container_name: verifyarr-gpu-test
+    restart: "no"
+    cpu_shares: 128
+    environment:
+      PUID: 568
+      PGID: 568
+      UMASK: "022"
+      PORT: 7979 # unused, the app's entrypoint requires it
+    volumes:
+      - /mnt/Storage/media/shows:/media/tv
+    devices:
+      - /dev/dri/card0:/dev/dri/card0
+      - /dev/dri/renderD128:/dev/dri/renderD128
+    group_add:
+      - "44"
+      - "107"
+    # 3 correct episodes, then 3 with known errors (offset / rate); 3 clips each
+    command:
+      - python3
+      - -m
+      - verifyarr.gpu_compare
+      - "/media/tv/Slow Horses/Season 3/Slow Horses - S03E05 - Cleaning Up WEBDL-1080p.mkv"
+      - "/media/tv/Lucifer/Season 5/Lucifer - S05E01 - Really Sad Devil Guy Bluray-1080p.mp4"
+      - "/media/tv/House of the Dragon/Season 1/House of the Dragon - S01E09 - The Green Council Bluray-1080p.mp4"
+      - "/media/tv/Billions/Billions - Complete Season 1 S01 (2016) - 720p HDTV x264/Billions - S01 E12 - The Conversation (720p HDTV).mkv"
+      - "/media/tv/Brooklyn Nine-Nine/Season 2/Brooklyn Nine-Nine - S02E19 - Sabotage Bluray-1080p.mp4"
+      - "/media/tv/Blue Mountain State/Season 1/Blue Mountain State - S01E10 - Marathon Monday Bluray-1080p.mkv"
+      - --clips
+      - "3"
+      - --out
+      - /media/tv/_verifyarr_gpu_test
