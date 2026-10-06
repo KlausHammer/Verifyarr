@@ -1,4 +1,4 @@
-# One-off CPU vs GPU Whisper timing test. Run once, results land in /media/tv/_verifyarr_gpu_test.
+# One-off CPU vs GPU Whisper test: runs the real pipeline on 6 episodes with GPU on and off. Run once, results land in /media/tv/_verifyarr_gpu_test.
 services:
   verifyarr-gpu-test:
     image: ghcr.io/klaushammer/verifyarr:latest
@@ -18,7 +18,7 @@ services:
     group_add:
       - "44"
       - "107"
-    # 3 correct episodes, then 3 with known errors (offset / rate); 3 clips each
+    # 3 correct episodes, then 3 with known errors (offset / rate); whole pipeline with GPU on and off (drop --skip-clips to also time 5-min clips)
     command:
       - python3
       - -m
@@ -29,7 +29,7 @@ services:
       - "/media/tv/Billions/Billions - Complete Season 1 S01 (2016) - 720p HDTV x264/Billions - S01 E12 - The Conversation (720p HDTV).mkv"
       - "/media/tv/Brooklyn Nine-Nine/Season 2/Brooklyn Nine-Nine - S02E19 - Sabotage Bluray-1080p.mp4"
       - "/media/tv/Blue Mountain State/Season 1/Blue Mountain State - S01E10 - Marathon Monday Bluray-1080p.mkv"
-      - --clips
-      - "3"
+      - --pipeline
+      - --skip-clips
       - --out
       - /media/tv/_verifyarr_gpu_test

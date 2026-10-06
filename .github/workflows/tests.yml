@@ -49,4 +49,3 @@ jobs:
           push: false
           build-args: NATIVE=OFF
           cache-from: type=gha,scope=image
-          cache-to: type=gha,mode=max,scope=image
