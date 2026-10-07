@@ -194,6 +194,18 @@ def install(M):
 
     pipeline.run_alass = run_alass
     pipeline.resolve_alass_bin = lambda: real_bin() or "alass"
+    # Production runs VAD; the dataset's sidecars stand in for decoding the video.
+    from verifyarr import vad as _vad
+
+    real_timeline = _vad.speech_timeline
+
+    def speech_timeline(video_path, cfg, conn=None):
+        f = DATA / "vad" / f"{Path(str(video_path)).stem}.vad.tsv"
+        if f.is_file():
+            return _vad.parse_vad_tsv(f.read_text())
+        return real_timeline(video_path, cfg, conn)
+
+    _vad.speech_timeline = speech_timeline
     M.LOCAL_VAD_BINARY = Path(sys.executable)
     M.LOCAL_VAD_MODEL = Path(sys.executable)
     atexit.register(_flush_new)
