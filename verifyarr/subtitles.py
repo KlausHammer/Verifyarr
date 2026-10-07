@@ -627,7 +627,7 @@ def max_quartile_residual_after(points, ratio: float, offset: float = 0.0,
 RATE_MIN_POINTS = 40
 RATE_MIN_TILT_S = 1.5
 RATE_MIN_RHO = 0.70
-RATE_MIN_KEEP = 0.90
+RATE_MIN_KEEP = 0.85  # q5_1 reads 0.88 on real ramps; blocks stay <= 0.65
 RATE_MIN_GAIN_S = 0.15
 RATE_MAX_RESID_S = 0.40
 # Lower bars when the slope snaps to a real conversion ratio (Bob's Burgers
