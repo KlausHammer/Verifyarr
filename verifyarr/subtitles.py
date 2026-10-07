@@ -635,6 +635,13 @@ RATE_MAX_RESID_S = 0.40
 RATE_SNAP_MIN_TILT_S = 0.8
 RATE_SNAP_MIN_RHO = 0.45
 RATE_SNAP_MIN_GAIN_S = 0.05
+# Weak ramp, no real ratio needed. Weak-drift sweep (0.03-0.15 %): rates of tilt 0.9-1.9s read
+# rho 0.37-0.70 with gain >= 0.09; every non-rate scenario reads tilt <= 0.70 and gain <= 0.01
+# (block staircases). Only taken when the corrected file then reads tight-flat.
+RATE_WEAK_MIN_TILT_S = 0.85
+RATE_WEAK_MIN_RHO = 0.40
+RATE_WEAK_MIN_GAIN_S = 0.07
+RATE_WEAK_MAX_RESID_S = 0.32
 # A steep, monotone ramp is a rate even when jitter pushes resid past the cap
 # (My Name Is Earl S01E13: tilt 4.7s rho 0.88 gain 0.62 resid 0.52; The Bear:
 # tilt -6.1s rho -0.91 gain 1.2 resid 0.55). Blocks read keep <= 0.65 or gain < 0.
@@ -687,18 +694,29 @@ def _slope_snaps(p: dict) -> bool:
     return any(abs(r / ratio - 1) <= RATE_SNAP_GATE_TOL for r, _ in RATE_SNAP_RATIOS)
 
 
-def rate_gates_pass(p: Optional[dict]) -> bool:
+def rate_gate_level(p: Optional[dict]) -> int:
+    """2 = a rate by the probe alone, 1 = weak evidence (the fix must then verify tight),
+    0 = not a rate."""
     if probe_gates_pass(p, RATE_MIN_POINTS, RATE_MIN_TILT_S, RATE_MIN_RHO,
                         RATE_MIN_KEEP, RATE_MIN_GAIN_S, RATE_MAX_RESID_S):
-        return True
+        return 2
     if probe_gates_pass(p, RATE_MIN_POINTS, RATE_STEEP_MIN_TILT_S, RATE_STEEP_MIN_RHO,
                         RATE_MIN_KEEP, RATE_STEEP_MIN_GAIN_S, RATE_STEEP_MAX_RESID_S):
-        return True
+        return 2
     # A small ramp is weak evidence alone, but a slope that equals a real
     # framerate conversion (23.976/24 walks ~1s in 20 min) is not a coincidence.
-    return (p is not None and p.get("rho") is not None and _slope_snaps(p)
+    if (p is not None and p.get("rho") is not None and _slope_snaps(p)
             and probe_gates_pass(p, RATE_MIN_POINTS, RATE_SNAP_MIN_TILT_S, RATE_SNAP_MIN_RHO,
-                                 RATE_MIN_KEEP, RATE_SNAP_MIN_GAIN_S, RATE_MAX_RESID_S))
+                                 RATE_MIN_KEEP, RATE_SNAP_MIN_GAIN_S, RATE_MAX_RESID_S)):
+        return 2
+    if probe_gates_pass(p, RATE_MIN_POINTS, RATE_WEAK_MIN_TILT_S, RATE_WEAK_MIN_RHO,
+                        RATE_MIN_KEEP, RATE_WEAK_MIN_GAIN_S, RATE_WEAK_MAX_RESID_S):
+        return 1
+    return 0
+
+
+def rate_gates_pass(p: Optional[dict]) -> bool:
+    return rate_gate_level(p) > 0
 
 
 def rate_is_flat(p: Optional[dict], tight: bool = False) -> bool:

@@ -32,13 +32,14 @@ BOUNDARY = ["uniform_p03"]
 HOLE_MIN_DIALOGUE = 20
 RATE = (["fps_late", "fps_early", "drift", "drift_offset", "pal_late", "pal_early"]
         + [f"drift_rand{i}" for i in range(6)] + [f"ratio_rand{i}" for i in range(4)])
+SLOW = [f"slow_rand{i}" for i in range(10)]   # 0.03-0.15 % ramps: the weak-evidence regime
 BLOCKS = (["piecewise", "piecewise_b", "piecewise_c", "cut_version"]
           + [f"block_rand{i}" for i in range(4)] + [f"blocks_rand{i}" for i in range(2)]
           + [f"cutsteps_rand{i}" for i in range(10)])
 HOLES = ["missing_middle"] + [f"hole_rand{i}" for i in range(4)]
 CUT_ENDS = [f"trunc_start_rand{i}" for i in range(2)] + [f"trunc_end_rand{i}" for i in range(2)]
 GROUPS = {
-    "offset": OFFSET, "rate": RATE, "blocks": BLOCKS, "holes": HOLES,
+    "offset": OFFSET, "rate": RATE, "slow_rate": SLOW, "blocks": BLOCKS, "holes": HOLES,
     "small_holes": HOLES, "cut_ends": CUT_ENDS, "offset_boundary": BOUNDARY,
     "wrong_episode": ["wrong_episode"], "swap": ["swap", "many_swaps"], "drift_swap": ["drift_swap"],
     "dropdup": ["dropdup"], "jitter": ["jitter"], "clean": ["clean"],
@@ -46,7 +47,7 @@ GROUPS = {
 GROUP_LABEL = {
     "offset": "Constant offset (0.7 s to 45 s)", "offset_boundary": "Offset +0.3 s (boundary)",
     "small_holes": "Small holes (< 20 dialogue lines)",
-    "cut_ends": "Start or end cut off (first/last 2 min are not judged)", "rate": "Framerate, PAL, drift (rate errors)",
+    "cut_ends": "Start or end cut off (first/last 2 min are not judged)", "rate": "Framerate, PAL, drift (rate errors)", "slow_rate": "Weak drift 0.03-0.15 % (+ up to 3 s offset)",
     "blocks": "Blocks at different offsets", "holes": "Missing stretch (>= 20 dialogue lines)",
     "wrong_episode": "Wrong episode", "swap": "Swapped lines", "drift_swap": "Drift + swapped lines",
     "dropdup": "Dropped / duplicated cues", "jitter": "Per-line jitter (nothing to fix)",
@@ -66,7 +67,7 @@ def jitter_pass(r):
 
 
 PASS = {}
-for s in OFFSET + BOUNDARY + RATE:
+for s in OFFSET + BOUNDARY + RATE + SLOW:
     PASS[s] = timing_pass
 for s in BLOCKS:
     PASS[s] = lambda r: (r.get("flag") or "ok") != "ok"
@@ -89,7 +90,7 @@ def group_of(r):
         if rd is not None and rd < HOLE_MIN_DIALOGUE:
             return "small_holes"
     return g
-NEEDS_RECOVERED = set(OFFSET + RATE + ["drift_swap", "jitter"])
+NEEDS_RECOVERED = set(OFFSET + RATE + SLOW + ["drift_swap", "jitter"])
 
 
 def load(path):

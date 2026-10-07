@@ -159,7 +159,8 @@ HOLE_SCENARIOS = ({f"hole_rand{i}" for i in range(4)}
                   | {f"trunc_start_rand{i}" for i in range(2)}
                   | {f"trunc_end_rand{i}" for i in range(2)})
 RATE_SCENARIOS = ({f"drift_rand{i}" for i in range(6)}
-                  | {f"ratio_rand{i}" for i in range(4)})
+                  | {f"ratio_rand{i}" for i in range(4)}
+                  | {f"slow_rand{i}" for i in range(10)})
 TIMING_SCENARIOS = {"uniform", "uniform_neg", "uniform_p03", "uniform_m07", "uniform_p15",
                     "uniform_m5", "drift", "drift_offset", "pal_late", "pal_early",
                     "piecewise", "piecewise_b", "piecewise_c", "cut_version",
@@ -793,6 +794,11 @@ def corrupt_drift_random(subs, rng, lo=0.0015, hi=0.05, max_offset_s=10.0):
         "rate": round(rate, 5), "offset_s": round(offset, 2)}
 
 
+def corrupt_slow_random(subs, rng):
+    """The weak-ramp regime real files sit in: 0.03-0.15% (1-4 s over an episode) plus up to +/-3s."""
+    return corrupt_drift_random(subs, rng, lo=0.0003, hi=0.0015, max_offset_s=3.0)
+
+
 # Real conversions: 23.976<->24, 24<->25 (PAL), 23.976<->25.
 REAL_RATIOS = (1001 / 1000, 25 / 24, 25 / (24000 / 1001))
 
@@ -1035,6 +1041,7 @@ SCENARIOS = {
     "blocks_rand0": corrupt_blocks_random, "blocks_rand1": corrupt_blocks_random,
     **{f"drift_rand{i}": corrupt_drift_random for i in range(6)},
     **{f"ratio_rand{i}": corrupt_ratio_random for i in range(4)},
+    **{f"slow_rand{i}": corrupt_slow_random for i in range(10)},
     **{f"cutsteps_rand{i}": corrupt_cutsteps_random for i in range(10)},
     # Old name kept so historical commands and jsonl comparisons still resolve.
     "gap": corrupt_missing_middle,
@@ -1087,8 +1094,23 @@ def _skip_row(results, done, model, slug, name, mode, audio, reason):
     print(f"{slug}.{model}.{name}.{mode}.{audio}: SKIPPED ({reason})", flush=True)
 
 
+def apply_perturbation() -> None:
+    """VERIFYARR_PERTURB="NAME=factor,..." scales those module constants in every verifyarr
+    module that holds them (sensitivity runs: tests/known_good/sensitivity.py)."""
+    spec = _os.environ.get("VERIFYARR_PERTURB", "")
+    for item in filter(None, spec.split(",")):
+        name, factor = item.split("=")
+        for mod in list(sys.modules.values()):
+            if getattr(mod, "__name__", "").startswith("verifyarr") and hasattr(mod, name):
+                old = getattr(mod, name)
+                if isinstance(old, (int, float)) and not isinstance(old, bool):
+                    new = old * float(factor)
+                    setattr(mod, name, int(round(new)) if isinstance(old, int) else new)
+
+
 def main(argv=None):
     argv = argv or sys.argv
+    apply_perturbation()
     only = _parse_list_arg("--only", argv)
     models = _parse_list_arg("--models", argv) or ALL_MODELS
     scen = _parse_list_arg("--scenarios", argv) or list(DEFAULT_SCENARIOS)

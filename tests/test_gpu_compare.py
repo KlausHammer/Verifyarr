@@ -30,3 +30,13 @@ def test_cue_diff(tmp_path):
     r = cue_diff(a, b)
     assert r["changed_cues"] == 1 and r["max_abs_shift_s"] == 1.5 and not r["identical"]
     assert cue_diff(a, a)["identical"]
+
+
+def test_rate_gate_levels():
+    from verifyarr.subtitles import rate_gate_level
+    base = {"slope": 0.0005, "intercept": 0.0, "tilt": 1.0, "rho": 0.5, "gain": 0.12,
+            "resid": 0.2, "n": 150, "keep_frac": 0.96, "span": 1500}
+    assert rate_gate_level(base) == 1
+    assert rate_gate_level({**base, "tilt": 0.7}) == 0
+    assert rate_gate_level({**base, "gain": 0.0}) == 0
+    assert rate_gate_level({**base, "tilt": 2.0, "rho": 0.8, "gain": 0.3}) == 2

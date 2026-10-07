@@ -33,7 +33,7 @@ from verifyarr.subtitles import (
     anchor_drift_signature, max_quartile_residual_after, FPS_RESID_MAX_S,
     FPS_RATIOS, FPS_ANCHOR_TILT_MIN_S, FPS_BINNED_TILT_MIN_S, FPS_LOO_TILT_MIN_S,
     FPS_VAD_TILT_MIN_S, FPS_MIN_ANCHORS,
-    FPS_MAX_BASE_SPREAD_S, rate_gates_pass, rate_is_flat, snap_rate, RATE_MIN_TILT_S,
+    FPS_MAX_BASE_SPREAD_S, rate_gates_pass, rate_gate_level, rate_is_flat, snap_rate, RATE_MIN_TILT_S,
     RATE_MIN_POINTS, RATE_MAX_RESID_S,
     RATE_FLAT_TILT_S, RATE_MIN_KEEP,
     probe_gates_pass, stretch_ratio, stretch_name, _theil_tilt,
@@ -2046,6 +2046,7 @@ def _try_rate_from_baseline(conn: sqlite3.Connection, video_path: Path, subtitle
     if current is not baseline and not over_blocks and rate_is_flat(
             _dense_probe(_dense_pool(conn, video_path, current, cfg)), tight=True):
         return None
+    weak = rate_gate_level(p) == 1
     ratio, offset, name = snap_rate(pts, p)
     # Second look from the coarse fix: the original only matches while its
     # offset fits the window (PAL: first ~20 min). Mapped back, whole file.
@@ -2057,7 +2058,7 @@ def _try_rate_from_baseline(conn: sqlite3.Connection, video_path: Path, subtitle
         ratio, offset, name = snap_rate(full, p_full)
     fixed, worst = _rescaled(baseline, ratio, offset)
     after = _dense_probe(_dense_pool(conn, video_path, fixed, cfg))
-    if not rate_is_flat(after):
+    if not rate_is_flat(after, tight=weak):
         log.info("rate %s for %s discarded: not flat after (%s)", name, subtitle_path.name,
                  after and f"tilt {after['tilt']:+.2f}s, offset {after['intercept']:+.2f}s")
         return None
